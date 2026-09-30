@@ -1,0 +1,18 @@
+[project]
+name = "learnflow-backend"
+version = "0.1.0"
+description = "LearnFlow 学习 Agent 后端（FastAPI + SQLite）"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy[asyncio]>=2.0.30",
+    "aiosqlite>=0.20",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "openai>=1.40",
+    "markdown-it-py>=3.0",
+]
+
+[tool.uv]
+package = false

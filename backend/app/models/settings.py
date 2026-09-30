@@ -1,0 +1,26 @@
+import json
+
+from sqlalchemy import String, Text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models.base import Base, UUIDPk
+from app.models.base import utcnow_iso
+
+DEFAULT_LLM = {"base_url": "", "api_key": "", "model": "", "temperature": 0.7}
+DEFAULT_PREFERENCES = {
+    "daily_new_cards": 20,
+    "chapter_length": 3000,
+    "feynman_max_rounds": 4,
+    "auto_create_cards": True,
+}
+
+
+class AppSetting(Base):
+    """单行表，id 恒为 local。"""
+
+    __tablename__ = "app_settings"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default="local")
+    llm: Mapped[str] = mapped_column(Text, default=json.dumps(DEFAULT_LLM))
+    preferences: Mapped[str] = mapped_column(Text, default=json.dumps(DEFAULT_PREFERENCES))
+    updated_at: Mapped[str] = mapped_column(String(40), default=utcnow_iso)

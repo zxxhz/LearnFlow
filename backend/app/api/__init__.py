@@ -1,0 +1,22 @@
+from fastapi import APIRouter
+
+from app.api import (
+    annotations,
+    conversations,
+    courses,
+    dashboard,
+    documents,
+    feynman,
+    review,
+    settings,
+)
+
+api_router = APIRouter(prefix="/api")
+api_router.include_router(settings.router)
+api_router.include_router(courses.router)
+api_router.include_router(documents.router)
+api_router.include_router(annotations.router)
+api_router.include_router(conversations.router)
+api_router.include_router(feynman.router)
+api_router.include_router(review.router)
+api_router.include_router(dashboard.router)
