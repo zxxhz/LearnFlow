@@ -56,6 +56,8 @@ npx tauri build   # 产出安装包（NSIS，位于 src-tauri/target/release/bun
 
 壳按以下顺序定位后端目录：环境变量 `LEARNFLOW_BACKEND_DIR` → 从 exe 向上查找含 `backend/app` 的目录。端口默认 8420，可用 `LEARNFLOW_PORT` 覆盖。若 8420 已有服务在跑，壳会直接复用而不重复拉起。
 
+> 国内网络提示：tauri build 首次会从 GitHub 下载 NSIS 工具链到 `%LOCALAPPDATA%/tauri/`，若超时，可用镜像（如 `https://ghproxy.net/https://github.com/<原路径>`）手动下载 `nsis-3.11.zip` 解压为 `tauri/NSIS/`、`nsis_tauri_utils.dll` 放入 `tauri/NSIS/Plugins/x86-unicode/`（sha1 应为 75197FEE…，与 cli 二进制内嵌哈希一致）后重试。安装包只含桌面壳（约 2MB），目标机器仍需项目目录 + uv（sidecar 独立打包见 PRD §16.11）。
+
 ## 数据与备份
 
 所有数据在 `backend/data/`（自包含）：
