@@ -23,6 +23,8 @@ import type {
   ReviewCard,
   ReviewQueue,
   ReviewStats,
+  SceneLLMConfig,
+  SceneName,
   SettingsData,
 } from "./types";
 
@@ -60,11 +62,16 @@ export const api = {
     get: () => request<SettingsData>("/settings"),
     update: (body: {
       llm?: Partial<LLMConfig>;
+      scenes?: Partial<Record<SceneName, Partial<SceneLLMConfig>>>;
       preferences?: Partial<Preferences>;
     }) => request<SettingsData>("/settings", { method: "PUT", ...jsonBody(body) }),
     testLlm: () => request<LLMTestResult>("/settings/llm/test", { method: "POST" }),
     openDataDir: () =>
       request<{ ok: boolean }>("/settings/open-data-dir", { method: "POST" }),
+  },
+  math: {
+    render: (body: { expressions: string; x_min?: number; x_max?: number }) =>
+      request<{ svg: string }>("/math/render", { method: "POST", ...jsonBody(body) }),
   },
   courses: {
     create: (body: {

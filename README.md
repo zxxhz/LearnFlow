@@ -12,6 +12,9 @@
 - **费曼学习**：用自己的话讲解知识点，AI 扮演学生追问，给出评分与漏洞清单，漏洞可跳转原文、一键生成复习卡
 - **复习系统**：知识点/划线/漏洞自动成卡，SM-2 调度每日复习队列，四档自评，统计与连击
 - **代码运行**：文档内 Python/C++ 代码块一键运行（限时 10s、限内存 256MB、进程树隔离），结果与文档位置绑定持久化
+- **高数图形化**：` ```plot ` 代码块一键绘制函数图像（SymPy + Matplotlib，支持多函数与奇点断线，如 `sin(x)/x`）
+- **场景化模型**：生成 / 答疑 / 费曼 三个场景可分别指定模型（留空用主配置），如便宜模型做生成、强模型做费曼评价
+- **平板访问**：`APP_HOST=0.0.0.0` 启动后平板浏览器直接访问（响应式已适配），支持内网穿透远程使用
 - **仪表盘**：课程进度、薄弱知识点榜、学习热力图
 
 ## 运行
@@ -28,7 +31,9 @@ cd backend && uv run python -m app.main
 
 启动后自动打开浏览器访问 `http://127.0.0.1:8420`。
 
-**第一步**：进入「设置」页配置 LLM（OpenAI 兼容协议，填 base_url + API Key + 模型名，支持智谱 GLM / DeepSeek / OpenAI 等），点「测试连接」确认。
+**第一步**：进入「设置」页配置 LLM（OpenAI 兼容协议，填 base_url + API Key + 模型名），点「测试连接」确认。顶部有智谱 GLM / DeepSeek / OpenAI / Moonshot / **Ollama 本地** 快捷预设。
+
+**本地 Ollama**：安装 [Ollama](https://ollama.com/) 后 `ollama pull qwen2.5:7b`，设置页点「Ollama 本地」预设（base_url `http://localhost:11434/v1`，API Key 随意填如 `ollama`）即可完全离线使用。三个场景槽位（生成/答疑/费曼）可分别指定不同模型，留空用主配置。
 
 ### 开发模式
 
@@ -60,6 +65,21 @@ npx tauri build   # 产出安装包（NSIS，位于 src-tauri/target/release/bun
 
 复制整个 `data/` 目录即完成备份；「设置」页可一键打开该目录。
 
+## 平板 / 局域网访问
+
+```bash
+cd backend && APP_HOST=0.0.0.0 uv run python -m app.main
+```
+
+启动时会在控制台打印局域网地址（如 `http://192.168.x.x:8420`），平板与电脑连同一 Wi-Fi 即可访问。界面已做响应式（侧栏抽屉、目录浮层、触屏划线选择）。
+
+**跨网络访问（内网穿透）**——推荐方案：
+
+1. **Tailscale（推荐，零配置）**：电脑与平板都装 Tailscale 并登录同一账号，平板访问电脑的 Tailscale IP（`http://100.x.x.x:8420`），流量端到端加密，无需公网 IP。
+2. **frp / cloudflared**：有公网服务器时用 frp 转发 8420 端口；无服务器可用 cloudflared tunnel。**务必加访问认证**（如 cloudflare access / frp token）。
+
+⚠️ 安全提示：`0.0.0.0` 会把服务（含代码运行沙箱）暴露给所在网络，API Key 明文存于本机——只在可信私网（家庭 Wi-Fi / Tailscale）开启，不要直接暴露公网。
+
 ## 代码运行沙箱
 
 文档中标注 ` ```python ` 或 ` ```cpp ` 的代码块右上角有「▶ 运行」按钮：
@@ -68,6 +88,17 @@ npx tauri build   # 产出安装包（NSIS，位于 src-tauri/target/release/bun
 - **C++**：需要本机安装 g++ 或 clang++（如 [MinGW-w64](https://www.mingw-w64.org/)）并加入 PATH；未安装时会给出友好提示
 - 安全限制：单次运行限时 10 秒（超时杀进程树）、内存上限 256MB（Windows Job Object）、进程数上限、stdin 关闭、工作目录一次性临时目录；全局串行执行
 - 结果（stdout/stderr/退出码/耗时）持久化保存，重新打开文档仍显示最近一次结果
+
+### 高数图形化
+
+文档中 ` ```plot ` 代码块出现「📐 绘图」按钮，每行一个函数（`sin(x)/x` 或 `f(x)=x**2`），后端用 SymPy 解析、Matplotlib 渲染 SVG，支持多函数对比、奇点自动断线、默认区间 [-10, 10]：
+
+````md
+```plot
+sin(x)/x
+f2(x)=x**2/8
+```
+````
 
 ## 技术栈
 

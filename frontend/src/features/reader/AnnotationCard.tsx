@@ -123,7 +123,7 @@ export default function AnnotationCard({
   });
 
   return (
-    <div className="fixed right-0 top-0 z-40 flex h-full w-[420px] flex-col border-l border-gray-200 bg-white shadow-xl">
+    <div className="fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 bg-white shadow-xl sm:w-[420px]">
       {/* 头部：颜色切换 */}
       <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
         <div className="flex items-center gap-2">

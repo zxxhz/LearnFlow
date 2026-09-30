@@ -107,7 +107,7 @@ async def run_chapter(
     if instruction:
         prompt += f"\n\n## 本次重新生成的额外要求\n{instruction}\n请在保持上述输出格式的前提下满足该要求。"
 
-    adapter = await create_adapter_from_settings(db)
+    adapter = await create_adapter_from_settings(db, scene="generation")
     temperature = await get_llm_temperature(db)
     raw = await adapter.chat([{"role": "user", "content": prompt}], temperature=temperature)
     body, meta = parse_chapter_output(raw)

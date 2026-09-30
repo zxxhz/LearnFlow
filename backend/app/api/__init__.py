@@ -9,6 +9,7 @@ from app.api import (
     execution,
     feynman,
     imports,
+    math,
     review,
     settings,
 )
@@ -24,3 +25,4 @@ api_router.include_router(feynman.router)
 api_router.include_router(review.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(execution.router)
+api_router.include_router(math.router)

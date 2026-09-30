@@ -123,8 +123,23 @@ export interface Preferences {
   auto_create_cards: boolean;
 }
 
+export interface SceneLLMConfig {
+  base_url: string;
+  api_key: string;
+  model: string;
+}
+
+export type SceneName = "generation" | "chat" | "feynman";
+
+export interface ScenesConfig {
+  generation: SceneLLMConfig;
+  chat: SceneLLMConfig;
+  feynman: SceneLLMConfig;
+}
+
 export interface SettingsData {
   llm: LLMConfig;
+  scenes: ScenesConfig;
   preferences: Preferences;
 }
 

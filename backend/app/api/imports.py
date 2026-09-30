@@ -98,7 +98,7 @@ async def _read_uploads(files: list[UploadFile]) -> tuple[list[str], list[str]]:
 async def _llm_title(db: AsyncSession, chapter_titles: list[str]) -> str | None:
     """LLM 修饰课程标题；未配置/失败返回 None（降级为文件名）。"""
     try:
-        adapter: OpenAICompatAdapter = await create_adapter_from_settings(db)
+        adapter: OpenAICompatAdapter = await create_adapter_from_settings(db, scene="generation")
     except LLMError:
         return None
     listing = "\n".join(f"- {t}" for t in chapter_titles[:40])
@@ -182,7 +182,7 @@ async def import_confirm(
     auto_cards = bool(prefs.get("auto_create_cards", True))
     adapter: OpenAICompatAdapter | None = None
     try:
-        adapter = await create_adapter_from_settings(db)
+        adapter = await create_adapter_from_settings(db, scene="generation")
     except LLMError:
         pass  # 未配置 LLM：跳过知识点提取，导入本身仍可用
 

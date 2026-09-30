@@ -27,7 +27,7 @@ export default function AnnotationsDrawer({
   onDelete,
 }: Props) {
   return (
-    <div className="fixed right-0 top-0 z-30 flex h-full w-80 flex-col border-l border-gray-200 bg-white shadow-lg">
+    <div className="fixed right-0 top-0 z-30 flex h-full w-full flex-col border-l border-gray-200 bg-white shadow-lg sm:w-80">
       <div className="border-b border-gray-100 px-4 py-3 text-sm font-semibold text-gray-900">
         本文标注（{annotations.length}）
       </div>

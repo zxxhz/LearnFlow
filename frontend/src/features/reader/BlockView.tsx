@@ -1,7 +1,8 @@
 // 单块渲染：markdown HTML + KaTeX（同步）+ Shiki（代码，动态加载）+ 划线高亮 + 代码运行（PRD §5.8）
 // 顺序约定：KaTeX 先于高亮（偏移以最终 textContent 为准，创建标注时同一 DOM）
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import renderMathInElement from "katex/contrib/auto-render";
+import { api } from "../../lib/api";
 import type { Annotation, CodeExecution, ExecStatus } from "../../lib/types";
 import type { ParsedBlock } from "../../lib/markdown";
 import { applyHighlights } from "./highlight";
@@ -14,6 +15,7 @@ const DELIMITERS = [
 ];
 
 const RUNNABLE_LANGS = new Set(["python", "py", "python3", "cpp", "c++", "cxx", "cc"]);
+const PLOT_LANGS = new Set(["plot", "math-plot", "绘图"]);
 
 const EXEC_BADGE: Record<ExecStatus, { label: string; cls: string }> = {
   success: { label: "✅ 运行成功", cls: "text-green-700" },
@@ -85,6 +87,9 @@ export default function BlockView({
 }: Props) {
   const innerRef = useRef<HTMLDivElement>(null);
   const codeRef = useRef<HTMLDivElement>(null);
+  const [plotSvg, setPlotSvg] = useState<string>("");
+  const [plotBusy, setPlotBusy] = useState(false);
+  const [plotErr, setPlotErr] = useState("");
   const html = block.html;
   const annKey = useMemo(
     () => annotations.map((a) => `${a.id}:${a.status}:${a.color}:${a.exact.length}`).join("|"),
@@ -93,6 +98,22 @@ export default function BlockView({
   const isCode = block.type === "code";
   const { lang, code } = useMemo(() => (isCode ? stripFence(block.raw) : { lang: "", code: "" }), [block.raw, isCode]);
   const runnable = isCode && RUNNABLE_LANGS.has(lang.toLowerCase());
+  const plottable = isCode && PLOT_LANGS.has(lang.toLowerCase());
+
+  // 高数图形化（PRD 实现备注 14）：plot 块 → SymPy/Matplotlib 渲染 SVG
+  const doPlot = async () => {
+    if (plotBusy || !plottable) return;
+    setPlotBusy(true);
+    setPlotErr("");
+    try {
+      const res = await api.math.render({ expressions: code });
+      setPlotSvg(res.svg);
+    } catch (e) {
+      setPlotErr((e as Error).message);
+    } finally {
+      setPlotBusy(false);
+    }
+  };
 
   // KaTeX（非代码块，同步渲染）
   useEffect(() => {
@@ -153,12 +174,22 @@ export default function BlockView({
   if (isCode) {
     return (
       <div className="relative my-3">
-        {runnable && (
+        {plottable && (
+          <button
+            onClick={doPlot}
+            disabled={plotBusy}
+            className="absolute right-2 top-2 z-10 rounded-md bg-violet-700/90 px-2.5 py-1 text-xs font-medium text-white opacity-80 transition hover:opacity-100 disabled:opacity-50"
+            title="用 SymPy + Matplotlib 绘制函数图像（默认区间 [-10, 10]）"
+          >
+            {plotBusy ? "绘制中…" : "📐 绘图"}
+          </button>
+        )}
+        {!plottable && runnable && (
           <button
             onClick={() => onRun(sectionId, lang.toLowerCase(), code)}
             disabled={running}
             className="absolute right-2 top-2 z-10 rounded-md bg-green-700/90 px-2.5 py-1 text-xs font-medium text-white opacity-80 transition hover:opacity-100 disabled:opacity-50"
-            title={lang === "" ? "" : `运行 ${lang} 代码（限时 10s）`}
+            title={`运行 ${lang} 代码（限时 10s）`}
           >
             {running ? "运行中…" : "▶ 运行"}
           </button>
@@ -170,6 +201,13 @@ export default function BlockView({
           onClick={onClick}
         />
         {runError && <p className="mt-1 text-xs text-red-600">{runError}</p>}
+        {plotErr && <p className="mt-1 text-xs text-red-600">{plotErr}</p>}
+        {plotSvg && (
+          <div className="mt-2 rounded-lg border border-gray-200 bg-white p-3">
+            <div className="mb-1.5 text-xs text-gray-400">📐 函数图像（SymPy + Matplotlib）</div>
+            <div className="plot-svg [&_svg]:h-auto [&_svg]:max-w-full" dangerouslySetInnerHTML={{ __html: plotSvg }} />
+          </div>
+        )}
         {execution && <ExecResultPanel execution={execution} />}
       </div>
     );

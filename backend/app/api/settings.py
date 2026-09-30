@@ -15,6 +15,7 @@ from app.schemas.settings import (
     LLMConfig,
     LLMTestResult,
     Preferences,
+    ScenesConfig,
     SettingsOut,
     SettingsUpdate,
 )
@@ -24,7 +25,7 @@ from app.services.llm.errors import LLMError
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["settings"])
 
-DEFAULT_LLM = {"base_url": "", "api_key": "", "model": "", "temperature": 0.7}
+DEFAULT_LLM = {"base_url": "", "api_key": "", "model": "", "temperature": 0.7, "scenes": {}}
 DEFAULT_PREFS = {
     "daily_new_cards": 20,
     "chapter_length": 3000,
@@ -43,9 +44,20 @@ async def _load_row(db: AsyncSession) -> AppSetting:
 
 
 def _masked_out(row: AppSetting) -> SettingsOut:
-    llm = LLMConfig(**json.loads(row.llm))
+    llm = LLMConfig(**{k: v for k, v in json.loads(row.llm).items() if k in LLMConfig.model_fields})
+    scenes = ScenesConfig(**(json.loads(row.llm).get("scenes") or {}))
     prefs = Preferences(**json.loads(row.preferences))
-    return SettingsOut.masked(llm, prefs)
+    return SettingsOut.masked(llm, scenes, prefs)
+
+
+def _blank_inherit(old_scene: dict, incoming: dict) -> dict:
+    """场景字段留空/掩码 → 继承旧值（api_key）或保留空（其余字段由适配层回落主配置）。"""
+    merged = dict(incoming)
+    old_key = str(old_scene.get("api_key") or "")
+    new_key = str(incoming.get("api_key") or "")
+    if not new_key or "****" in new_key:
+        merged["api_key"] = old_key
+    return merged
 
 
 @router.get("/settings", response_model=SettingsOut)
@@ -56,17 +68,24 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
 @router.put("/settings", response_model=SettingsOut)
 async def update_settings(body: SettingsUpdate, db: AsyncSession = Depends(get_db)):
     row = await _load_row(db)
+    current = json.loads(row.llm)
     if body.llm is not None:
-        current = json.loads(row.llm)
         incoming = body.llm.model_dump()
-        # api_key 传空或掩码 → 保留旧值（PRD §5.7）
+        # api_key 传空或掩码 → 保留库里旧值（PRD §5.7）
         new_key = incoming.get("api_key") or ""
         if not new_key or "****" in new_key:
             incoming["api_key"] = current.get("api_key", "")
         current.update({k: v for k, v in incoming.items() if v is not None})
-        row.llm = json.dumps(current)
+    if body.scenes is not None:
+        scenes_new = body.scenes.model_dump()
+        scenes_old = current.get("scenes") or {}
+        current["scenes"] = {
+            name: _blank_inherit(scenes_old.get(name) or {}, scenes_new.get(name) or {})
+            for name in ("generation", "chat", "feynman")
+        }
     if body.preferences is not None:
         row.preferences = json.dumps(body.preferences.model_dump())
+    row.llm = json.dumps(current)
     row.updated_at = utcnow_iso()
     await db.commit()
     return _masked_out(row)

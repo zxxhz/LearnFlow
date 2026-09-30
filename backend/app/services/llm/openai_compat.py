@@ -107,16 +107,38 @@ class OpenAICompatAdapter(LLMAdapter):
             await stream.close()
 
 
-async def create_adapter_from_settings(db: AsyncSession) -> OpenAICompatAdapter:
-    """从 app_settings 表读取 LLM 配置并构建适配器；未配置时抛友好错误。"""
+SCENES = ("generation", "chat", "feynman")
+
+
+async def create_adapter_from_settings(
+    db: AsyncSession, scene: str | None = None
+) -> OpenAICompatAdapter:
+    """从 app_settings 读取配置并构建适配器。
+
+    scene ∈ {generation, chat, feynman}：场景槽位里非空的字段覆盖主配置，
+    空字段回落主配置（PRD §5.7：便宜模型做生成、强模型做费曼评价）。
+    未配置时抛友好错误。
+    """
     row = await db.get(AppSetting, "local")
     cfg = json.loads(row.llm) if row and row.llm else {}
-    if not cfg.get("api_key") or not cfg.get("model"):
+    merged = {
+        "base_url": cfg.get("base_url", ""),
+        "api_key": cfg.get("api_key", ""),
+        "model": cfg.get("model", ""),
+    }
+    if scene:
+        if scene not in SCENES:
+            raise LLMServiceError(f"未知场景：{scene}")
+        scene_cfg = (cfg.get("scenes") or {}).get(scene) or {}
+        for k in ("base_url", "api_key", "model"):
+            if str(scene_cfg.get(k) or "").strip():
+                merged[k] = str(scene_cfg[k]).strip()
+    if not merged["api_key"] or not merged["model"]:
         raise LLMNotConfiguredError()
     return OpenAICompatAdapter(
-        base_url=cfg.get("base_url", ""),
-        api_key=cfg["api_key"],
-        model=cfg["model"],
+        base_url=merged["base_url"],
+        api_key=merged["api_key"],
+        model=merged["model"],
     )
 
 

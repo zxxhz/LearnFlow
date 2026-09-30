@@ -269,7 +269,41 @@ def main() -> None:
         s, body = call(base, f"/api/courses/{imported_course}", "DELETE")
         check("清理导入课程", s == 200)
 
-    # 8. 仪表盘
+    # 8. 场景化 LLM（PRD §5.7）：保存场景覆盖 → 适配层回落验证 → 还原
+    s, orig = call(base, "/api/settings")
+    test_llm = {"base_url": "https://api.example.com/v1", "api_key": "sk-smoketest-123456", "model": "main-model", "temperature": 0.7}
+    s, body = call(base, "/api/settings", "PUT", {
+        "llm": test_llm,
+        "scenes": {"generation": {}, "chat": {}, "feynman": {"model": "strong-model"}},
+    })
+    check("保存场景化配置", s == 200 and body["scenes"]["feynman"]["model"] == "strong-model", str(body)[:150])
+    import asyncio as _aio
+
+    from app.core.db import async_session_factory
+    from app.services.llm import create_adapter_from_settings
+
+    async def _scene_check():
+        async with async_session_factory() as sdb:
+            a_primary = await create_adapter_from_settings(sdb)
+            a_feynman = await create_adapter_from_settings(sdb, "feynman")
+            a_gen = await create_adapter_from_settings(sdb, "generation")
+            return a_primary.model, a_feynman.model, a_gen.model
+
+    m_primary, m_feynman, m_gen = _aio.run(_scene_check())
+    check("场景回落：主/生成=主模型，费曼=覆盖模型", m_primary == "main-model" and m_gen == "main-model" and m_feynman == "strong-model", f"{m_primary}/{m_gen}/{m_feynman}")
+    call(base, "/api/settings", "PUT", {"llm": {"base_url": orig["llm"]["base_url"], "api_key": orig["llm"]["api_key"], "model": orig["llm"]["model"], "temperature": orig["llm"]["temperature"]}, "scenes": {"generation": {}, "chat": {}, "feynman": {}}})
+
+    # 9. 高数图形化（PRD §5.9）：SymPy + Matplotlib 渲染
+    s, body = call(base, "/api/math/render", "POST", {"expressions": "sin(x)/x\ntan(x)", "x_min": -6.5, "x_max": 6.5})
+    check("函数绘图 → SVG", s == 200 and "<svg" in body.get("svg", "") and len(body.get("svg", "")) > 2000)
+    s, body = call(base, "/api/math/render", "POST", {"expressions": "这不是数学"})
+    check(
+        "非法表达式 → 400 中文提示",
+        s == 400 and ("无法解析" in str(body.get("detail", "")) or "未知符号" in str(body.get("detail", ""))),
+        str(body)[:150],
+    )
+
+    # 10. 仪表盘
     s, body = call(base, "/api/dashboard/summary")
     check("仪表盘包含测试课程", s == 200 and any(c["id"] == course_id for c in body["courses"]))
 

@@ -2,14 +2,35 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
-import type { LLMConfig, Preferences } from "../../lib/types";
+import type { LLMConfig, Preferences, SceneLLMConfig, SceneName, SettingsData } from "../../lib/types";
 import { Button, Input, Spinner } from "../../components/ui";
+
+const PROVIDER_PRESETS: { label: string; base_url: string; model: string }[] = [
+  { label: "智谱 GLM", base_url: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
+  { label: "DeepSeek", base_url: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { label: "OpenAI", base_url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+  { label: "Moonshot", base_url: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
+  { label: "Ollama 本地", base_url: "http://localhost:11434/v1", model: "qwen2.5:7b" },
+];
+
+const SCENE_META: { name: SceneName; label: string; hint: string }[] = [
+  { name: "generation", label: "生成模型", hint: "章节生成、导入知识点提取——建议用便宜量大的模型" },
+  { name: "chat", label: "答疑模型", hint: "划线提问对话——建议用响应快的模型" },
+  { name: "feynman", label: "费曼模型", hint: "学生追问与理解度评价——建议用推理强的模型" },
+];
+
+const EMPTY_SCENE: SceneLLMConfig = { base_url: "", api_key: "", model: "" };
 
 export default function SettingsPage() {
   const queryClient = useQueryClient();
   const { data: settings, isLoading } = useQuery({ queryKey: ["settings"], queryFn: api.settings.get });
 
   const [llm, setLlm] = useState<LLMConfig>({ base_url: "", api_key: "", model: "", temperature: 0.7 });
+  const [scenes, setScenes] = useState<Record<SceneName, SceneLLMConfig>>({
+    generation: { ...EMPTY_SCENE },
+    chat: { ...EMPTY_SCENE },
+    feynman: { ...EMPTY_SCENE },
+  });
   const [prefs, setPrefs] = useState<Preferences>({
     daily_new_cards: 20,
     chapter_length: 3000,
@@ -21,6 +42,11 @@ export default function SettingsPage() {
   useEffect(() => {
     if (settings) {
       setLlm({ ...settings.llm, api_key: "" }); // key 留空 = 不修改
+      setScenes({
+        generation: { ...EMPTY_SCENE, ...settings.scenes?.generation, api_key: "" },
+        chat: { ...EMPTY_SCENE, ...settings.scenes?.chat, api_key: "" },
+        feynman: { ...EMPTY_SCENE, ...settings.scenes?.feynman, api_key: "" },
+      });
       setPrefs(settings.preferences);
     }
   }, [settings]);
@@ -33,6 +59,17 @@ export default function SettingsPage() {
           model: llm.model,
           temperature: llm.temperature,
           ...(llm.api_key ? { api_key: llm.api_key } : {}),
+        },
+        scenes: {
+          generation: {
+            ...scenes.generation,
+            ...(scenes.generation.api_key ? {} : { api_key: undefined }),
+          },
+          chat: { ...scenes.chat, ...(scenes.chat.api_key ? {} : { api_key: undefined }) },
+          feynman: {
+            ...scenes.feynman,
+            ...(scenes.feynman.api_key ? {} : { api_key: undefined }),
+          },
         },
       }),
     onSuccess: () => {
@@ -90,6 +127,19 @@ export default function SettingsPage() {
           支持智谱 GLM、DeepSeek、OpenAI 等任何 OpenAI 兼容端点。API Key 留空表示不修改。
         </p>
         <div className="mt-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-gray-500">快捷填入：</span>
+            {PROVIDER_PRESETS.map((p) => (
+              <button
+                key={p.label}
+                onClick={() => setLlm((prev) => ({ ...prev, base_url: p.base_url, model: p.model }))}
+                className="rounded-full border border-gray-200 px-2.5 py-1 text-gray-600 hover:border-brand-500 hover:text-brand-600"
+                title={`${p.base_url}（模型：${p.model}，可再手改）`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">Base URL</label>
             <Input
@@ -154,6 +204,56 @@ export default function SettingsPage() {
             </p>
           )}
           {saveLlm.isError && <p className="text-sm text-red-600">{saveLlm.error.message}</p>}
+
+          {/* 场景化模型（PRD §5.7：便宜模型做生成、强模型做费曼评价） */}
+          <div className="border-t border-gray-100 pt-4">
+            <h3 className="text-sm font-semibold text-gray-900">场景模型（留空 = 使用主配置）</h3>
+            <div className="mt-3 space-y-4">
+              {SCENE_META.map((s) => (
+                <div key={s.name} className="rounded-lg border border-gray-100 bg-gray-50/60 p-3">
+                  <div className="text-sm font-medium text-gray-800">{s.label}</div>
+                  <div className="mt-0.5 text-xs text-gray-400">{s.hint}</div>
+                  <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-3">
+                    <Input
+                      value={scenes[s.name].base_url}
+                      onChange={(e) =>
+                        setScenes((prev) => ({
+                          ...prev,
+                          [s.name]: { ...prev[s.name], base_url: e.target.value },
+                        }))
+                      }
+                      placeholder="Base URL（可空）"
+                    />
+                    <Input
+                      type="password"
+                      value={scenes[s.name].api_key}
+                      onChange={(e) =>
+                        setScenes((prev) => ({
+                          ...prev,
+                          [s.name]: { ...prev[s.name], api_key: e.target.value },
+                        }))
+                      }
+                      placeholder={
+                        settings?.scenes?.[s.name]?.api_key
+                          ? `已保存：${settings.scenes[s.name].api_key}`
+                          : "API Key（可空，用主配置的）"
+                      }
+                    />
+                    <Input
+                      value={scenes[s.name].model}
+                      onChange={(e) =>
+                        setScenes((prev) => ({
+                          ...prev,
+                          [s.name]: { ...prev[s.name], model: e.target.value },
+                        }))
+                      }
+                      placeholder="模型名（可空）"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
 

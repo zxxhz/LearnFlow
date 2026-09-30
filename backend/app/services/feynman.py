@@ -123,7 +123,7 @@ async def reply_as_tutor(
     round_no = min(session.round_count + 1, max_rounds)
     messages = await _tutor_prompt(db, kp, texts, list(history), round_no, max_rounds)
 
-    adapter: OpenAICompatAdapter = await create_adapter_from_settings(db)
+    adapter: OpenAICompatAdapter = await create_adapter_from_settings(db, scene="feynman")
     temperature = await get_llm_temperature(db)
     turn = FeynmanTurn(adapter.chat(messages, stream=True, temperature=temperature))
 
@@ -167,7 +167,7 @@ async def evaluate_session(db: AsyncSession, session_id: str) -> FeynmanSession:
         SECTION_LIST=section_list,
         HISTORY=_history_messages(list(messages)),
     )
-    adapter: OpenAICompatAdapter = await create_adapter_from_settings(db)
+    adapter: OpenAICompatAdapter = await create_adapter_from_settings(db, scene="feynman")
     evaluation: FeynmanEvaluation = await adapter.chat_json(
         [{"role": "system", "content": system}],
         FeynmanEvaluation,

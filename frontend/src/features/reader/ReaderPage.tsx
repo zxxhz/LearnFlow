@@ -88,6 +88,7 @@ export default function ReaderPage() {
   const [regenMsg, setRegenMsg] = useState("");
   const [runningSection, setRunningSection] = useState<string | null>(null);
   const [runError, setRunError] = useState("");
+  const [tocOpen, setTocOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 
   const execBySection = useMemo(
@@ -144,10 +145,13 @@ export default function ReaderPage() {
         setReAnchoring(null);
       }
     };
+    // 触屏：长按选择后 touchend 捕获选区（PRD §5.9 平板适配）
     document.addEventListener("mouseup", onMouseUp);
+    document.addEventListener("touchend", onMouseUp);
     document.addEventListener("keyup", onKey);
     return () => {
       document.removeEventListener("mouseup", onMouseUp);
+      document.removeEventListener("touchend", onMouseUp);
       document.removeEventListener("keyup", onKey);
     };
   }, [captureSelection]);
@@ -301,8 +305,8 @@ export default function ReaderPage() {
 
   return (
     <div className="flex min-h-screen bg-white">
-      {/* 目录 */}
-      <aside className="sticky top-0 h-screen w-64 shrink-0 overflow-auto border-r border-gray-100 bg-gray-50/50 py-5">
+      {/* 目录：桌面常驻侧栏；小屏收起，用浮动按钮打开 */}
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 overflow-auto border-r border-gray-100 bg-gray-50/50 py-5 lg:block">
         <div className="px-4 pb-3">
           <Link to={`/courses/${courseId}`} className="text-xs text-gray-400 hover:text-brand-600">
             ← {courseQuery.data?.title ?? "课程"}
@@ -313,13 +317,20 @@ export default function ReaderPage() {
       </aside>
 
       {/* 正文列 */}
-      <div className="relative mx-auto w-full max-w-3xl px-10 py-8">
+      <div className="relative mx-auto w-full max-w-3xl px-4 py-8 md:px-10">
         {/* 页头 */}
-        <div className="sticky top-0 z-20 -mx-10 mb-6 flex items-center justify-between gap-2 border-b border-gray-100 bg-white/90 px-10 py-3 backdrop-blur">
+        <div className="sticky top-0 z-20 -mx-4 mb-6 flex items-center justify-between gap-2 border-b border-gray-100 bg-white/90 px-4 py-3 backdrop-blur md:-mx-10 md:px-10">
           <div className="flex items-center gap-1">
             <Button
               variant="ghost"
-              className="text-xs"
+              className="text-xs lg:hidden"
+              onClick={() => setTocOpen(true)}
+            >
+              ☰ 目录
+            </Button>
+            <Button
+              variant="ghost"
+              className="hidden text-xs sm:inline-flex"
               disabled={!prevDoc}
               onClick={() => prevDoc && navigate(`/read/${prevDoc.document_id}`)}
             >
@@ -327,7 +338,7 @@ export default function ReaderPage() {
             </Button>
             <Button
               variant="ghost"
-              className="text-xs"
+              className="hidden text-xs sm:inline-flex"
               disabled={!nextDoc}
               onClick={() => nextDoc && navigate(`/read/${nextDoc.document_id}`)}
             >
@@ -391,6 +402,31 @@ export default function ReaderPage() {
           })}
         </div>
       </div>
+
+      {/* 小屏目录浮层 */}
+      {tocOpen && (
+        <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setTocOpen(false)}>
+          <div className="absolute inset-0 bg-black/40" />
+          <div
+            className="absolute inset-y-0 left-0 w-72 overflow-auto bg-white p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <span className="truncate text-sm font-semibold text-gray-800">{doc.title}</span>
+              <button className="text-gray-400" onClick={() => setTocOpen(false)}>
+                ✕
+              </button>
+            </div>
+            <TocSidebar
+              items={tocItems}
+              onJump={(sid) => {
+                jumpTo(sid);
+                setTocOpen(false);
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* 知识点浮层 */}
       {kpOpen && (

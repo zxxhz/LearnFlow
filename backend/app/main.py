@@ -80,13 +80,36 @@ app = create_app()
 
 
 def main() -> None:
+    import socket
     import threading
     import webbrowser
 
     import uvicorn
 
+    if settings.host == "0.0.0.0":
+        # 平板/局域网访问（PRD §5.9）：打印本机局域网地址
+        ips: set[str] = set()
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ips.add(s.getsockname()[0])
+            s.close()
+        except OSError:
+            pass
+        try:
+            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+                ip = info[4][0]
+                if not ip.startswith("127."):
+                    ips.add(ip)
+        except OSError:
+            pass
+        print(f"\n>>> 局域网访问地址（平板需与电脑同一网络，或走内网穿透）：" )
+        for ip in sorted(ips):
+            print(f">>>   http://{ip}:{settings.port}")
+        print(">>> 安全提示：0.0.0.0 会将服务暴露给局域网，建议仅配 Tailscale 等私网使用。\n")
+
     if settings.open_browser:
-        url = f"http://{settings.host}:{settings.port}"
+        url = f"http://{'127.0.0.1' if settings.host == '0.0.0.0' else settings.host}:{settings.port}"
         threading.Timer(1.5, webbrowser.open, args=(url,)).start()
     uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
 

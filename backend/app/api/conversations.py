@@ -59,7 +59,7 @@ async def post_message(
         ann.updated_at = utcnow_iso()
         await db.commit()
         messages = await build_annotation_messages(db, conv)
-        adapter = await create_adapter_from_settings(db)
+        adapter = await create_adapter_from_settings(db, scene="chat")
         temperature = await get_llm_temperature(db)
         deltas = adapter.chat(messages, stream=True, temperature=temperature)
         annotation_mode = True
