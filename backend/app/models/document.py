@@ -1,7 +1,7 @@
 from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, CreatedAt, UUIDPk, UserIdMixin
+from app.models.base import Base, CreatedAt, UUIDPk, UserIdMixin, utcnow_iso
 
 
 class Document(UUIDPk, UserIdMixin, CreatedAt, Base):
@@ -20,7 +20,9 @@ class Document(UUIDPk, UserIdMixin, CreatedAt, Base):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     # pending / generating / done / failed
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
-    updated_at: Mapped[str] = mapped_column(String(40))
+    updated_at: Mapped[str] = mapped_column(
+        String(40), default=utcnow_iso, onupdate=utcnow_iso
+    )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
