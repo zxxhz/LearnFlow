@@ -115,6 +115,8 @@ export const api = {
     }),
     remove: (id: string) =>
       request<void>(`/annotations/${id}`, { method: "DELETE" }),
+    conversation: (id: string) =>
+      request<{ conversation_id: string }>(`/annotations/${id}/conversation`),
   },
   conversations: {
     messages: (id: string) =>
