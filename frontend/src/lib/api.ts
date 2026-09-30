@@ -4,6 +4,7 @@ import type {
   Annotation,
   AnnotationColor,
   AnnotationCreated,
+  CodeExecution,
   Course,
   CourseDetail,
   CourseListItem,
@@ -94,6 +95,12 @@ export const api = {
         method: "POST",
         ...jsonBody({ instruction: instruction ?? null }),
       }),
+    executions: (id: string) =>
+      request<CodeExecution[]>(`/documents/${id}/executions`),
+  },
+  executions: {
+    run: (body: { document_id: string; section_id: string; language: string; code: string }) =>
+      request<CodeExecution>("/executions", { method: "POST", ...jsonBody(body) }),
   },
   annotations: {
     listForDoc: (docId: string) =>

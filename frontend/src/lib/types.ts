@@ -239,6 +239,29 @@ export interface DashboardSummary {
   heatmap: DayCount[];
 }
 
+export type ExecStatus =
+  | "success"
+  | "runtime_error"
+  | "timeout"
+  | "compile_error"
+  | "compiler_missing"
+  | "error";
+
+export interface CodeExecution {
+  id: string;
+  document_id: string;
+  section_id: string;
+  document_version: number;
+  language: string;
+  code: string;
+  status: ExecStatus;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  duration_ms: number | null;
+  created_at: string;
+}
+
 // ===== SSE 事件负载 =====
 export interface ChatSSEEvent {
   type: "delta" | "done" | "error";

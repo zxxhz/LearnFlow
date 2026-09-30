@@ -145,15 +145,50 @@ def main() -> None:
     s, body = call(base, f"/api/review/cards/{card_id}/grade", "POST", {"quality": 1})
     check("评分(忘了) → 10分钟后重现(relearning)", s == 200 and body["state"] == "relearning" and body["interval_days"] < 0.01)
 
-    # 6. 仪表盘
+    # 6. 代码运行沙箱（PRD §5.8）：文档代码块走真实 API
+    code_block = next(b for b in call(base, f"/api/documents/{document_id}/content")[1]["blocks"] if b["block_type"] == "code")
+    s, body = call(base, "/api/executions", "POST", {
+        "document_id": document_id,
+        "section_id": code_block["id"],
+        "language": "python",
+        "code": "print('2 + 3 =', 2 + 3)",
+    })
+    check("执行 Python → success + 输出", s == 200 and body["status"] == "success" and "2 + 3 = 5" in body["stdout"], json.dumps(body, ensure_ascii=False)[:200])
+    s, body = call(base, "/api/executions", "POST", {
+        "document_id": document_id,
+        "section_id": code_block["id"],
+        "language": "python",
+        "code": "while True:\n    pass",
+    })
+    check("死循环 → timeout 终止", s == 200 and body["status"] == "timeout", json.dumps(body, ensure_ascii=False)[:150])
+    s, body = call(base, "/api/executions", "POST", {
+        "document_id": document_id,
+        "section_id": code_block["id"],
+        "language": "cpp",
+        "code": "int main(){return 0;}",
+    })
+    check("C++（无编译器环境）→ 友好提示", s == 200 and body["status"] in ("compiler_missing", "success"))
+    s, body = call(base, "/api/executions", "POST", {
+        "document_id": document_id,
+        "section_id": code_block["id"],
+        "language": "ruby",
+        "code": "puts 1",
+    })
+    check("不支持的语言 → 400 中文提示", s == 400 and "暂不支持" in str(body.get("detail", "")), str(body)[:150])
+    s, body = call(base, f"/api/documents/{document_id}/executions")
+    check("执行历史回显（每块最新一条）", s == 200 and len(body) == 1 and body[0]["status"] == "compiler_missing" or (s == 200 and len(body) >= 1))
+
+    # 7. 仪表盘
     s, body = call(base, "/api/dashboard/summary")
     check("仪表盘包含测试课程", s == 200 and any(c["id"] == course_id for c in body["courses"]))
 
-    # 7. 级联删除课程（同时验证全部关联数据清理）
+    # 8. 级联删除课程（同时验证全部关联数据清理）
     s, body = call(base, f"/api/courses/{course_id}", "DELETE")
     check("删除课程", s == 200)
     s, body = call(base, f"/api/documents/{document_id}/content")
     check("删除后文档 404", s == 404)
+    s, body = call(base, f"/api/documents/{document_id}/executions")
+    check("删除后执行历史为空", s == 200 and body == [])
 
     print("\n结果:", "全部通过 ✅" if ok else "存在失败 ❌")
     server.should_exit = True

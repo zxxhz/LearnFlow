@@ -6,6 +6,7 @@ from app.api import (
     courses,
     dashboard,
     documents,
+    execution,
     feynman,
     review,
     settings,
@@ -20,3 +21,4 @@ api_router.include_router(conversations.router)
 api_router.include_router(feynman.router)
 api_router.include_router(review.router)
 api_router.include_router(dashboard.router)
+api_router.include_router(execution.router)

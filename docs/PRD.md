@@ -804,3 +804,6 @@ orphan 标注在标注列表中点"重新挂载"→ 进入选择模式 → 用�
 5. **章节生成输出协议**：单次 LLM 调用输出正文 + `<LEARNFLOW_META>` 分隔符 + JSON（`{summary, knowledge_points[]}`），省去第二次抽取调用；JSON 解析失败不致命（正文仍有效）。
 6. **批注对话获取**：标注列表不含 conversation_id，前端通过 `GET /api/annotations/{id}/conversation` 获取（创建时直接用响应里的）。
 7. **里程碑范围确认**：M1+M2 一次性交付（课程生成/阅读器/划线卡片/设置 + 复习/费曼/仪表盘）；§5.8-§5.9 的 M3 项目仍为 TODO 未实现。
+8. **§5.8 代码运行沙箱（M3 已实现）**：`code_executions` 表落地时省略了 `source_message_id/annotation_id`（本实现运行来源恒为文档代码块，仅保留 `document_id/section_id`）；Windows 下 Job Object 提供 内存 256MB / 进程数 64 / kill-on-close 限制，**网络隔离未强制执行**（Job Object 无法便捷禁网，本地单用户场景由时间/进程/内存限制兜底）——§5.8 的"无网络"红线在此场景下以资源限制替代；Python 用当前解释器 `-I -B -X utf8` 隔离运行；C++ 需要系统 PATH 中有 g++/clang++，缺失时返回 `compiler_missing` 与安装指引；执行结果持久化，阅读器按块回显最新一条。
+9. **校验错误归一**：全局 RequestValidationError 处理器把 FastAPI 默认的 422 结构化错误转为 400 + 中文平铺消息。
+10. **M1/M2 缺口收口**：复习页手工建卡、课程级"自动生成知识点复习卡"开关（`PATCH /api/courses/{id}`）、仪表盘薄弱点直达费曼入口、费曼列表显示知识点标题，均已补齐。

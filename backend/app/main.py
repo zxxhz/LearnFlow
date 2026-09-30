@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -42,6 +43,20 @@ def create_app() -> FastAPI:
     @app.exception_handler(LLMError)
     async def llm_error_handler(_: Request, exc: LLMError):
         return JSONResponse(status_code=400, content={"detail": exc.message})
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_handler(_: Request, exc: RequestValidationError):
+        # 统一转成 400 + 中文平铺消息（pydantic v2 会把 ValueError 包成 "Value error, xxx"）
+        msgs = []
+        for err in exc.errors():
+            msg = str(err.get("msg", ""))
+            if msg.startswith("Value error, "):
+                msg = msg[len("Value error, "):]
+            msgs.append(msg)
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "；".join(msgs) if msgs else "参数错误"},
+        )
 
     if (STATIC_DIR / "index.html").exists():
         if (STATIC_DIR / "assets").exists():

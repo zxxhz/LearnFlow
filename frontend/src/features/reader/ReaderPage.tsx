@@ -41,6 +41,11 @@ export default function ReaderPage() {
     queryFn: () => api.courses.get(courseId!),
     enabled: !!courseId,
   });
+  const execsQuery = useQuery({
+    queryKey: ["execs", documentId],
+    queryFn: () => api.documents.executions(documentId!),
+    enabled: !!documentId,
+  });
 
   const content = contentQuery.data;
   const annotations = annsQuery.data ?? [];
@@ -81,7 +86,34 @@ export default function ReaderPage() {
   const [regenOpen, setRegenOpen] = useState(false);
   const [regenInstruction, setRegenInstruction] = useState("");
   const [regenMsg, setRegenMsg] = useState("");
+  const [runningSection, setRunningSection] = useState<string | null>(null);
+  const [runError, setRunError] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
+
+  const execBySection = useMemo(
+    () => new Map((execsQuery.data ?? []).map((e) => [e.section_id, e])),
+    [execsQuery.data]
+  );
+
+  // 运行代码块（PRD §5.8）：结果由后端持久化，查询刷新后回显
+  const onRunCode = async (sectionId: string, lang: string, code: string) => {
+    if (!documentId) return;
+    setRunningSection(sectionId);
+    setRunError("");
+    try {
+      await api.executions.run({
+        document_id: documentId,
+        section_id: sectionId,
+        language: lang,
+        code,
+      });
+      queryClient.invalidateQueries({ queryKey: ["execs", documentId] });
+    } catch (e) {
+      setRunError((e as Error).message);
+    } finally {
+      setRunningSection(null);
+    }
+  };
 
   const invalidate = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["doc-anns", documentId] });
@@ -344,6 +376,10 @@ export default function ReaderPage() {
                 activeAnnId={activeAnn?.id ?? null}
                 onOpenAnnotation={(a) => openAnnotation(a)}
                 flashSectionId={flashSection}
+                execution={sid ? execBySection.get(sid) ?? null : null}
+                running={runningSection === sid}
+                runError={runningSection === sid ? runError : ""}
+                onRun={onRunCode}
               />
             );
           })}

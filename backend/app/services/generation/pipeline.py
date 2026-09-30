@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.db import async_session_factory
 from app.models import (
     Annotation,
+    CodeExecution,
     Conversation,
     Course,
     Document,
@@ -343,5 +344,6 @@ async def purge_course_data(db: AsyncSession, course: Course) -> None:
         if kp_ids:
             await db.execute(delete(KnowledgePoint).where(KnowledgePoint.id.in_(kp_ids)))
         await db.execute(delete(Section).where(Section.document_id.in_(doc_ids)))
+        await db.execute(delete(CodeExecution).where(CodeExecution.document_id.in_(doc_ids)))
         await db.execute(delete(Document).where(Document.id.in_(doc_ids)))
     shutil.rmtree(settings.courses_dir / course.id, ignore_errors=True)
