@@ -17,6 +17,9 @@ frontend/.vite/
 # 前端构建产物 → 输出到 backend/app/static，同样不入库
 backend/app/static/
 
+# ZCode 本地会话产物
+.zcode/
+
 # 其他
 .DS_Store
 *.log

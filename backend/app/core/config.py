@@ -8,7 +8,7 @@ APP_VERSION = "0.1.0"
 
 # GitHub 仓库（owner/repo）：设置页字段为空时的默认值；发布到 GitHub 后在 .env 里配置
 # APP_GITHUB_REPO=your-name/learnflow 即可启用启动时更新检查
-DEFAULT_GITHUB_REPO = ""
+DEFAULT_GITHUB_REPO = "zxxhz/LearnFlow"
 
 # backend/app/core/config.py → parents[2] = backend/
 _BACKEND_ROOT = Path(__file__).resolve().parents[2]
