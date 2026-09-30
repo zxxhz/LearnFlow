@@ -47,6 +47,8 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
   @apply overflow-x-auto rounded-lg bg-[#f6f8fa] p-4 text-[13px] leading-6;
 }
 .code-block pre code { @apply bg-transparent p-0; }
+/* 带头部栏（语言徽章/运行编辑按钮）时顶部直角，与头部贴合 */
+.code-block.with-header pre { @apply rounded-t-none; }
 
 /* 对话消息里的轻量 markdown */
 .msg-md p { @apply my-1.5; }

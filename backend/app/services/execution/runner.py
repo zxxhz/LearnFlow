@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 
 from app.models.execution import (
     COMPILE_TIMEOUT_SECONDS,
