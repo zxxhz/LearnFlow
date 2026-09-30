@@ -49,6 +49,7 @@ export default function CourseDetailPage() {
             status: d.status as ChapterProgress["status"],
             version: d.version,
             error: null,
+            source: (d.source ?? "generated") as ChapterProgress["source"],
           }))
         );
       } else if (ev.type === "chapter_start" || ev.type === "chapter_done" || ev.type === "chapter_failed") {
@@ -187,6 +188,7 @@ export default function CourseDetailPage() {
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
                     <Badge color={st.color}>{st.label}</Badge>
+                    {d.source === "imported" && <Badge color="blue">导入·原文保留</Badge>}
                     {d.status === "done" && (
                       <Link to={`/read/${d.document_id}`}>
                         <Button>阅读</Button>

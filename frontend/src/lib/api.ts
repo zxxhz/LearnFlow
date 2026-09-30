@@ -12,6 +12,8 @@ import type {
   DocumentContent,
   FeynmanSession,
   FeynmanSessionDetail,
+  ImportAnalysis,
+  ImportSpec,
   KnowledgePoint,
   LLMConfig,
   LLMTestResult,
@@ -27,9 +29,10 @@ import type {
 const BASE = "/api";
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const isForm = typeof FormData !== "undefined" && opts.body instanceof FormData;
   const res = await fetch(BASE + path, {
-    headers: { "Content-Type": "application/json" },
     ...opts,
+    headers: isForm ? opts.headers : { "Content-Type": "application/json", ...opts.headers },
   });
   if (!res.ok) {
     let detail = `请求失败（HTTP ${res.status}）`;
@@ -84,6 +87,20 @@ export const api = {
     get: (id: string) => request<CourseDetail>(`/courses/${id}`),
     update: (id: string, body: { auto_create_cards?: boolean }) =>
       request<Course>(`/courses/${id}`, { method: "PATCH", ...jsonBody(body) }),
+    importAnalyze: (files: File[]) => {
+      const fd = new FormData();
+      files.forEach((f) => fd.append("files", f));
+      return request<ImportAnalysis>("/courses/import/analyze", {
+        method: "POST",
+        body: fd,
+      });
+    },
+    importConfirm: (files: File[], spec: ImportSpec) => {
+      const fd = new FormData();
+      files.forEach((f) => fd.append("files", f));
+      fd.append("spec", JSON.stringify(spec));
+      return request<Course>("/courses/import", { method: "POST", body: fd });
+    },
     delete: (id: string) =>
       request<void>(`/courses/${id}`, { method: "DELETE" }),
   },

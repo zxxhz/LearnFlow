@@ -808,3 +808,4 @@ orphan 标注在标注列表中点"重新挂载"→ 进入选择模式 → 用�
 9. **校验错误归一**：全局 RequestValidationError 处理器把 FastAPI 默认的 422 结构化错误转为 400 + 中文平铺消息。
 10. **M1/M2 缺口收口**：复习页手工建卡、课程级"自动生成知识点复习卡"开关（`PATCH /api/courses/{id}`）、仪表盘薄弱点直达费曼入口、费曼列表显示知识点标题，均已补齐。
 11. **§5.9 桌面壳（已实现）**：Tauri 2 壳位于 `desktop/`，加载 `http://127.0.0.1:8420`（`LEARNFLOW_PORT` 可覆盖）。壳负责后端进程生命周期：启动时若端口空闲则以 `uv run python -m app.main` 拉起（隐藏窗口、禁自动开浏览器），TCP 轮询就绪后跳转，退出时 kill 回收；后端目录定位顺序为 `LEARNFLOW_BACKEND_DIR` → 从 exe 向上查找。托盘：显示窗口 / 开机自启（tauri-plugin-autostart）/ 退出；关窗为隐藏到托盘。个人本机模式后端仍以 uv 源码方式运行（未做 PyInstaller sidecar 打包），分发安装包的前提是目标机器具备 uv + 项目目录；后续做成独立发行版时再引入 sidecar。
+12. **自有 Markdown 导入（M3 增补，已实现）**：`POST /api/courses/import/analyze` + `POST /api/courses/import`（multipart）。切章为机械规则（≥2 个 h1 按 h1 切 → 否则 ≥2 个 h2 按 h2 切 → 整文件一章；章内次级标题作大纲要点），LLM 仅用于修饰课程标题与提取知识点（未配置 LLM 时导入仍可用，跳过知识点）。原文保留三层含义：章节内容为原文精确切片（仅行号定位统一换行）、完整原件归档到 `courses/{cid}/originals/`、用户磁盘源文件只读；`documents.source = imported` 的文档禁用重新生成（API 400 + 前端隐藏入口）。

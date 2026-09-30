@@ -40,6 +40,7 @@ def _progress_list(docs: list[Document]) -> list[ChapterProgress]:
             status=d.status,
             version=d.version,
             error=d.error,
+            source=d.source,
         )
         for d in sorted(docs, key=lambda x: x.chapter_index)
     ]

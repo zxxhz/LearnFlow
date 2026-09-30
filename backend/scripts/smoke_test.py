@@ -86,6 +86,66 @@ def call(base: str, path: str, method: str = "GET", body=None):
             return e.code, {}
 
 
+def multipart_body(fields: dict, files: list[tuple[str, str, bytes]]) -> tuple[bytes, str]:
+    """手工构造 multipart/form-data（fields: {name: str}，files: [(name, filename, bytes)]）。"""
+    boundary = "----LearnFlowSmokeTestBoundary"
+    parts = []
+    for name, value in fields.items():
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+        )
+    for name, filename, data in files:
+        parts.append(
+            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+            "Content-Type: text/markdown\r\n\r\n".encode()
+            + data
+            + b"\r\n"
+        )
+    parts.append(f"--{boundary}--\r\n".encode())
+    return b"".join(parts), boundary
+
+
+def call_multipart(base: str, path: str, fields: dict, files: list[tuple[str, str, bytes]]):
+    body, boundary = multipart_body(fields, files)
+    req = urllib.request.Request(
+        base + path,
+        method="POST",
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read())
+        except Exception:
+            return e.code, {}
+
+
+IMPORT_MD = """# C++ 指针自学笔记
+
+这是我自己整理的笔记，应当原样保留。
+
+# 第一章 指针基础
+
+指针存放内存地址。
+
+```cpp
+int x = 1;
+int* p = &x;
+```
+
+## 1.1 取地址与解引用
+
+*p 就是 x。
+
+# 第二章 动态内存
+
+new 与 delete 必须配对。
+"""
+
+
 def main() -> None:
     course_id, document_id = asyncio.run(seed())
     base = "http://127.0.0.1:8420"
@@ -178,11 +238,42 @@ def main() -> None:
     s, body = call(base, f"/api/documents/{document_id}/executions")
     check("执行历史回显（每块最新一条）", s == 200 and len(body) == 1 and body[0]["status"] == "compiler_missing" or (s == 200 and len(body) >= 1))
 
-    # 7. 仪表盘
+    # 7. 导入自有 Markdown（PRD 实现备注 12）：analyze → confirm → 原文保留
+    s, body = call_multipart(base, "/api/courses/import/analyze", {}, [("files", "notes.md", IMPORT_MD.encode("utf-8"))])
+    check("导入 analyze 识别 3 章", s == 200 and len(body.get("chapters", [])) == 3, json.dumps(body, ensure_ascii=False)[:200])
+    if s == 200:
+        titles = [c["title"] for c in body["chapters"]]
+        check("切章标题正确", titles == ["C++ 指针自学笔记", "第一章 指针基础", "第二章 动态内存"], str(titles))
+        spec = {
+            "title": "我的 C++ 笔记课",
+            "chapters": [
+                {"file_index": c["file_index"], "title": c["title"], "start_line": c["start_line"], "end_line": c["end_line"]}
+                for c in body["chapters"]
+            ],
+        }
+        s, body = call_multipart(
+            base,
+            "/api/courses/import",
+            {"spec": json.dumps(spec, ensure_ascii=False)},
+            [("files", "notes.md", IMPORT_MD.encode("utf-8"))],
+        )
+        check("导入 confirm 建课成功", s == 200 and body.get("status") == "ready", json.dumps(body, ensure_ascii=False)[:200])
+        imported_course = body.get("id")
+        imported_docs = call(base, f"/api/courses/{imported_course}")[1]["documents"]
+        check("导入生成 3 个文档且 source=imported", len(imported_docs) == 3 and all(d["source"] == "imported" for d in imported_docs))
+        first_doc = imported_docs[0]
+        s, body = call(base, f"/api/documents/{first_doc['document_id']}/content")
+        check("导入文档原文保留", s == 200 and "这是我自己整理的笔记" in body["markdown"])
+        s, body = call(base, f"/api/documents/{first_doc['document_id']}/regenerate", "POST", {})
+        check("导入文档禁用重新生成(400)", s == 400 and "原文" in str(body.get("detail", "")), str(body)[:150])
+        s, body = call(base, f"/api/courses/{imported_course}", "DELETE")
+        check("清理导入课程", s == 200)
+
+    # 8. 仪表盘
     s, body = call(base, "/api/dashboard/summary")
     check("仪表盘包含测试课程", s == 200 and any(c["id"] == course_id for c in body["courses"]))
 
-    # 8. 级联删除课程（同时验证全部关联数据清理）
+    # 9. 级联删除课程（同时验证全部关联数据清理）
     s, body = call(base, f"/api/courses/{course_id}", "DELETE")
     check("删除课程", s == 200)
     s, body = call(base, f"/api/documents/{document_id}/content")

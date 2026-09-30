@@ -52,6 +52,7 @@ class ChapterProgress(BaseModel):
     status: str
     version: int
     error: str | None = None
+    source: str = "generated"
 
 
 class CourseDetailOut(CourseOut):

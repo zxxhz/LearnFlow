@@ -12,6 +12,7 @@ class DocumentOut(ORMModel):
     title: str
     version: int
     status: str
+    source: str = "generated"
     summary: str | None
     updated_at: str
 

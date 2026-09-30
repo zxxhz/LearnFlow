@@ -20,6 +20,8 @@ class Document(UUIDPk, UserIdMixin, CreatedAt, Base):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     # pending / generating / done / failed
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    # generated（AI 生成，可重新生成）/ imported（用户导入，原文保留，禁改写）
+    source: Mapped[str] = mapped_column(String(20), default="generated")
     updated_at: Mapped[str] = mapped_column(
         String(40), default=utcnow_iso, onupdate=utcnow_iso
     )

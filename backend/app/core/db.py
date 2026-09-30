@@ -43,4 +43,14 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # 轻量迁移：create_all 不给已存在的表加列（SQLite 无 ADD COLUMN IF NOT EXISTS）
+        from sqlalchemy import text
+
+        for ddl in (
+            "ALTER TABLE documents ADD COLUMN source VARCHAR(20) DEFAULT 'generated'",
+        ):
+            try:
+                await conn.execute(text(ddl))
+            except Exception:  # 列已存在
+                pass
     logger.info("数据库已就绪: %s", settings.db_path)

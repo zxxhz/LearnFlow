@@ -1,5 +1,4 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
 
 const NAV_ITEMS = [
   { to: "/", label: "首页", icon: "🏠" },
@@ -11,7 +10,6 @@ const NAV_ITEMS = [
 
 export default function Layout() {
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -38,15 +36,18 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-gray-100 p-3">
+        <div className="space-y-2 border-t border-gray-100 p-3">
           <button
-            onClick={() => {
-              navigate("/courses/new");
-              queryClient.invalidateQueries();
-            }}
+            onClick={() => navigate("/courses/new")}
             className="w-full rounded-lg bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
           >
             ＋ 新建课程
+          </button>
+          <button
+            onClick={() => navigate("/import")}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            📄 导入 Markdown
           </button>
         </div>
       </aside>

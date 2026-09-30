@@ -8,11 +8,13 @@ from app.api import (
     documents,
     execution,
     feynman,
+    imports,
     review,
     settings,
 )
 
 api_router = APIRouter(prefix="/api")
+api_router.include_router(imports.router)  # /courses/import 需先于 /courses/{id} 注册
 api_router.include_router(settings.router)
 api_router.include_router(courses.router)
 api_router.include_router(documents.router)

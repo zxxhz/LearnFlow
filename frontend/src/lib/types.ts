@@ -39,6 +39,7 @@ export interface ChapterProgress {
   status: DocStatus;
   version: number;
   error: string | null;
+  source: "generated" | "imported";
 }
 
 export interface CourseDetail extends Course {
@@ -57,6 +58,7 @@ export interface DocumentMeta {
   title: string;
   version: number;
   status: DocStatus;
+  source: "generated" | "imported";
   summary: string | null;
   updated_at: string;
 }
@@ -262,6 +264,28 @@ export interface CodeExecution {
   created_at: string;
 }
 
+// ===== Markdown 导入 =====
+export interface ImportChapter {
+  file_index: number;
+  title: string;
+  start_line: number;
+  end_line: number;
+  points: string[];
+}
+
+export interface ImportAnalysis {
+  title: string;
+  title_from_llm: boolean;
+  llm_available: boolean;
+  files: { name: string }[];
+  chapters: ImportChapter[];
+}
+
+export interface ImportSpec {
+  title: string;
+  chapters: { file_index: number; title: string; start_line: number; end_line: number }[];
+}
+
 // ===== SSE 事件负载 =====
 export interface ChatSSEEvent {
   type: "delta" | "done" | "error";
@@ -290,5 +314,6 @@ export interface ProgressSSEEvent {
     title: string;
     status: string;
     version: number;
+    source?: string;
   }[];
 }

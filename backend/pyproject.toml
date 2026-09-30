@@ -12,6 +12,7 @@ dependencies = [
     "pydantic-settings>=2.4",
     "openai>=1.40",
     "markdown-it-py>=3.0",
+    "python-multipart>=0.0.9",
 ]
 
 [tool.uv]

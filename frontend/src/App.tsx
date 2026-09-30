@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router-dom";
 import Layout from "./components/Layout";
 import HomePage from "./features/home/HomePage";
 import NewCoursePage from "./features/course-create/NewCoursePage";
+import ImportPage from "./features/import-course/ImportPage";
 import CourseDetailPage from "./features/course-create/CourseDetailPage";
 import ReaderPage from "./features/reader/ReaderPage";
 import ReviewPage from "./features/review/ReviewPage";
@@ -16,6 +17,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<HomePage />} />
         <Route path="/courses/new" element={<NewCoursePage />} />
+        <Route path="/import" element={<ImportPage />} />
         <Route path="/courses/:courseId" element={<CourseDetailPage />} />
         <Route path="/read/:documentId" element={<ReaderPage />} />
         <Route path="/review" element={<ReviewPage />} />

@@ -341,9 +341,15 @@ export default function ReaderPage() {
             <Button variant="ghost" className="text-xs" onClick={() => setDrawerOpen((v) => !v)}>
               🖍 标注 {annotations.length > 0 && annotations.length}
             </Button>
-            <Button variant="ghost" className="text-xs" onClick={() => setRegenOpen(true)}>
-              ♻️ 重新生成本章
-            </Button>
+            {doc.source === "imported" ? (
+              <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs text-blue-700">
+                导入文档 · 原文保留
+              </span>
+            ) : (
+              <Button variant="ghost" className="text-xs" onClick={() => setRegenOpen(true)}>
+                ♻️ 重新生成本章
+              </Button>
+            )}
           </div>
         </div>
 

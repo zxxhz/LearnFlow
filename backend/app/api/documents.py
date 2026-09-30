@@ -50,7 +50,12 @@ async def content(document_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{document_id}/regenerate")
 async def regenerate(document_id: str, body: RegenerateRequest, db: AsyncSession = Depends(get_db)):
-    await _get_doc(db, document_id)
+    doc = await _get_doc(db, document_id)
+    if doc.source == "imported":
+        raise HTTPException(
+            status_code=400,
+            detail="导入的文档保留原文，不支持重新生成；如需 AI 重写，请新建课程后学习。",
+        )
     try:
         await pipeline.queue_single_document(document_id, body.instruction)
     except LookupError as e:
