@@ -1,0 +1,167 @@
+// 统一 API 客户端：错误统一抛 Error(detail 中文消息)
+import type {
+  Anchor,
+  Annotation,
+  AnnotationColor,
+  AnnotationCreated,
+  Course,
+  CourseDetail,
+  CourseListItem,
+  DashboardSummary,
+  DocumentContent,
+  FeynmanSession,
+  FeynmanSessionDetail,
+  KnowledgePoint,
+  LLMConfig,
+  LLMTestResult,
+  Message,
+  OutlineItem,
+  Preferences,
+  ReviewCard,
+  ReviewQueue,
+  ReviewStats,
+  SettingsData,
+} from "./types";
+
+const BASE = "/api";
+
+async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const res = await fetch(BASE + path, {
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+  });
+  if (!res.ok) {
+    let detail = `请求失败（HTTP ${res.status}）`;
+    try {
+      const j = await res.json();
+      if (j?.detail) {
+        detail =
+          typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail);
+      }
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+function jsonBody(body: unknown): RequestInit {
+  return { body: JSON.stringify(body) };
+}
+
+export const api = {
+  settings: {
+    get: () => request<SettingsData>("/settings"),
+    update: (body: {
+      llm?: Partial<LLMConfig>;
+      preferences?: Partial<Preferences>;
+    }) => request<SettingsData>("/settings", { method: "PUT", ...jsonBody(body) }),
+    testLlm: () => request<LLMTestResult>("/settings/llm/test", { method: "POST" }),
+    openDataDir: () =>
+      request<{ ok: boolean }>("/settings/open-data-dir", { method: "POST" }),
+  },
+  courses: {
+    create: (body: {
+      topic: string;
+      level?: string | null;
+      scope?: string | null;
+      chapter_count?: number | null;
+    }) => request<{ course: Course; outline: OutlineItem[] }>("/courses", {
+      method: "POST",
+      ...jsonBody(body),
+    }),
+    saveOutline: (id: string, outline: OutlineItem[]) =>
+      request<Course>(`/courses/${id}/outline`, {
+        method: "PUT",
+        ...jsonBody({ outline }),
+      }),
+    generate: (id: string) =>
+      request<Course>(`/courses/${id}/generate`, { method: "POST" }),
+    list: () => request<CourseListItem[]>("/courses"),
+    get: (id: string) => request<CourseDetail>(`/courses/${id}`),
+    delete: (id: string) =>
+      request<void>(`/courses/${id}`, { method: "DELETE" }),
+  },
+  documents: {
+    getContent: (id: string) =>
+      request<DocumentContent>(`/documents/${id}/content`),
+    regenerate: (id: string, instruction?: string) =>
+      request<{ ok: boolean }>(`/documents/${id}/regenerate`, {
+        method: "POST",
+        ...jsonBody({ instruction: instruction ?? null }),
+      }),
+  },
+  annotations: {
+    listForDoc: (docId: string) =>
+      request<Annotation[]>(`/documents/${docId}/annotations`),
+    create: (docId: string, body: Anchor & { color: AnnotationColor }) =>
+      request<AnnotationCreated>(`/documents/${docId}/annotations`, {
+        method: "POST",
+        ...jsonBody(body),
+      }),
+    update: (
+      id: string,
+      body: {
+        color?: AnnotationColor;
+        note?: string | null;
+        status?: string;
+        anchor?: Anchor;
+      }
+    ) => request<Annotation>(`/annotations/${id}`, {
+      method: "PATCH",
+      ...jsonBody(body),
+    }),
+    remove: (id: string) =>
+      request<void>(`/annotations/${id}`, { method: "DELETE" }),
+  },
+  conversations: {
+    messages: (id: string) =>
+      request<Message[]>(`/conversations/${id}/messages`),
+  },
+  knowledgePoints: {
+    forDoc: (docId: string) =>
+      request<KnowledgePoint[]>(`/documents/${docId}/knowledge-points`),
+  },
+  feynman: {
+    start: (body: { knowledge_point_id: string; explanation: string }) =>
+      request<FeynmanSessionDetail>("/feynman/sessions", {
+        method: "POST",
+        ...jsonBody(body),
+      }),
+    list: (knowledgePointId?: string) =>
+      request<FeynmanSession[]>(
+        `/feynman/sessions${
+          knowledgePointId ? `?knowledge_point_id=${knowledgePointId}` : ""
+        }`
+      ),
+    get: (id: string) => request<FeynmanSessionDetail>(`/feynman/sessions/${id}`),
+    evaluate: (id: string) =>
+      request<FeynmanSessionDetail>(`/feynman/sessions/${id}/evaluate`, {
+        method: "POST",
+      }),
+  },
+  review: {
+    queueToday: () => request<ReviewQueue>("/review/queue/today"),
+    grade: (cardId: string, quality: 1 | 3 | 4 | 5) =>
+      request<ReviewCard>(`/review/cards/${cardId}/grade`, {
+        method: "POST",
+        ...jsonBody({ quality }),
+      }),
+    createCard: (body: {
+      front: string;
+      back?: string;
+      knowledge_point_id?: string | null;
+      annotation_id?: string | null;
+    }) => request<ReviewCard>("/review/cards", { method: "POST", ...jsonBody(body) }),
+    updateCard: (id: string, body: { front?: string; back?: string; suspended?: boolean }) =>
+      request<ReviewCard>(`/review/cards/${id}`, { method: "PATCH", ...jsonBody(body) }),
+    deleteCard: (id: string) =>
+      request<void>(`/review/cards/${id}`, { method: "DELETE" }),
+    stats: () => request<ReviewStats>("/review/stats"),
+  },
+  dashboard: {
+    summary: () => request<DashboardSummary>("/dashboard/summary"),
+  },
+};

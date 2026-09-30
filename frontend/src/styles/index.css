@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== 划线高亮配色（PRD FR-3.1 四色） ===== */
+mark.hl {
+  background: transparent;
+  color: inherit;
+  padding: 1px 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+mark.hl-yellow { background-color: rgba(253, 230, 138, 0.75); }
+mark.hl-green  { background-color: rgba(187, 247, 208, 0.8); }
+mark.hl-blue   { background-color: rgba(191, 219, 254, 0.8); }
+mark.hl-pink   { background-color: rgba(251, 207, 232, 0.8); }
+mark.hl-fuzzy  { box-shadow: inset 0 -2px 0 rgba(148, 163, 184, 0.8); }
+mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
+
+/* 代码块整块标注（PRD §5.2：代码块标注整块呈现） */
+.ann-code-flag {
+  outline: 2px dashed rgba(99, 102, 241, 0.6);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ===== 阅读器排版 ===== */
+.doc-content { @apply text-[15px] leading-7 text-gray-800; }
+.doc-content h1 { @apply mt-2 mb-5 text-3xl font-bold text-gray-900; }
+.doc-content h2 { @apply mt-8 mb-4 border-b border-gray-100 pb-1 text-2xl font-semibold text-gray-900; }
+.doc-content h3 { @apply mt-6 mb-3 text-xl font-semibold text-gray-900; }
+.doc-content h4 { @apply mt-4 mb-2 text-lg font-semibold text-gray-800; }
+.doc-content p { @apply my-3; }
+.doc-content ul { @apply my-3 list-disc pl-6; }
+.doc-content ol { @apply my-3 list-decimal pl-6; }
+.doc-content li { @apply my-1; }
+.doc-content blockquote { @apply my-4 border-l-4 border-brand-200 bg-brand-50/50 px-4 py-1 text-gray-600; }
+.doc-content table { @apply my-4 w-full border-collapse text-sm; }
+.doc-content th, .doc-content td { @apply border border-gray-200 px-3 py-1.5 text-left; }
+.doc-content th { @apply bg-gray-50 font-medium; }
+.doc-content hr { @apply my-6 border-gray-100; }
+.doc-content a { @apply text-brand-600 underline; }
+.doc-content .katex-display { @apply my-4 overflow-x-auto py-1; }
+
+/* 代码块容器 */
+.code-block pre {
+  @apply overflow-x-auto rounded-lg bg-[#f6f8fa] p-4 text-[13px] leading-6;
+}
+.code-block pre code { @apply bg-transparent p-0; }
+
+/* 对话消息里的轻量 markdown */
+.msg-md p { @apply my-1.5; }
+.msg-md ul { @apply my-1.5 list-disc pl-5; }
+.msg-md ol { @apply my-1.5 list-decimal pl-5; }
+.msg-md pre { @apply my-2 overflow-x-auto rounded-md bg-gray-900 p-3 text-xs text-gray-100; }
+.msg-md code { @apply rounded bg-gray-100 px-1 py-0.5 text-[13px]; }
+.msg-md pre code { @apply bg-transparent p-0 text-inherit; }
+.msg-md .katex-display { @apply overflow-x-auto; }
+
+/* 滚动条美化 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { @apply rounded-full bg-gray-300; }
+::-webkit-scrollbar-track { background: transparent; }
