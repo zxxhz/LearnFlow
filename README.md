@@ -36,6 +36,20 @@ cd backend && uv run uvicorn app.main:app --reload   # 后端 :8420
 cd frontend && npm run dev                            # 前端 :5173，/api 自动代理
 ```
 
+### 桌面应用（Tauri 壳）
+
+独立窗口 + 系统托盘常驻 + 开机自启开关；壳负责拉起/回收本地后端，关窗即最小化到托盘。
+
+```bash
+# 前置：Rust 工具链（rustup，MSVC stable）
+cd desktop
+npm install
+npx tauri dev     # 开发调试
+npx tauri build   # 产出安装包（NSIS，位于 src-tauri/target/release/bundle/）
+```
+
+壳按以下顺序定位后端目录：环境变量 `LEARNFLOW_BACKEND_DIR` → 从 exe 向上查找含 `backend/app` 的目录。端口默认 8420，可用 `LEARNFLOW_PORT` 覆盖。若 8420 已有服务在跑，壳会直接复用而不重复拉起。
+
 ## 数据与备份
 
 所有数据在 `backend/data/`（自包含）：

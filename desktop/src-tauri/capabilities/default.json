@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "LearnFlow 主窗口默认能力（webview 仅展示本地服务页面，不调用 Tauri IPC）",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
