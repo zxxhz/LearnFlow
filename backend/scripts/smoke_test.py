@@ -303,7 +303,21 @@ def main() -> None:
         str(body)[:150],
     )
 
-    # 10. 仪表盘
+    # 10. 更新检查（PRD 实现备注 15）
+    s, body = call(base, "/api/version")
+    check("版本接口", s == 200 and body.get("version", "").count(".") == 2, str(body)[:100])
+    from app.services.update import has_newer_version
+
+    assert has_newer_version("v9.9.9", "0.1.0") and not has_newer_version("0.1.0", "0.1.0")
+    # 无网络/未配置仓库时必须优雅降级（不允许 5xx 或挂起）
+    s, body = call(base, "/api/update/check?force=1", "POST")
+    check(
+        "更新检查优雅降级",
+        s == 200 and ("has_update" in body) and ("error" in body or "latest" in body),
+        str(body)[:150],
+    )
+
+    # 11. 仪表盘
     s, body = call(base, "/api/dashboard/summary")
     check("仪表盘包含测试课程", s == 200 and any(c["id"] == course_id for c in body["courses"]))
 

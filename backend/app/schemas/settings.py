@@ -29,6 +29,8 @@ class Preferences(BaseModel):
     chapter_length: int = 3000
     feynman_max_rounds: int = 4
     auto_create_cards: bool = True
+    # GitHub 仓库 owner/repo；留空回落环境变量 APP_GITHUB_REPO（PRD 实现备注 15）
+    github_repo: str = ""
 
 
 def _mask(key: str) -> str:

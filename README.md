@@ -102,6 +102,19 @@ f2(x)=x**2/8
 ```
 ````
 
+## 发布新版本（更新检查）
+
+应用启动时会静默查询 GitHub Releases 最新版本并与本地版本比较，有新版显示横幅（设置页可手动检查、可配置仓库）。
+
+发布流程：
+
+1. 同步三处版本号：`backend/app/core/config.py` 的 `APP_VERSION`、`frontend/package.json` 与 `desktop/src-tauri/tauri.conf.json` 的 `version`
+2. `cd desktop && npx tauri build` 产出安装包
+3. 在 GitHub 仓库创建 Release：tag 用 `v<版本号>`（如 `v0.2.0`），说明写在 Release body（更新横幅只放链接，正文留在发布页）
+4. 启用检查：设置页「GitHub 仓库」填 `owner/repo` 并保存，或在 `backend/.env` 里配置 `APP_GITHUB_REPO=owner/repo`
+
+检查走 GitHub API（未认证，无请求体），超时 5 秒、失败静默，自动检查间隔 1 小时。
+
 ## 技术栈
 
 FastAPI + SQLAlchemy 2.0 (async) + SQLite ｜ React 18 + TS + Vite + TailwindCSS ｜ markdown-it（前后端同规则块解析）｜ KaTeX ｜ Shiki ｜ diff-match-patch（划线模糊锚定）｜ SSE 流式 ｜ OpenAI 兼容 LLM 适配层

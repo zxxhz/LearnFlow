@@ -1,5 +1,8 @@
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../lib/api";
+import type { UpdateCheckResult } from "../lib/types";
 
 const NAV_ITEMS = [
   { to: "/", label: "首页", icon: "🏠" },
@@ -62,6 +65,30 @@ function NavActions({ onNavigate }: { onNavigate?: () => void }) {
 
 export default function Layout() {
   const [navOpen, setNavOpen] = useState(false);
+  const [dismissed, setDismissed] = useState(
+    () => sessionStorage.getItem("update-dismissed") ?? ""
+  );
+
+  // 打开应用时静默检查新版本（后端节流 1h；失败静默）（PRD 实现备注 15）
+  const { data: update } = useQuery<UpdateCheckResult>({
+    queryKey: ["update-check"],
+    queryFn: () => api.update.check(false),
+    retry: false,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+  });
+
+  const showBanner =
+    update?.has_update && update.latest && dismissed !== update.latest;
+
+  const dismiss = () => {
+    if (update?.latest) {
+      sessionStorage.setItem("update-dismissed", update.latest);
+      setDismissed(update.latest);
+    } else {
+      setDismissed("*");
+    }
+  };
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -95,6 +122,33 @@ export default function Layout() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* 更新提示横幅 */}
+        {showBanner && (
+          <div className="flex items-center justify-between gap-3 border-b border-green-200 bg-green-50 px-4 py-2 text-sm text-green-800">
+            <span>
+              🎉 新版本 <strong>{update!.latest}</strong> 已发布（当前{" "}
+              {update!.current}）
+            </span>
+            <div className="flex items-center gap-2">
+              {update!.url && (
+                <a
+                  href={update!.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-md bg-green-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-800"
+                >
+                  查看发布页
+                </a>
+              )}
+              <button
+                className="text-xs text-green-700 underline"
+                onClick={dismiss}
+              >
+                本次忽略
+              </button>
+            </div>
+          </div>
+        )}
         {/* 移动端顶栏 */}
         <header className="flex items-center gap-3 border-b border-gray-200 bg-white px-4 py-2.5 md:hidden">
           <button

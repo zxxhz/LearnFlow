@@ -121,6 +121,7 @@ export interface Preferences {
   chapter_length: number;
   feynman_max_rounds: number;
   auto_create_cards: boolean;
+  github_repo: string;
 }
 
 export interface SceneLLMConfig {
@@ -299,6 +300,16 @@ export interface ImportAnalysis {
 export interface ImportSpec {
   title: string;
   chapters: { file_index: number; title: string; start_line: number; end_line: number }[];
+}
+
+export interface UpdateCheckResult {
+  has_update: boolean;
+  current: string;
+  latest?: string;
+  url?: string;
+  notes?: string;
+  repo?: string;
+  error?: string;
 }
 
 // ===== SSE 事件负载 =====

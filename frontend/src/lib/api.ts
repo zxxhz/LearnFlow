@@ -26,6 +26,7 @@ import type {
   SceneLLMConfig,
   SceneName,
   SettingsData,
+  UpdateCheckResult,
 } from "./types";
 
 const BASE = "/api";
@@ -72,6 +73,13 @@ export const api = {
   math: {
     render: (body: { expressions: string; x_min?: number; x_max?: number }) =>
       request<{ svg: string }>("/math/render", { method: "POST", ...jsonBody(body) }),
+  },
+  update: {
+    version: () => request<{ version: string }>("/version"),
+    check: (force = false) =>
+      request<UpdateCheckResult>(`/update/check${force ? "?force=1" : ""}`, {
+        method: "POST",
+      }),
   },
   courses: {
     create: (body: {

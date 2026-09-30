@@ -36,6 +36,7 @@ export default function SettingsPage() {
     chapter_length: 3000,
     feynman_max_rounds: 4,
     auto_create_cards: true,
+    github_repo: "",
   });
   const [saveMsg, setSaveMsg] = useState("");
 
@@ -90,7 +91,32 @@ export default function SettingsPage() {
 
   const [testResult, setTestResult] = useState<string>("");
   const [testing, setTesting] = useState(false);
-  const testLlm = async () => {
+  const [version, setVersion] = useState<string>("");
+  const [updateResult, setUpdateResult] = useState<string>("");
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+
+  const checkUpdate = async (force: boolean) => {
+    setCheckingUpdate(true);
+    setUpdateResult("");
+    try {
+      const r = await api.update.check(force);
+      setUpdateResult(
+        r.has_update
+          ? `🎉 有新版本 ${r.latest}（当前 ${r.current}），点击横幅中的「查看发布页」更新。`
+          : r.error
+            ? `ℹ️ ${r.error}`
+            : `✅ 已是最新版本（${r.current}）`
+      );
+    } catch (e) {
+      setUpdateResult(`❌ ${(e as Error).message}`);
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
+
+  useEffect(() => {
+    api.update.version().then((v) => setVersion(v.version)).catch(() => {});
+  }, []);  const testLlm = async () => {
     setTesting(true);
     setTestResult("");
     try {
@@ -299,6 +325,16 @@ export default function SettingsPage() {
           />
           文档生成后自动为知识点创建复习卡
         </label>
+        <div className="mt-3">
+          <label className="mb-1 block text-sm font-medium text-gray-700">
+            GitHub 仓库（更新检查用，格式 owner/repo；留空禁用）
+          </label>
+          <Input
+            value={prefs.github_repo}
+            onChange={(e) => setPrefs({ ...prefs, github_repo: e.target.value })}
+            placeholder="如 your-name/learnflow"
+          />
+        </div>
         <Button className="mt-4" disabled={savePrefs.isPending} onClick={() => savePrefs.mutate()}>
           保存偏好
         </Button>
@@ -318,6 +354,29 @@ export default function SettingsPage() {
         >
           打开数据目录
         </Button>
+      </section>
+
+      {/* 关于 */}
+      <section className="mt-4 rounded-xl border border-gray-200 bg-white p-6">
+        <h2 className="text-base font-semibold text-gray-900">
+          关于 LearnFlow{" "}
+          {version && <span className="ml-1 text-sm font-normal text-gray-400">v{version}</span>}
+        </h2>
+        <div className="mt-3 flex items-center gap-3">
+          <Button variant="secondary" disabled={checkingUpdate} onClick={() => checkUpdate(true)}>
+            {checkingUpdate ? (
+              <>
+                <Spinner /> 检查中…
+              </>
+            ) : (
+              "检查更新"
+            )}
+          </Button>
+          {updateResult && <span className="text-sm text-gray-600">{updateResult}</span>}
+        </div>
+        <p className="mt-2 text-xs text-gray-400">
+          打开应用时会自动检查一次（静默，失败不影响使用）；仓库发布 GitHub Release 后生效。
+        </p>
       </section>
     </div>
   );

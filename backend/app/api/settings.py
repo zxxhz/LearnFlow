@@ -124,3 +124,18 @@ async def open_data_dir():
     except Exception as e:
         logger.warning("open data dir failed: %r", e)
         return {"ok": False}
+
+
+@router.get("/version")
+async def version():
+    from app.core.config import APP_VERSION
+
+    return {"version": APP_VERSION}
+
+
+@router.post("/update/check")
+async def update_check(force: bool = False, db: AsyncSession = Depends(get_db)):
+    """检查新版本（PRD 实现备注 15）。打开应用时前端自动触发（节流 1h），设置页可强制。"""
+    from app.services.update import check_update
+
+    return await check_update(db, force=force)

@@ -15,6 +15,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "sympy>=1.14.0",
     "matplotlib>=3.11.2",
+    "httpx>=0.28.1",
 ]
 
 [tool.uv]
