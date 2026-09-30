@@ -1,10 +1,12 @@
 """应用入口。
 
 - 生产模式：uv run python -m app.main  → 托管 API + 前端构建产物，自动打开浏览器
+- 桌面打包：PyInstaller（run_backend.py 入口）→ 同上，路径按冻结模式解析
 - 开发模式：uv run uvicorn app.main:app --reload（前端另起 vite dev server）
 """
 import contextlib
 import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -22,7 +24,15 @@ from app.services.llm.errors import LLMError
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
-STATIC_DIR = Path(__file__).parent / "static"
+
+def _static_dir() -> Path:
+    if getattr(sys, "frozen", False):
+        # PyInstaller onedir：datas 进入 _internal（sys._MEIPASS），spec 里映射为 app/static
+        return Path(sys._MEIPASS) / "app" / "static"  # noqa: SLF001
+    return Path(__file__).parent / "static"
+
+
+STATIC_DIR = _static_dir()
 
 
 @asynccontextmanager

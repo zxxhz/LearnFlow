@@ -1,6 +1,6 @@
 [project]
 name = "learnflow-backend"
-version = "0.1.0"
+version = "0.1.1"
 description = "LearnFlow 学习 Agent 后端（FastAPI + SQLite）"
 requires-python = ">=3.11"
 dependencies = [
@@ -20,3 +20,8 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.10",
+]

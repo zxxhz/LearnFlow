@@ -17,6 +17,10 @@ frontend/.vite/
 # 前端构建产物 → 输出到 backend/app/static，同样不入库
 backend/app/static/
 
+# PyInstaller 打包产物与中间文件
+backend/dist/
+backend/build/
+
 # ZCode 本地会话产物
 .zcode/
 

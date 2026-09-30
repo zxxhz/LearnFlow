@@ -41,6 +41,8 @@ async def get_db():
 async def init_db() -> None:
     from app.models import Base  # noqa: F401  确保全部模型已注册
 
+    # 打包版数据目录可能不存在（APP_DATA_DIR 指向全新应用数据目录）
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # 轻量迁移：create_all 不给已存在的表加列（SQLite 无 ADD COLUMN IF NOT EXISTS）

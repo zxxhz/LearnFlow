@@ -61,12 +61,12 @@
   <body>
     <div class="logo">L</div>
     <div class="spin"></div>
-    <div id="msg">正在启动本地服务（首次运行需安装依赖，可能较慢）…</div>
+    <div id="msg">正在启动本地服务…</div>
     <div id="err">
-      本地服务未能启动。请检查：<br />
-      1. 项目目录中 backend/ 是否完整；<br />
-      2. 是否已安装 uv（winget install astral-sh.uv）；<br />
-      3. 手动在 backend/ 目录运行 <code>uv run python -m app.main</code> 查看报错。
+      本地服务未能启动。请尝试重新安装 LearnFlow；若反复出现，欢迎到
+      <a href="https://github.com/zxxhz/LearnFlow/issues">GitHub Issues</a> 反馈。<br />
+      <span style="color:#9ca3af">开发模式：请确认已安装 uv，且能在 backend/ 目录运行
+      <code>uv run python -m app.main</code> 查看报错。</span>
     </div>
     <script>
       // 30 秒仍未就绪则提示排查（成功时由壳直接跳转页面）

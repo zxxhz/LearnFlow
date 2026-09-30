@@ -1,8 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 //! LearnFlow 桌面壳（PRD §5.9 / §7.1）：
-//! 启动时拉起本地后端（uv run python -m app.main），就绪后加载 127.0.0.1:8420；
+//! 启动时拉起本地后端，就绪后加载 127.0.0.1:8420；
 //! 托盘常驻（显示窗口 / 开机自启 / 退出），关窗最小化到托盘，退出时回收后端进程。
+//! 打包版（release）：拉起随包分发的 PyInstaller 后端（resources/backend/）；
+//! 开发版（debug）：uv run python -m app.main（需已安装 uv）。
 
 use std::net::TcpStream;
 use std::path::PathBuf;
@@ -45,12 +47,52 @@ fn backend_ready(port: u16) -> bool {
     TcpStream::connect(("127.0.0.1", port)).is_ok()
 }
 
-fn spawn_backend(port: u16) -> Option<Child> {
-    let dir = backend_dir();
-    let mut cmd = Command::new("uv");
-    cmd.args(["run", "python", "-m", "app.main"])
-        .current_dir(&dir)
-        .env("APP_OPEN_BROWSER", "0")
+fn packaged_backend_exe(app: &AppHandle) -> Option<PathBuf> {
+    let exe = app
+        .path()
+        .resource_dir()
+        .ok()?
+        .join("backend")
+        .join("learnflow-backend.exe");
+    if exe.exists() {
+        Some(exe)
+    } else {
+        eprintln!("[learnflow] 未找到内置后端：{}", exe.display());
+        None
+    }
+}
+
+fn spawn_backend(app: &AppHandle, port: u16) -> Option<Child> {
+    // 打包版拉起 PyInstaller 后端（exe 同目录为只读安装区，数据走系统应用数据目录）；
+    // LEARNFLOW_BACKEND_EXE 可在开发期显式指定打包后端联调。
+    let backend: Option<PathBuf> = if let Ok(p) = std::env::var("LEARNFLOW_BACKEND_EXE") {
+        Some(PathBuf::from(p))
+    } else if cfg!(debug_assertions) {
+        None
+    } else {
+        packaged_backend_exe(app)
+    };
+
+    let mut cmd = match backend {
+        Some(exe) => {
+            let mut c = Command::new(&exe);
+            if let Some(dir) = exe.parent() {
+                c.current_dir(dir);
+            }
+            if let Ok(data) = app.path().app_data_dir() {
+                let _ = std::fs::create_dir_all(&data);
+                c.env("APP_DATA_DIR", &data);
+            }
+            c
+        }
+        None => {
+            let mut c = Command::new("uv");
+            c.args(["run", "python", "-m", "app.main"])
+                .current_dir(backend_dir());
+            c
+        }
+    };
+    cmd.env("APP_OPEN_BROWSER", "0")
         .env("APP_PORT", port.to_string());
     #[cfg(windows)]
     {
@@ -60,7 +102,7 @@ fn spawn_backend(port: u16) -> Option<Child> {
     match cmd.spawn() {
         Ok(child) => Some(child),
         Err(e) => {
-            eprintln!("[learnflow] 后端进程启动失败（需要已安装 uv）: {e}");
+            eprintln!("[learnflow] 后端进程启动失败（打包版应含内置后端，开发版需已安装 uv）: {e}");
             None
         }
     }
@@ -116,7 +158,7 @@ fn main() {
             std::thread::spawn(move || {
                 let mut spawned = false;
                 if !backend_ready(port) {
-                    let child = spawn_backend(port);
+                    let child = spawn_backend(&handle, port);
                     *handle.state::<Backend>().0.lock().unwrap() = child;
                     spawned = true;
                 }

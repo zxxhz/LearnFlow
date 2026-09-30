@@ -19,7 +19,9 @@
 
 ## 运行
 
-依赖：Python 3.11+（[uv](https://docs.astral.sh/uv/)）、Node 18+（仅构建前端时需要）。
+**下载安装包（推荐）**：从 [Releases](https://github.com/zxxhz/LearnFlow/releases) 下载 `LearnFlow_x.x.x_x64-setup.exe` 双击安装即可——内置 Python 运行环境与全部依赖，**无需安装 Python / uv**。仅"文档内 C++ 代码运行"需要本机装有 g++。
+
+从源码运行依赖：Python 3.11+（[uv](https://docs.astral.sh/uv/)）、Node 18+（仅构建前端时需要）。
 
 ```bash
 # 1. 构建前端（产物输出到 backend/app/static；仓库若已带 static 可跳过）
@@ -46,17 +48,23 @@ cd frontend && npm run dev                            # 前端 :5173，/api 自�
 
 独立窗口 + 系统托盘常驻 + 开机自启开关；壳负责拉起/回收本地后端，关窗即最小化到托盘。
 
+打包版后端用 PyInstaller 打成独立 exe 随包分发（目标机器无需 Python/uv）：
+
 ```bash
 # 前置：Rust 工具链（rustup，MSVC stable）
+cd backend && uv sync && uv run python scripts/build_backend.py
+#   → backend/dist/learnflow-backend/（learnflow-backend.exe + _internal/）
+
 cd desktop
 npm install
-npx tauri dev     # 开发调试
+npx tauri dev     # 开发调试（debug 构建走 uv 流程，不依赖打包产物）
 npx tauri build   # 产出安装包（NSIS，位于 src-tauri/target/release/bundle/）
+                  # release 构建通过 bundle.resources 打包 backend/dist/learnflow-backend
 ```
 
-壳按以下顺序定位后端目录：环境变量 `LEARNFLOW_BACKEND_DIR` → 从 exe 向上查找含 `backend/app` 的目录。端口默认 8420，可用 `LEARNFLOW_PORT` 覆盖。若 8420 已有服务在跑，壳会直接复用而不重复拉起。
+开发版（debug 构建）按以下顺序定位后端目录：环境变量 `LEARNFLOW_BACKEND_DIR` → 从 exe 向上查找含 `backend/app` 的目录，随后以 `uv run python -m app.main` 拉起；打包版（release 构建）直接拉起安装目录内的 `backend/learnflow-backend.exe`，数据写入系统应用数据目录（`APP_DATA_DIR`）。端口默认 8420，可用 `LEARNFLOW_PORT` 覆盖。若 8420 已有服务在跑，壳会直接复用而不重复拉起。开发期联调打包后端：设置环境变量 `LEARNFLOW_BACKEND_EXE` 指向后端 exe。
 
-> 国内网络提示：tauri build 首次会从 GitHub 下载 NSIS 工具链到 `%LOCALAPPDATA%/tauri/`，若超时，可用镜像（如 `https://ghproxy.net/https://github.com/<原路径>`）手动下载 `nsis-3.11.zip` 解压为 `tauri/NSIS/`、`nsis_tauri_utils.dll` 放入 `tauri/NSIS/Plugins/x86-unicode/`（sha1 应为 75197FEE…，与 cli 二进制内嵌哈希一致）后重试。安装包只含桌面壳（约 2MB），目标机器仍需项目目录 + uv（sidecar 独立打包见 PRD §16.11）。
+> 国内网络提示：tauri build 首次会从 GitHub 下载 NSIS 工具链到 `%LOCALAPPDATA%/tauri/`，若超时，可用镜像（如 `https://ghproxy.net/https://github.com/<原路径>`）手动下载 `nsis-3.11.zip` 解压为 `tauri/NSIS/`、`nsis_tauri_utils.dll` 放入 `tauri/NSIS/Plugins/x86-unicode/`（sha1 应为 75197FEE…，与 cli 二进制内嵌哈希一致）后重试。
 
 ## 数据与备份
 
@@ -86,7 +94,7 @@ cd backend && APP_HOST=0.0.0.0 uv run python -m app.main
 
 文档中标注 ` ```python ` 或 ` ```cpp ` 的代码块右上角有「▶ 运行」按钮：
 
-- **Python**：开箱即用（使用当前解释器，`-I` 隔离模式 + UTF-8）
+- **Python**：开箱即用——源码运行时用当前解释器；安装包版使用随包内置的独立 Python（`-I` 隔离模式 + UTF-8，仅标准库）
 - **C++**：需要本机安装 g++ 或 clang++（如 [MinGW-w64](https://www.mingw-w64.org/)）并加入 PATH；未安装时会给出友好提示
 - 安全限制：单次运行限时 10 秒（超时杀进程树）、内存上限 256MB（Windows Job Object）、进程数上限、stdin 关闭、工作目录一次性临时目录；全局串行执行
 - 结果（stdout/stderr/退出码/耗时）持久化保存，重新打开文档仍显示最近一次结果
@@ -108,8 +116,8 @@ f2(x)=x**2/8
 
 发布流程：
 
-1. 同步三处版本号：`backend/app/core/config.py` 的 `APP_VERSION`、`frontend/package.json` 与 `desktop/src-tauri/tauri.conf.json` 的 `version`
-2. `cd desktop && npx tauri build` 产出安装包
+1. 同步版本号：`backend/app/core/config.py` 的 `APP_VERSION`、`backend/pyproject.toml`、`desktop/package.json` 与 `desktop/src-tauri/tauri.conf.json` 的 `version`（Cargo.toml 随构建同步）
+2. `cd backend && uv run python scripts/build_backend.py` 打包后端 exe，再 `cd desktop && npx tauri build` 产出安装包
 3. 在 GitHub 仓库创建 Release：tag 用 `v<版本号>`（如 `v0.2.0`），说明写在 Release body（更新横幅只放链接，正文留在发布页）
 4. 启用检查：设置页「GitHub 仓库」填 `owner/repo` 并保存，或在 `backend/.env` 里配置 `APP_GITHUB_REPO=owner/repo`
 

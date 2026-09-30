@@ -159,6 +159,20 @@ def _find_cpp_compiler() -> str | None:
     return shutil.which("g++") or shutil.which("clang++")
 
 
+def _sandbox_python() -> str:
+    """用户代码运行器。
+
+    打包版 sys.executable 是后端 exe 自身，不能用来跑用户代码；
+    随包内置独立 python-runtime（spec datas，stdlib 级别，-I 隔离运行），缺失时回落 PATH。
+    """
+    if getattr(sys, "frozen", False):
+        bundled = Path(getattr(sys, "_MEIPASS", "")) / "python-runtime" / "python.exe"
+        if bundled.exists():
+            return str(bundled)
+        return shutil.which("python") or "python"
+    return sys.executable or "python"
+
+
 def run_code_sync(language: str, code: str) -> dict:
     """同步执行（应通过 asyncio.to_thread 调用）。返回执行结果字典（不含持久化字段）。"""
     workdir = tempfile.mkdtemp(prefix="learnflow-exec-")
@@ -167,7 +181,7 @@ def run_code_sync(language: str, code: str) -> dict:
             src = tempfile.mktemp(suffix=".py", dir=workdir)
             with open(src, "w", encoding="utf-8") as f:
                 f.write(code)
-            python = sys.executable or "python"
+            python = _sandbox_python()
             t0 = time.perf_counter()
             out, err, rc, timed_out = _run_process(
                 [python, "-I", "-B", "-X", "utf8", src], workdir, DEFAULT_TIMEOUT_SECONDS
