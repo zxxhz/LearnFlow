@@ -789,4 +789,18 @@ orphan 标注在标注列表中点"重新挂载"→ 进入选择模式 → 用�
 | 费曼漏洞（gap） | 费曼评价中指出的具体理解缺陷，携带文档位置引用 |
 | OpenAI 兼容 API | 实现了 OpenAI Chat Completions 协议（含 SSE 流式）的服务接口，当前主流 LLM 服务普遍提供 |
 | SSE | Server-Sent Events，HTTP 单向服务端推送，用于流式回答与生成进度 |
-| TipTap / ProseMirror | 前端富文本/文档渲染框架，提供划线高亮所需的 Decoration 与位置映射能力 |
+| TipTap / ProseMirror | 前端富文本/文档渲染框架，提供划线高亮所需的 Decoration 与位置映射能力（见 §16 实现备注：阅读器实际采用自研块渲染器） |
+
+---
+
+## 16. 实现备注（M1-M2 交付时）
+
+以下为编码实现阶段对上文的具体化与偏差记录，**实现以此为准**：
+
+1. **阅读器渲染方案**：放弃 TipTap/ProseMirror，改用**自研块渲染器**——markdown-it 逐块渲染 + KaTeX auto-render + Shiki 代码高亮 + DOM 文本节点切分实现高亮包裹。理由：只读文档场景下 TipTap 的数学/代码扩展集成复杂度高、收益低；自研方案锚定原理不变（块 ID + 文本 + 上下文，渲染时 diff-match-patch 模糊定位）。
+2. **前后端块对齐**：后端用 `markdown-it-py`（js-default 预设）、前端用 `markdown-it`（默认预设）——两者为同源移植，同一份 Markdown 的顶层块序列与行号范围一致，块索引可按行号精确对齐。权威解析器为后端 `app/services/docparser.py`，前端 `src/lib/markdown.ts` 保持同规则。
+3. **启动方式**：`cd backend && uv run python -m app.main`，监听 `127.0.0.1:8420` 并自动打开浏览器；前端构建产物输出到 `backend/app/static/` 由 FastAPI 托管（SPA fallback）；开发模式 `uvicorn --reload` + `vite dev`（:5173 代理 /api）。
+4. **数据模型微调**：`documents` 增加 `summary`（章节摘要，供后续章节生成的上下文传递）与 `error` 字段；`review_cards` 增加 `introduced_at`（每日新卡配额依据）；费曼会话创建即进入 `questioning` 状态（`explaining` 保留给未来）。
+5. **章节生成输出协议**：单次 LLM 调用输出正文 + `<LEARNFLOW_META>` 分隔符 + JSON（`{summary, knowledge_points[]}`），省去第二次抽取调用；JSON 解析失败不致命（正文仍有效）。
+6. **批注对话获取**：标注列表不含 conversation_id，前端通过 `GET /api/annotations/{id}/conversation` 获取（创建时直接用响应里的）。
+7. **里程碑范围确认**：M1+M2 一次性交付（课程生成/阅读器/划线卡片/设置 + 复习/费曼/仪表盘）；§5.8-§5.9 的 M3 项目仍为 TODO 未实现。
