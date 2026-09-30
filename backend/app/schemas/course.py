@@ -15,6 +15,7 @@ class CourseOut(ORMModel):
     title: str
     topic: str
     level: str | None
+    scope: str | None = None
     outline: list[OutlineItem] = []
     status: str
     created_at: str

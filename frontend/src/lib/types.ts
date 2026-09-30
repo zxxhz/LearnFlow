@@ -24,6 +24,7 @@ export interface Course {
   title: string;
   topic: string;
   level: string | null;
+  scope: string | null;
   outline: OutlineItem[];
   status: CourseStatus;
   created_at: string;
@@ -246,10 +247,23 @@ export interface ChatSSEEvent {
 }
 
 export interface ProgressSSEEvent {
-  type: "chapter_start" | "chapter_done" | "chapter_failed" | "course_done" | "error";
+  type:
+    | "snapshot"
+    | "chapter_start"
+    | "chapter_done"
+    | "chapter_failed"
+    | "course_done"
+    | "error";
   index?: number;
   title?: string;
   document_id?: string;
   error?: string;
   status?: string;
+  documents?: {
+    document_id: string;
+    chapter_index: number;
+    title: string;
+    status: string;
+    version: number;
+  }[];
 }
