@@ -30,6 +30,7 @@ class FeynmanSessionCreate(BaseModel):
 class FeynmanSessionOut(ORMModel):
     id: str
     knowledge_point_id: str
+    knowledge_point_title: str | None = None
     document_id: str
     conversation_id: str
     status: str

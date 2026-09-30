@@ -37,6 +37,7 @@ export default function ReviewPage() {
   const [idx, setIdx] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [editing, setEditing] = useState<ReviewCard | null>(null);
+  const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<ReviewCard | null>(null);
 
   const cards = localQueue ?? queue?.cards ?? null;
@@ -76,12 +77,18 @@ export default function ReviewPage() {
     <div className="mx-auto max-w-3xl p-8">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">复习</h1>
-        {stats && (
-          <span className="text-sm text-gray-500">
-            今日已复习 {stats.today_reviewed} · 剩余 {queue ? queue.due_total + queue.new_quota_remaining : stats.due_remaining} ·
-            连续 {stats.streak_days} 天
-          </span>
-        )}
+        <div className="flex items-center gap-3">
+          {stats && (
+            <span className="text-sm text-gray-500">
+              今日已复习 {stats.today_reviewed} · 剩余{" "}
+              {queue ? queue.due_total + queue.new_quota_remaining : stats.due_remaining} · 连续{" "}
+              {stats.streak_days} 天
+            </span>
+          )}
+          <Button variant="secondary" className="text-xs" onClick={() => setCreating(true)}>
+            ＋ 新建卡片
+          </Button>
+        </div>
       </div>
 
       {finished ? (
@@ -200,6 +207,9 @@ export default function ReviewPage() {
       {/* 编辑卡片 */}
       {editing && <EditCardModal card={editing} onClose={() => setEditing(null)} />}
 
+      {/* 手工新建卡片（PRD FR-5.1） */}
+      {creating && <CreateCardModal onClose={() => setCreating(false)} />}
+
       <ConfirmDialog
         open={!!confirmDelete}
         title="删除复习卡"
@@ -216,6 +226,50 @@ export default function ReviewPage() {
         }}
       />
     </div>
+  );
+}
+
+function CreateCardModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [front, setFront] = useState("");
+  const [back, setBack] = useState("");
+  const create = useMutation({
+    mutationFn: () => api.review.createCard({ front: front.trim(), back: back.trim() }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["review-queue"] });
+      queryClient.invalidateQueries({ queryKey: ["review-stats"] });
+      onClose();
+    },
+  });
+  return (
+    <Modal open onClose={onClose} title="新建复习卡">
+      <label className="mb-1 block text-xs font-medium text-gray-500">
+        正面（问题）<span className="text-red-500">*</span>
+      </label>
+      <Textarea
+        rows={2}
+        value={front}
+        onChange={(e) => setFront(e.target.value)}
+        placeholder="如：std::vector 扩容时会发生什么？"
+        autoFocus
+      />
+      <label className="mb-1 mt-3 block text-xs font-medium text-gray-500">背面（答案）</label>
+      <Textarea
+        rows={4}
+        value={back}
+        onChange={(e) => setBack(e.target.value)}
+        placeholder="答案要点（支持 Markdown 与 $公式$）"
+      />
+      <div className="mt-4 flex justify-end gap-2">
+        <Button variant="secondary" onClick={onClose}>
+          取消
+        </Button>
+        <Button disabled={create.isPending || !front.trim()} onClick={() => create.mutate()}>
+          创建
+        </Button>
+      </div>
+      {create.isError && <p className="mt-2 text-sm text-red-600">{create.error.message}</p>}
+    </Modal>
   );
 }
 

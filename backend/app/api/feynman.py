@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.models import FeynmanSession, Message
+from app.models import FeynmanSession, KnowledgePoint, Message
 from app.schemas.feynman import FeynmanSessionDetailOut, FeynmanSessionOut
 from app.services import feynman as feynman_service
 from app.services.llm.errors import LLMError
@@ -13,8 +13,14 @@ from app.services.llm.errors import LLMError
 router = APIRouter(prefix="/feynman", tags=["feynman"])
 
 
-def _session_out(s: FeynmanSession) -> FeynmanSessionOut:
-    return FeynmanSessionOut.model_validate(s)
+async def _kp_titles(db: AsyncSession, session_rows) -> dict[str, str]:
+    kp_ids = {s.knowledge_point_id for s in session_rows}
+    if not kp_ids:
+        return {}
+    kps = (
+        await db.scalars(select(KnowledgePoint).where(KnowledgePoint.id.in_(kp_ids)))
+    ).all()
+    return {k.id: k.title for k in kps}
 
 
 async def _detail_out(db: AsyncSession, s: FeynmanSession) -> FeynmanSessionDetailOut:
@@ -26,6 +32,8 @@ async def _detail_out(db: AsyncSession, s: FeynmanSession) -> FeynmanSessionDeta
         )
     ).all()
     out = FeynmanSessionDetailOut.model_validate(s)
+    titles = await _kp_titles(db, [s])
+    out.knowledge_point_title = titles.get(s.knowledge_point_id)
     from app.schemas.conversation import MessageOut
 
     out.messages = [MessageOut.model_validate(m) for m in messages]
@@ -55,7 +63,13 @@ async def list_sessions(
     if knowledge_point_id:
         stmt = stmt.where(FeynmanSession.knowledge_point_id == knowledge_point_id)
     sessions = (await db.scalars(stmt)).all()
-    return [_session_out(s) for s in sessions]
+    titles = await _kp_titles(db, sessions)
+    out = []
+    for s in sessions:
+        o = FeynmanSessionOut.model_validate(s)
+        o.knowledge_point_title = titles.get(s.knowledge_point_id)
+        out.append(o)
+    return out
 
 
 @router.get("/sessions/{session_id}", response_model=FeynmanSessionDetailOut)

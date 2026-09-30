@@ -102,20 +102,28 @@ export default function DashboardPage() {
       ) : (
         <div className="space-y-2">
           {data.weak_points.map((w, i) => (
-            <Link
+            <div
               key={w.knowledge_point_id}
-              to={`/read/${w.document_id}`}
-              className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3 transition hover:border-brand-500"
+              className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3"
             >
-              <div className="flex items-center gap-3">
+              <Link to={`/read/${w.document_id}`} className="flex min-w-0 items-center gap-3 hover:text-brand-600">
                 <span className="w-5 text-sm font-semibold text-gray-300">{i + 1}</span>
-                <span className="text-sm font-medium text-gray-800">{w.title}</span>
+                <span className="truncate text-sm font-medium text-gray-800">{w.title}</span>
+              </Link>
+              <div className="flex shrink-0 items-center gap-2">
+                <div className="flex gap-1.5 text-xs">
+                  {w.lapses > 0 && <Badge color="red">遗忘 {w.lapses} 次</Badge>}
+                  {w.gap_count > 0 && <Badge color="amber">漏洞 {w.gap_count} 个</Badge>}
+                </div>
+                <Link
+                  to={`/feynman?kp=${w.knowledge_point_id}`}
+                  className="text-xs text-brand-600 underline"
+                  title="用费曼方式重新讲解这个知识点"
+                >
+                  🎤 讲一遍
+                </Link>
               </div>
-              <div className="flex gap-2 text-xs">
-                {w.lapses > 0 && <Badge color="red">遗忘 {w.lapses} 次</Badge>}
-                {w.gap_count > 0 && <Badge color="amber">漏洞 {w.gap_count} 个</Badge>}
-              </div>
-            </Link>
+            </div>
           ))}
         </div>
       )}

@@ -18,6 +18,7 @@ class CourseOut(ORMModel):
     scope: str | None = None
     outline: list[OutlineItem] = []
     status: str
+    course_settings: dict = {}
     created_at: str
     updated_at: str
 
@@ -29,6 +30,19 @@ class CourseOut(ORMModel):
 
             return json.loads(v) if v else []
         return v
+
+    @field_validator("course_settings", mode="before")
+    @classmethod
+    def _parse_settings(cls, v):
+        if isinstance(v, str):
+            import json
+
+            return json.loads(v) if v else {}
+        return v
+
+
+class CourseSettingsUpdate(BaseModel):
+    auto_create_cards: bool | None = None
 
 
 class ChapterProgress(BaseModel):

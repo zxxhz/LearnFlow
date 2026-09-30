@@ -27,6 +27,7 @@ export interface Course {
   scope: string | null;
   outline: OutlineItem[];
   status: CourseStatus;
+  course_settings: { auto_create_cards?: boolean } | null;
   created_at: string;
   updated_at: string;
 }
@@ -160,6 +161,7 @@ export type FeynmanStatus = "explaining" | "questioning" | "evaluating" | "done"
 export interface FeynmanSession {
   id: string;
   knowledge_point_id: string;
+  knowledge_point_title: string | null;
   document_id: string;
   conversation_id: string;
   status: FeynmanStatus;

@@ -119,7 +119,7 @@ export default function FeynmanIndexPage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium text-gray-800">
-                      {s.knowledge_point_id.slice(0, 8)}…
+                      {s.knowledge_point_title ?? s.knowledge_point_id.slice(0, 8)}
                     </span>
                     <Badge color={badge.color}>{badge.label}</Badge>
                   </div>

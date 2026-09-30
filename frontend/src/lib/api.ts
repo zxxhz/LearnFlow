@@ -81,6 +81,8 @@ export const api = {
       request<Course>(`/courses/${id}/generate`, { method: "POST" }),
     list: () => request<CourseListItem[]>("/courses"),
     get: (id: string) => request<CourseDetail>(`/courses/${id}`),
+    update: (id: string, body: { auto_create_cards?: boolean }) =>
+      request<Course>(`/courses/${id}`, { method: "PATCH", ...jsonBody(body) }),
     delete: (id: string) =>
       request<void>(`/courses/${id}`, { method: "DELETE" }),
   },

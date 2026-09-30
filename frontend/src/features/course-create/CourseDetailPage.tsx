@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { subscribeSSE } from "../../lib/sse";
 import type { ChapterProgress, ProgressSSEEvent } from "../../lib/types";
-import { Badge, Button, EmptyState, Spinner } from "../../components/ui";
+import { Badge, Button, ConfirmDialog, EmptyState, Spinner } from "../../components/ui";
 import OutlineEditor from "./OutlineEditor";
 
 const DOC_STATUS: Record<string, { label: string; color: "gray" | "green" | "blue" | "red" | "amber" }> = {
@@ -27,6 +27,7 @@ export default function CourseDetailPage() {
 
   const [liveDocs, setLiveDocs] = useState<ChapterProgress[] | null>(null);
   const [doneBanner, setDoneBanner] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   // 生成中订阅进度 SSE（snapshot + 实时事件）
@@ -110,14 +111,7 @@ export default function CourseDetailPage() {
       </Link>
       <div className="mt-3 flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-gray-900">{course.title}</h1>
-        <Button
-          variant="secondary"
-          onClick={() => {
-            if (confirm(`确定删除课程「${course.title}」？全部文档、标注与对话将被删除。`)) {
-              api.courses.delete(course.id).then(() => navigate("/"));
-            }
-          }}
-        >
+        <Button variant="secondary" onClick={() => setConfirmDel(true)}>
           删除课程
         </Button>
       </div>
@@ -143,14 +137,29 @@ export default function CourseDetailPage() {
         <div className="mt-6">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-semibold text-gray-900">章节</h2>
-            <span className="text-sm text-gray-500">
-              {doneCount}/{docs.length} 章
-              {course.status === "generating" && (
-                <Badge color="blue">
-                  生成中 <Spinner className="ml-1 h-3 w-3 border-white/60" />
-                </Badge>
-              )}
-            </span>
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-1.5 text-xs text-gray-600" title="关闭后，本章重新生成时不再自动创建知识点复习卡">
+                <input
+                  type="checkbox"
+                  checked={course.course_settings?.auto_create_cards ?? true}
+                  onChange={(e) =>
+                    api.courses
+                      .update(course.id, { auto_create_cards: e.target.checked })
+                      .then(() => queryClient.invalidateQueries({ queryKey: ["course", courseId] }))
+                      .catch((err) => alert(err.message))
+                  }
+                />
+                自动生成知识点复习卡
+              </label>
+              <span className="text-sm text-gray-500">
+                {doneCount}/{docs.length} 章
+                {course.status === "generating" && (
+                  <Badge color="blue">
+                    生成中 <Spinner className="ml-1 h-3 w-3 border-white/60" />
+                  </Badge>
+                )}
+              </span>
+            </div>
           </div>
           {docs.length > 0 && (
             <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
@@ -195,6 +204,19 @@ export default function CourseDetailPage() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={confirmDel}
+        title="删除课程"
+        message={`确定删除课程「${course.title}」？全部文档、标注、对话与复习卡将被删除，且无法恢复。`}
+        onCancel={() => setConfirmDel(false)}
+        onConfirm={() => {
+          setConfirmDel(false);
+          api.courses.delete(course.id).then(
+            () => navigate("/"),
+            (err) => alert(err.message)
+          );
+        }}
+      />
     </div>
   );
 }
