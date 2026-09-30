@@ -130,6 +130,14 @@ export const api = {
         method: "POST",
         ...jsonBody(body),
       }),
+    kpContext: (kpId: string) =>
+      request<{
+        knowledge_point: KnowledgePoint;
+        document_id: string;
+        document_title: string;
+        course_id: string;
+        course_title: string;
+      }>(`/feynman/kp-context/${kpId}`),
     list: (knowledgePointId?: string) =>
       request<FeynmanSession[]>(
         `/feynman/sessions${
