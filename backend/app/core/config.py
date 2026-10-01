@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 应用版本（更新检查的唯一版本源；发布时与 tauri.conf.json / package.json 一同 bump，见 PRD 实现备注 15）
-APP_VERSION = "0.1.4"
+APP_VERSION = "0.1.5"
 
 # GitHub 仓库（owner/repo）：设置页字段为空时的默认值；发布到 GitHub 后在 .env 里配置
 # APP_GITHUB_REPO=your-name/learnflow 即可启用启动时更新检查
@@ -37,6 +37,13 @@ class AppConfig(BaseSettings):
     @property
     def courses_dir(self) -> Path:
         return self.data_dir / "courses"
+
+    @property
+    def toolchains_dir(self) -> Path:
+        """便携工具链根目录：软件安装目录下（打包版 = 安装目录/backend/toolchains，
+        开发版 = backend/toolchains）。刻意不放进 data_dir：工具链体积大且是缓存性质，
+        不应混进「复制即备份」的数据目录。"""
+        return _BASE_DIR / "toolchains"
 
 
 settings = AppConfig()

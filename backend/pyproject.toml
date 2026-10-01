@@ -1,6 +1,6 @@
 [project]
 name = "learnflow-backend"
-version = "0.1.4"
+version = "0.1.5"
 description = "LearnFlow 学习 Agent 后端（FastAPI + SQLite）"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,6 +16,7 @@ dependencies = [
     "sympy>=1.14.0",
     "matplotlib>=3.11.2",
     "httpx>=0.28.1",
+    "py7zr>=0.22",
 ]
 
 [tool.uv]

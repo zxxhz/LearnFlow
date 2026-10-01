@@ -27,3 +27,6 @@ backend/build/
 # 其他
 .DS_Store
 *.log
+
+# 一键安装的便携工具链（缓存性质，不入库）
+backend/toolchains/

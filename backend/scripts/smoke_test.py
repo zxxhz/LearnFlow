@@ -148,8 +148,9 @@ new 与 delete 必须配对。
 
 def main() -> None:
     course_id, document_id = asyncio.run(seed())
-    base = "http://127.0.0.1:8420"
-    config = uvicorn.Config("app.main:app", host="127.0.0.1", port=8420, log_level="warning")
+    port = settings.port  # 尊重 APP_PORT：8420 被已在跑的实例占用时可换端口
+    base = f"http://127.0.0.1:{port}"
+    config = uvicorn.Config("app.main:app", host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     threading.Thread(target=server.run, daemon=True).start()
     time.sleep(2.5)
@@ -237,6 +238,14 @@ def main() -> None:
     check("不支持的语言 → 400 中文提示", s == 400 and "暂不支持" in str(body.get("detail", "")), str(body)[:150])
     s, body = call(base, f"/api/documents/{document_id}/executions")
     check("执行历史回显（每块最新一条）", s == 200 and len(body) == 1 and body[0]["status"] == "compiler_missing" or (s == 200 and len(body) >= 1))
+
+    # 6.5 运行环境检测 + 安装进度接口（只查状态，不触发真实下载）
+    s, body = call(base, "/api/runtime/status")
+    check("运行环境状态接口", s == 200 and set(body) >= {"python", "cpp", "installable", "toolchains_dir"} and body["python"]["installed"], str(body)[:150])
+    s, body = call(base, "/api/runtime/install/status")
+    check("安装进度接口", s == 200 and set(body.get("components", {})) == {"python", "cpp"} and body.get("active") is None, str(body)[:150])
+    s, body = call(base, "/api/runtime/install", "POST", {"component": "ruby"})
+    check("未知组件 → 4xx 校验", s in (400, 422), str(body)[:120])
 
     # 7. 导入自有 Markdown（PRD 实现备注 12）：analyze → confirm → 原文保留
     s, body = call_multipart(base, "/api/courses/import/analyze", {}, [("files", "notes.md", IMPORT_MD.encode("utf-8"))])

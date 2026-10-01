@@ -5,6 +5,7 @@ import { api } from "../../lib/api";
 import type { LLMConfig, Preferences, SceneLLMConfig, SceneName, SettingsData } from "../../lib/types";
 import { Button, Input, Spinner } from "../../components/ui";
 import { HL_COLOR_KEYS, HL_DEFAULTS, HL_LABELS } from "../reader/colors";
+import RuntimeEnvSection from "./RuntimeEnvSection";
 import type { AnnotationColor } from "../../lib/types";
 
 const PROVIDER_PRESETS: { label: string; base_url: string; model: string }[] = [
@@ -371,6 +372,9 @@ export default function SettingsPage() {
           保存偏好
         </Button>
       </section>
+
+      {/* 代码运行环境（沙箱工具链检测 + 一键便携安装） */}
+      <RuntimeEnvSection />
 
       {/* 数据 */}
       <section className="mt-4 rounded-xl border border-gray-200 bg-white p-6">

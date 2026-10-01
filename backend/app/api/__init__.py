@@ -11,6 +11,7 @@ from app.api import (
     imports,
     math,
     review,
+    runtime,
     settings,
 )
 
@@ -26,3 +27,4 @@ api_router.include_router(review.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(execution.router)
 api_router.include_router(math.router)
+api_router.include_router(runtime.router)

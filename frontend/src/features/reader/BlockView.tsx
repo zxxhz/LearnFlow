@@ -116,6 +116,77 @@ function ExecResultPanel({ execution }: { execution: CodeExecution }) {
   );
 }
 
+/** compiler_missing 的就地补救：一键装便携版 g++（装在软件目录），装完提示重跑。 */
+function CompilerInstallCta() {
+  const [phase, setPhase] = useState<"idle" | "installing" | "done" | "error">("idle");
+  const [percent, setPercent] = useState(0);
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (phase !== "installing") return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const st = (await api.runtime.installStatus()).components.cpp;
+        if (cancelled) return;
+        setPercent(st.percent);
+        setMessage(st.message);
+        if (st.state === "done") setPhase("done");
+        if (st.state === "error") setPhase("error");
+      } catch {
+        /* 网络抖动等下个周期重试 */
+      }
+    }, 1200);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [phase]);
+
+  const start = async () => {
+    setPhase("installing");
+    setPercent(0);
+    setMessage("准备下载…");
+    try {
+      await api.runtime.install("cpp");
+    } catch (e) {
+      setPhase("error");
+      setMessage((e as Error).message);
+    }
+  };
+
+  if (phase === "done") {
+    return (
+      <p className="mt-1.5 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">
+        ✅ {message}，重新点击上方「▶ 运行」即可。
+      </p>
+    );
+  }
+  if (phase === "installing") {
+    return (
+      <div className="mt-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2">
+        <div className="h-1.5 overflow-hidden rounded-full bg-gray-200">
+          <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${Math.max(2, percent)}%` }} />
+        </div>
+        <p className="mt-1 text-xs text-gray-500">⬇ 正在安装便携版 g++（装在软件目录，不影响系统）：{message}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+      <span className="text-xs text-amber-700">
+        {phase === "error" ? `❌ ${message}` : "缺少 C++ 编译器？可以一键安装便携版 g++（装在软件目录，不影响系统）。"}
+      </span>
+      <button
+        onClick={start}
+        className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-100"
+      >
+        {phase === "error" ? "重试安装" : "⬇ 一键安装"}
+      </button>
+    </div>
+  );
+}
+
 export default function BlockView({
   block,
   sectionId,
@@ -326,6 +397,7 @@ export default function BlockView({
           </div>
         )}
         {execution && <ExecResultPanel execution={execution} />}
+        {execution?.status === "compiler_missing" && <CompilerInstallCta />}
       </div>
     );
   }

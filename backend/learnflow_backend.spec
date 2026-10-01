@@ -21,6 +21,9 @@ hiddenimports = [
 # uvicorn 程序化启动按需动态导入 loops/protocols/lifespan 子模块，全量收进去
 hiddenimports += collect_submodules("uvicorn")
 hiddenimports += collect_submodules("openai")
+# 工具链一键安装解压 7z 用（py7zr 内部动态加载编解码器，全量收；LZMA2 需要 pyppmd + Cryptodome）
+hiddenimports += collect_submodules("py7zr")
+hiddenimports += ["pyppmd", "Cryptodome.Cipher.AES"]
 
 a = Analysis(
     ["run_backend.py"],

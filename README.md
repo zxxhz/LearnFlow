@@ -36,7 +36,7 @@
 - 划线提问：阅读时划选任意内容，弹出卡片跟 AI 多轮对话，划线和对话都持久化，重开文档还在原位
 - 费曼讲解：AI 扮演学生追问，讲完给评分和漏洞清单，漏洞能跳回原文、一键生成复习卡
 - 复习队列：知识点、划线、漏洞自动成卡，SM-2 调度每日复习，四档自评，带统计和连击
-- 代码运行：` ```python ` / ` ```cpp ` 块一键运行（限时 10 秒、限内存 256MB、进程树隔离），结果跟着文档存
+- 代码运行：` ```python ` / ` ```cpp ` 块一键运行（限时 10 秒、限内存 256MB、进程树隔离），结果跟着文档存；缺编译器可一键装便携版（设置页或运行提示里，装在软件目录不动系统）
 - 函数图像：` ```plot ` 块画图（SymPy + Matplotlib），多函数叠加、奇点自动断线
 - 生成 / 答疑 / 费曼三个场景可各配一个模型，比如生成用便宜模型、费曼批改用强模型
 - 仪表盘：课程进度、薄弱知识点、学习热力图
@@ -44,7 +44,7 @@
 
 ## 安装
 
-从 [Releases](https://github.com/zxxhz/LearnFlow/releases) 下载 `LearnFlow_x.x.x_x64-setup.exe` 双击安装。Python 环境和全部依赖都打在包里，不用装；只有运行文档里的 C++ 代码块需要本机有 g++。
+从 [Releases](https://github.com/zxxhz/LearnFlow/releases) 下载 `LearnFlow_x.x.x_x64-setup.exe` 双击安装。Python 环境和全部依赖都打在包里，不用装；运行文档里的 C++ 代码块需要 g++——没装的话应用内可以一键安装便携版（见[代码运行沙箱](#代码运行沙箱)），也可以自己装 [MinGW-w64](https://www.mingw-w64.org/)。
 
 从源码跑需要 Python 3.11+（[uv](https://docs.astral.sh/uv/) 管理）和 Node 18+（只为构建前端）：
 
@@ -82,9 +82,19 @@ cd backend && APP_HOST=0.0.0.0 uv run python -m app.main
 代码块右上角有「▶ 运行」按钮：
 
 - Python 不用额外配置：源码运行用当前解释器，安装包版用随包内置的独立 Python（`-I` 隔离模式，仅标准库）
-- C++ 需要本机装 g++ 或 clang++（如 [MinGW-w64](https://www.mingw-w64.org/)）并加入 PATH，没装会有提示
+- C++ 需要本机有 g++ 或 clang++：系统 PATH 里有就直接用；没有时点运行结果里的「⬇ 一键安装」或设置页「代码运行环境」装便携版
 - 限制：单次 10 秒（超时杀整个进程树）、内存 256MB（Windows Job Object）、进程数上限、stdin 关闭、每次运行用一次性临时目录，全局串行执行
 - 运行结果（stdout / stderr / 退出码 / 耗时）持久化，重开文档还能看到上一次的输出
+
+### 一键安装运行环境
+
+设置页「代码运行环境」能看到 Python / C++ 的检测结果（内置 / 系统 / 应用内 / 未安装 + 版本），缺什么点「安装」：
+
+- **C++**：niXman mingw-builds 便携版（GCC 14.2.0，UCRT，7z 约 92MB），解压到软件安装目录的 `toolchains/mingw64/`
+- **Python**：python.org embeddable 便携版（3.12.10，约 11MB，仅标准库），解压到 `toolchains/python/`
+- 不写系统 PATH、不写注册表、不弹安装器——删掉 `toolchains/` 目录就是卸载；应用安装目录只读时（如装进 Program Files）自动落到数据目录
+- 下载源自动择优：GitHub 直连不通（国内常见）自动走 ghproxy 系镜像；Python 包走 python.org → 华为云 → npmmirror
+- 安装在后台进行，进度条实时显示；装完再点「▶ 运行」即可，无需重启
 
 ### 函数图像
 

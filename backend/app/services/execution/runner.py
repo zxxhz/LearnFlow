@@ -18,7 +18,6 @@ import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path
 
 from app.models.execution import (
     COMPILE_TIMEOUT_SECONDS,
@@ -32,6 +31,7 @@ from app.models.execution import (
     MAX_OUTPUT_CHARS,
     MEMORY_LIMIT_BYTES,
 )
+from app.services.execution import toolchain
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +97,12 @@ def _windows_job():
         ]
 
     k32 = ctypes.windll.kernel32
+    # 显式声明参数/返回类型：默认按 C int（32 位）转换，HANDLE 语义上不安全
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    k32.CreateJobObjectW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+    k32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
     job = k32.CreateJobObjectW(None, None)
     if not job:
         return None
@@ -121,18 +127,27 @@ def _assign_to_job(job_handle, k32, proc: subprocess.Popen) -> None:
         logger.warning("AssignProcessToJobObject failed；降级为无内存限制运行")
 
 
-def _run_process(cmd: list[str], workdir: str, timeout: float) -> tuple[str, str, int | None, bool]:
-    """运行进程，返回 (stdout_tail, stderr_tail, exit_code|None, timed_out)。"""
+def _run_process(
+    cmd: list[str], workdir: str, timeout: float, env: dict[str, str] | None = None
+) -> tuple[str, str, int | None, bool]:
+    """运行进程，返回 (stdout_tail, stderr_tail, exit_code|None, timed_out)。env=None 继承当前环境。"""
     with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
         job_ctx = _windows_job() if _IS_WINDOWS else None
-        proc = subprocess.Popen(
-            cmd,
-            cwd=workdir,
-            stdout=out_f,
-            stderr=err_f,
-            stdin=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0,
-        )
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=workdir,
+                env=env,
+                stdout=out_f,
+                stderr=err_f,
+                stdin=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0,
+            )
+        except BaseException:
+            if job_ctx:  # Popen 失败时没人接手 job 句柄，必须就地关闭（KILL_ON_JOB_CLOSE 兜底）
+                _jh, _k32 = job_ctx
+                _k32.CloseHandle(_jh)
+            raise
         job_handle = None
         if job_ctx:
             job_handle, k32 = job_ctx
@@ -149,29 +164,12 @@ def _run_process(cmd: list[str], workdir: str, timeout: float) -> tuple[str, str
                 pass
         finally:
             if job_handle:
-                k32.TerminateJobObject(job_handle, 0) if timed_out else None
+                if timed_out:
+                    k32.TerminateJobObject(job_handle, 0)
                 k32.CloseHandle(job_handle)  # KILL_ON_JOB_CLOSE 兜底清孤儿
         out_f.seek(0)
         err_f.seek(0)
         return _tail(out_f.read()), _tail(err_f.read()), proc.returncode, timed_out
-
-
-def _find_cpp_compiler() -> str | None:
-    return shutil.which("g++") or shutil.which("clang++")
-
-
-def _sandbox_python() -> str:
-    """用户代码运行器。
-
-    打包版 sys.executable 是后端 exe 自身，不能用来跑用户代码；
-    随包内置独立 python-runtime（spec datas，stdlib 级别，-I 隔离运行），缺失时回落 PATH。
-    """
-    if getattr(sys, "frozen", False):
-        bundled = Path(getattr(sys, "_MEIPASS", "")) / "python-runtime" / "python.exe"
-        if bundled.exists():
-            return str(bundled)
-        return shutil.which("python") or "python"
-    return sys.executable or "python"
 
 
 def run_code_sync(language: str, code: str) -> dict:
@@ -182,7 +180,7 @@ def run_code_sync(language: str, code: str) -> dict:
             src = tempfile.mktemp(suffix=".py", dir=workdir)
             with open(src, "w", encoding="utf-8") as f:
                 f.write(code)
-            python = _sandbox_python()
+            python = toolchain.find_python()
             t0 = time.perf_counter()
             out, err, rc, timed_out = _run_process(
                 [python, "-I", "-B", "-X", "utf8", src], workdir, DEFAULT_TIMEOUT_SECONDS
@@ -194,16 +192,18 @@ def run_code_sync(language: str, code: str) -> dict:
             return {"status": status, "exit_code": rc, "stdout": out, "stderr": err, "duration_ms": duration}
 
         if language == "cpp":
-            compiler = _find_cpp_compiler()
+            compiler = toolchain.find_cpp_compiler()
             if not compiler:
                 return {
                     "status": EXEC_COMPILER_MISSING,
                     "exit_code": None,
                     "stdout": "",
-                    "stderr": "未检测到 C++ 编译器。请安装 MinGW-w64（g++）并加入 PATH 后重启应用；"
-                    "Python 运行不受影响。",
+                    "stderr": "未检测到 C++ 编译器。可点下方「一键安装」获取便携版 g++"
+                    "（约 92MB，装在软件目录，不影响系统），Python 运行不受影响。",
                     "duration_ms": 0,
                 }
+            compiler = toolchain.ascii_compiler(compiler)
+            workdir = toolchain.ascii_workdir(workdir)
             src = tempfile.mktemp(suffix=".cpp", dir=workdir)
             exe = tempfile.mktemp(suffix=".exe" if _IS_WINDOWS else "", dir=workdir)
             with open(src, "w", encoding="utf-8") as f:
@@ -222,7 +222,10 @@ def run_code_sync(language: str, code: str) -> dict:
                     "stderr": _tail(f"[编译失败]\n{cerr}".encode()),
                     "duration_ms": int((time.perf_counter() - t0) * 1000),
                 }
-            out, err, rc, timed_out = _run_process([exe], workdir, DEFAULT_TIMEOUT_SECONDS)
+            # 编译器 bin 目录前置到 PATH：托管安装的 exe 需要 libstdc++ 等运行时 DLL
+            out, err, rc, timed_out = _run_process(
+                [exe], workdir, DEFAULT_TIMEOUT_SECONDS, env=toolchain.dll_run_env(compiler)
+            )
             duration = int((time.perf_counter() - t0) * 1000)
             status = EXEC_TIMEOUT if timed_out else (EXEC_SUCCESS if rc == 0 else EXEC_RUNTIME_ERROR)
             if timed_out:

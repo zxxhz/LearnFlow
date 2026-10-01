@@ -313,6 +313,40 @@ export interface UpdateCheckResult {
   error?: string;
 }
 
+// ===== 运行环境（代码沙箱工具链检测与便携安装） =====
+export type RuntimeSource = "bundled" | "managed" | "system" | "none";
+export type RuntimeComponentName = "python" | "cpp";
+
+export interface RuntimeComponentInfo {
+  installed: boolean;
+  source: RuntimeSource;
+  path: string;
+  version: string;
+}
+
+export interface RuntimeStatus {
+  python: RuntimeComponentInfo;
+  cpp: RuntimeComponentInfo;
+  platform: string;
+  installable: boolean;
+  toolchains_dir: string;
+}
+
+export type InstallPhase = "idle" | "downloading" | "extracting" | "done" | "error";
+
+export interface InstallState {
+  state: InstallPhase;
+  percent: number;
+  message: string;
+  error: string | null;
+  log: string[];
+}
+
+export interface InstallStatus {
+  components: Record<RuntimeComponentName, InstallState>;
+  active: RuntimeComponentName | null;
+}
+
 // ===== SSE 事件负载 =====
 export interface ChatSSEEvent {
   type: "delta" | "done" | "error";

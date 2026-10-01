@@ -26,6 +26,9 @@ import type {
   SceneLLMConfig,
   SceneName,
   SettingsData,
+  InstallStatus,
+  RuntimeComponentName,
+  RuntimeStatus,
   UpdateCheckResult,
 } from "./types";
 
@@ -79,6 +82,15 @@ export const api = {
     check: (force = false) =>
       request<UpdateCheckResult>(`/update/check${force ? "?force=1" : ""}`, {
         method: "POST",
+      }),
+  },
+  runtime: {
+    status: () => request<RuntimeStatus>("/runtime/status"),
+    installStatus: () => request<InstallStatus>("/runtime/install/status"),
+    install: (component: RuntimeComponentName) =>
+      request<InstallStatus>("/runtime/install", {
+        method: "POST",
+        ...jsonBody({ component }),
       }),
   },
   courses: {
