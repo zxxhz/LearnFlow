@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 应用版本（更新检查的唯一版本源；发布时与 tauri.conf.json / package.json 一同 bump，见 PRD 实现备注 15）
-APP_VERSION = "0.1.3"
+APP_VERSION = "0.1.4"
 
 # GitHub 仓库（owner/repo）：设置页字段为空时的默认值；发布到 GitHub 后在 .env 里配置
 # APP_GITHUB_REPO=your-name/learnflow 即可启用启动时更新检查

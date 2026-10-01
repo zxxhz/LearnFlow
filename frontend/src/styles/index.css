@@ -10,10 +10,10 @@ mark.hl {
   border-radius: 2px;
   cursor: pointer;
 }
-mark.hl-yellow { background-color: rgba(253, 230, 138, 0.75); }
-mark.hl-green  { background-color: rgba(187, 247, 208, 0.8); }
-mark.hl-blue   { background-color: rgba(191, 219, 254, 0.8); }
-mark.hl-pink   { background-color: rgba(251, 207, 232, 0.8); }
+mark.hl-yellow { background-color: var(--hl-yellow, rgba(253, 230, 138, 0.75)); }
+mark.hl-green  { background-color: var(--hl-green, rgba(187, 247, 208, 0.8)); }
+mark.hl-blue   { background-color: var(--hl-blue, rgba(191, 219, 254, 0.8)); }
+mark.hl-pink   { background-color: var(--hl-pink, rgba(251, 207, 232, 0.8)); }
 mark.hl-fuzzy  { box-shadow: inset 0 -2px 0 rgba(148, 163, 184, 0.8); }
 mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
 
@@ -49,6 +49,23 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
 .code-block pre code { @apply bg-transparent p-0; }
 /* 带头部栏（语言徽章/运行编辑按钮）时顶部直角，与头部贴合 */
 .code-block.with-header pre { @apply rounded-t-none; }
+
+/* Jupyter 式可编辑代码块：高亮层在下、透明输入层叠在上，两层排版必须逐像素一致 */
+.code-cell pre,
+.code-cell textarea {
+  @apply m-0 border-0 p-4 font-mono text-[13px] leading-6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  tab-size: 4;
+}
+.code-cell pre {
+  @apply overflow-x-hidden rounded-b-lg bg-[#f6f8fa];
+}
+.code-cell textarea {
+  @apply absolute inset-0 h-full w-full resize-none overflow-hidden bg-transparent text-transparent outline-none;
+  caret-color: #111827;
+}
+.code-cell textarea::selection { background-color: rgba(99, 102, 241, 0.22); }
 
 /* 对话消息里的轻量 markdown */
 .msg-md p { @apply my-1.5; }

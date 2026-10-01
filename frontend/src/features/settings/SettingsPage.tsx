@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import type { LLMConfig, Preferences, SceneLLMConfig, SceneName, SettingsData } from "../../lib/types";
 import { Button, Input, Spinner } from "../../components/ui";
+import { HL_COLOR_KEYS, HL_DEFAULTS, HL_LABELS } from "../reader/colors";
+import type { AnnotationColor } from "../../lib/types";
 
 const PROVIDER_PRESETS: { label: string; base_url: string; model: string }[] = [
   { label: "智谱 GLM", base_url: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
@@ -36,6 +38,7 @@ export default function SettingsPage() {
     chapter_length: 3000,
     feynman_max_rounds: 4,
     auto_create_cards: true,
+    highlight_colors: {},
     github_repo: "",
   });
   const [saveMsg, setSaveMsg] = useState("");
@@ -334,6 +337,35 @@ export default function SettingsPage() {
             onChange={(e) => setPrefs({ ...prefs, github_repo: e.target.value })}
             placeholder="如 your-name/learnflow"
           />
+        </div>
+        <div className="mt-3">
+          <label className="mb-1 block text-sm font-medium text-gray-700">划线高亮颜色</label>
+          <div className="flex flex-wrap items-center gap-4">
+            {HL_COLOR_KEYS.map((k: AnnotationColor) => (
+              <label key={k} className="flex items-center gap-1.5 text-xs text-gray-600">
+                <input
+                  type="color"
+                  value={prefs.highlight_colors?.[k] || HL_DEFAULTS[k]}
+                  onChange={(e) =>
+                    setPrefs({
+                      ...prefs,
+                      highlight_colors: { ...prefs.highlight_colors, [k]: e.target.value },
+                    })
+                  }
+                  className="h-7 w-9 cursor-pointer rounded border border-gray-200 bg-white p-0.5"
+                />
+                {HL_LABELS[k]}
+              </label>
+            ))}
+            <button
+              type="button"
+              onClick={() => setPrefs({ ...prefs, highlight_colors: {} })}
+              className="text-xs text-gray-400 underline-offset-2 transition hover:text-gray-600 hover:underline"
+            >
+              恢复默认
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-gray-400">影响阅读器划线底色与标注卡片色板，保存偏好后生效。</p>
         </div>
         <Button className="mt-4" disabled={savePrefs.isPending} onClick={() => savePrefs.mutate()}>
           保存偏好

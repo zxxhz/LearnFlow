@@ -8,14 +8,8 @@ import { streamSSE } from "../../lib/sse";
 import type { Annotation, AnnotationColor, ChatSSEEvent } from "../../lib/types";
 import { Button, ConfirmDialog, Spinner, Textarea } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
+import { HL_COLOR_KEYS, useHlColors } from "./colors";
 
-const COLORS: AnnotationColor[] = ["yellow", "green", "blue", "pink"];
-const COLOR_HEX: Record<AnnotationColor, string> = {
-  yellow: "#fde68a",
-  green: "#bbf7d0",
-  blue: "#bfdbfe",
-  pink: "#fbcfe8",
-};
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 const KATEX_DELIMITERS = [
   { left: "$$", right: "$$", display: true },
@@ -36,6 +30,7 @@ export default function AnnotationCard({
   onJump,
 }: Props) {
   const queryClient = useQueryClient();
+  const hlColors = useHlColors();
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState("");
   const [streamErr, setStreamErr] = useState("");
@@ -129,7 +124,7 @@ export default function AnnotationCard({
         <div className="flex items-center gap-2">
           <span
             className="h-3.5 w-3.5 rounded-full"
-            style={{ backgroundColor: COLOR_HEX[annotation.color] }}
+            style={{ backgroundColor: hlColors[annotation.color] }}
           />
           <span className="text-sm font-semibold text-gray-900">划线提问</span>
           {annotation.status === "orphan" && (
@@ -139,14 +134,14 @@ export default function AnnotationCard({
           )}
         </div>
         <div className="flex items-center gap-1.5">
-          {COLORS.map((c) => (
+          {HL_COLOR_KEYS.map((c) => (
             <button
               key={c}
               onClick={() => patch.mutate({ color: c })}
               className={`h-3.5 w-3.5 rounded-full border ${
                 annotation.color === c ? "ring-2 ring-brand-500 ring-offset-1" : ""
               }`}
-              style={{ backgroundColor: COLOR_HEX[c] }}
+              style={{ backgroundColor: hlColors[c] }}
               title="更换颜色"
             />
           ))}
@@ -165,7 +160,7 @@ export default function AnnotationCard({
         <div className="flex gap-2">
           <span
             className="w-1 shrink-0 rounded"
-            style={{ backgroundColor: COLOR_HEX[annotation.color] }}
+            style={{ backgroundColor: hlColors[annotation.color] }}
           />
           <p className="line-clamp-6 flex-1 text-sm text-gray-600">{annotation.exact}</p>
         </div>

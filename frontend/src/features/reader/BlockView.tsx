@@ -1,7 +1,7 @@
 // 单块渲染：markdown HTML + KaTeX（同步）+ Shiki（代码，动态加载）+ 划线高亮 + 代码运行（PRD §5.8）
 // 顺序约定：KaTeX 先于高亮（偏移以最终 textContent 为准，创建标注时同一 DOM）
-// 代码块带头部栏：语言徽章区分（Python 绿 / C++ 靛 / Plot 紫）；可运行块支持力扣式编辑——
-// 改代码 → 运行 → 后端按块持久化最后一次执行的代码，重开文档回显，可一键重置回原文
+// 代码块带头部栏：语言徽章区分（Python 绿 / C++ 靛 / Plot 紫）；代码默认就地可编辑（Jupyter
+// 单元格式）——Shiki 高亮层在下、透明输入层叠在上，运行/持久化走既有执行链路，可一键重置回原文
 import { useEffect, useMemo, useRef, useState } from "react";
 import renderMathInElement from "katex/contrib/auto-render";
 import { api } from "../../lib/api";
@@ -65,6 +65,32 @@ function stripFence(raw: string): { lang: string; code: string } {
   return { lang, code: lines.slice(1, end).join("\n") };
 }
 
+/** 收集划线 mark 的文本偏移区间（输入层接管点击后，用光标位置反查命中的标注）。 */
+function collectMarkRanges(root: HTMLElement): { id: string; start: number; end: number }[] {
+  const open = new Map<HTMLElement, { start: number; length: number }>();
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let offset = 0;
+  let node: Node | null;
+  while ((node = walker.nextNode())) {
+    let el = node.parentElement;
+    while (el && el !== root) {
+      if (el.tagName === "MARK" && el.classList.contains("hl") && el.dataset.annId) {
+        const cur = open.get(el) ?? { start: offset, length: 0 };
+        cur.length += (node.textContent ?? "").length;
+        open.set(el, cur);
+        break;
+      }
+      el = el.parentElement;
+    }
+    offset += (node.textContent ?? "").length;
+  }
+  return [...open.entries()].map(([el, { start, length }]) => ({
+    id: el.dataset.annId!,
+    start,
+    end: start + length,
+  }));
+}
+
 function ExecResultPanel({ execution }: { execution: CodeExecution }) {
   const badge = EXEC_BADGE[execution.status] ?? EXEC_BADGE.error;
   return (
@@ -104,13 +130,13 @@ export default function BlockView({
 }: Props) {
   const innerRef = useRef<HTMLDivElement>(null);
   const codeRef = useRef<HTMLDivElement>(null);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const markRangesRef = useRef<{ id: string; start: number; end: number }[]>([]);
   const [plotSvg, setPlotSvg] = useState<string>("");
   const [plotBusy, setPlotBusy] = useState(false);
   const [plotErr, setPlotErr] = useState("");
-  // 力扣式编辑：draft 非空表示用户改过代码（运行即持久化，重开文档由 execution 回显）
+  // 力扣/Jupyter 式编辑：draft 非空表示用户改过代码（运行即持久化，重开文档由 execution 回显）
   const [draft, setDraft] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [editBuf, setEditBuf] = useState("");
   const adoptedExecId = useRef<string | null>(null);
   const html = block.html;
   const annKey = useMemo(
@@ -123,28 +149,19 @@ export default function BlockView({
   const runnable = isCode && RUNNABLE_LANGS.has(langKey);
   const plottable = isCode && PLOT_LANGS.has(langKey);
   const displayCode = draft ?? code;
+  const modified = draft !== null && draft !== code;
   const badge = LANG_BADGE[langKey] ?? LANG_FALLBACK;
 
-  // 回显上次执行的代码（力扣式：重开文档显示你上次提交的版本）
+  // 回显上次执行的代码（重开文档显示你上次提交的版本）
   useEffect(() => {
     if (!execution || adoptedExecId.current === execution.id) return;
     adoptedExecId.current = execution.id;
-    if (!editing && draft === null && execution.code && execution.code !== code) {
+    if (draft === null && execution.code && execution.code !== code) {
       setDraft(execution.code);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [execution]);
 
-  const startEdit = () => {
-    setEditBuf(displayCode);
-    setEditing(true);
-  };
-  const finishEdit = () => {
-    setEditing(false);
-    setDraft(editBuf === code ? null : editBuf);
-  };
-
-  // 高数图形化（PRD 实现备注 14）：plot 块 → SymPy/Matplotlib 渲染 SVG
   const doPlot = async () => {
     if (plotBusy || !plottable) return;
     setPlotBusy(true);
@@ -165,37 +182,65 @@ export default function BlockView({
     renderMathInElement(innerRef.current, { delimiters: DELIMITERS, throwOnError: false });
   }, [html, isCode]);
 
-  // 划线高亮（KaTeX 之后按 textContent 偏移定位；编辑态切换后重挂载需重算）
+  // 划线高亮（非代码块，KaTeX 之后按 textContent 偏移定位）
   useEffect(() => {
-    const el = isCode ? codeRef.current : innerRef.current;
-    if (!el || !sectionId) return;
+    const el = innerRef.current;
+    if (isCode || !el || !sectionId) return;
     applyHighlights(el, annotations);
     if (activeAnnId) {
       el.querySelector(`mark[data-ann-id="${activeAnnId}"]`)?.classList.add("hl-active");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, annKey, isCode, activeAnnId, sectionId, editing, displayCode]);
+  }, [html, annKey, isCode, activeAnnId, sectionId]);
 
-  // Shiki（代码块：动态 import 拆 chunk，首次渲染代码块时才加载）
+  // 代码块：Shiki 高亮 + 划线 mark + 偏移区间，一次完成（编辑时随 displayCode 重跑）
   useEffect(() => {
-    if (!isCode || editing || !codeRef.current) return;
-    let cancelled = false;
     const el = codeRef.current;
-    el.classList.toggle("ann-code-flag", annotations.some((a) => a.status === "active"));
+    if (!isCode || !el || !sectionId) return;
+    let cancelled = false;
     (async () => {
+      let inner: string;
       try {
         const { codeToHtml } = await import("shiki");
-        const out = await codeToHtml(displayCode, { lang: lang || "text", theme: "github-light" });
-        if (!cancelled) el.innerHTML = out;
+        inner = await codeToHtml(displayCode + "\n", { lang: lang || "text", theme: "github-light" });
       } catch {
-        if (!cancelled) el.innerHTML = `<pre><code>${escapeHtml(displayCode)}</code></pre>`;
+        inner = `<pre><code>${escapeHtml(displayCode)}\n</code></pre>`;
       }
+      if (cancelled) return;
+      el.innerHTML = inner;
+      el.classList.toggle("ann-code-flag", annotations.some((a) => a.status === "active"));
+      applyHighlights(el, annotations);
+      if (activeAnnId) {
+        el.querySelector(`mark[data-ann-id="${activeAnnId}"]`)?.classList.add("hl-active");
+      }
+      markRangesRef.current = collectMarkRanges(el);
     })();
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayCode, lang, isCode, annKey, editing]);
+  }, [displayCode, lang, isCode, annKey, activeAnnId, sectionId]);
+
+  // 输入层接管点击：光标位置落在某个 mark 区间 → 打开对应标注卡
+  const onCodeClick = () => {
+    const pos = taRef.current?.selectionStart;
+    if (pos == null) return;
+    const hit = markRangesRef.current.find((r) => pos >= r.start && pos <= r.end);
+    if (!hit) return;
+    const ann = annotations.find((a) => a.id === hit.id);
+    if (ann) onOpenAnnotation(ann);
+  };
+
+  // Tab 键插入 4 空格（编辑体验）
+  const onCodeKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== "Tab" || e.shiftKey) return;
+    e.preventDefault();
+    const ta = e.currentTarget;
+    const { selectionStart, selectionEnd } = ta;
+    const next = displayCode.slice(0, selectionStart) + "    " + displayCode.slice(selectionEnd);
+    setDraft(next);
+    requestAnimationFrame(() => ta.setSelectionRange(selectionStart + 4, selectionStart + 4));
+  };
 
   const onClick = (e: React.MouseEvent) => {
     const target = (e.target as HTMLElement).closest("mark.hl") as HTMLElement | null;
@@ -216,17 +261,16 @@ export default function BlockView({
   const flash = flashSectionId === sectionId;
 
   if (isCode) {
-    const headerCls = "flex items-center justify-between gap-2 rounded-t-lg border border-b-0 border-gray-200 bg-gray-50 px-3 py-1.5";
     return (
       <div className="relative my-3">
-        <div className={headerCls}>
+        <div className="flex items-center justify-between gap-2 rounded-t-lg border border-b-0 border-gray-200 bg-gray-50 px-3 py-1.5">
           <span
             className={`rounded border px-1.5 py-0.5 text-[10px] font-bold tracking-widest ${badge.cls}`}
           >
             {badge.label || lang.toUpperCase() || "CODE"}
           </span>
           <div className="flex items-center gap-1.5">
-            {draft !== null && !editing && (
+            {modified && (
               <>
                 <span className="text-[10px] text-amber-600">已修改</span>
                 <button
@@ -238,35 +282,17 @@ export default function BlockView({
                 </button>
               </>
             )}
-            {editing && (
-              <>
-                <button
-                  onClick={finishEdit}
-                  className="rounded-md bg-brand-600 px-2 py-0.5 text-xs font-medium text-white transition hover:bg-brand-700"
-                  title="保存编辑（不运行）"
-                >
-                  ✓ 完成
-                </button>
-                <button
-                  onClick={() => setEditing(false)}
-                  className="rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition hover:bg-gray-100"
-                  title="放弃本次编辑"
-                >
-                  ✕ 取消
-                </button>
-              </>
-            )}
-            {!editing && runnable && (
+            {runnable && (
               <button
                 onClick={() => onRun(sectionId, langKey, displayCode)}
                 disabled={running}
                 className="rounded-md bg-green-700/90 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-green-700 disabled:opacity-50"
-                title={`运行${draft !== null ? "修改后的" : ""} ${lang} 代码（限时 10s）`}
+                title={`运行${modified ? "修改后的" : ""} ${lang} 代码（限时 10s）`}
               >
                 {running ? "运行中…" : "▶ 运行"}
               </button>
             )}
-            {!editing && plottable && (
+            {plottable && (
               <button
                 onClick={doPlot}
                 disabled={plotBusy}
@@ -276,33 +302,21 @@ export default function BlockView({
                 {plotBusy ? "绘制中…" : "📐 绘图"}
               </button>
             )}
-            {!editing && runnable && (
-              <button
-                onClick={startEdit}
-                className="rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition hover:bg-gray-100"
-                title="编辑代码后运行（力扣式刷题）"
-              >
-                ✎ 编辑
-              </button>
-            )}
           </div>
         </div>
-        {editing ? (
+        {/* Jupyter 单元格：Shiki/划线渲染层在下定高度，透明 textarea 叠在上直接编辑 */}
+        <div className={`code-cell relative ${flash ? "outline outline-2 outline-brand-400" : ""}`}>
+          <div ref={codeRef} data-section-id={sectionId} className="code-block with-header" />
           <textarea
-            value={editBuf}
-            onChange={(e) => setEditBuf(e.target.value)}
+            ref={taRef}
+            value={displayCode}
+            onChange={(e) => setDraft(e.target.value)}
+            onClick={onCodeClick}
+            onKeyDown={onCodeKeyDown}
             spellCheck={false}
-            rows={Math.min(Math.max(editBuf.split("\n").length + 1, 6), 28)}
-            className="w-full resize-y rounded-b-lg border border-t-0 border-gray-200 bg-white p-4 font-mono text-[13px] leading-6 text-gray-900 outline-none focus:ring-2 focus:ring-brand-400"
+            aria-label={`${lang} 代码（可直接编辑）`}
           />
-        ) : (
-          <div
-            ref={codeRef}
-            data-section-id={sectionId}
-            className={`code-block with-header ${flash ? "outline outline-2 outline-brand-400" : ""}`}
-            onClick={onClick}
-          />
-        )}
+        </div>
         {runError && <p className="mt-1 text-xs text-red-600">{runError}</p>}
         {plotErr && <p className="mt-1 text-xs text-red-600">{plotErr}</p>}
         {plotSvg && (

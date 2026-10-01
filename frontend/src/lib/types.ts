@@ -121,6 +121,7 @@ export interface Preferences {
   chapter_length: number;
   feynman_max_rounds: number;
   auto_create_cards: boolean;
+  highlight_colors: Partial<Record<AnnotationColor, string>>;
   github_repo: string;
 }
 

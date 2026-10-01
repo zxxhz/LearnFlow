@@ -1,5 +1,6 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
+from app.models.settings import DEFAULT_HL_COLORS
 from app.schemas.common import ORMModel
 
 
@@ -29,8 +30,25 @@ class Preferences(BaseModel):
     chapter_length: int = 3000
     feynman_max_rounds: int = 4
     auto_create_cards: bool = True
+    # 划线高亮四色（hex），缺失/非法项回落默认
+    highlight_colors: dict[str, str] = dict(DEFAULT_HL_COLORS)
     # GitHub 仓库 owner/repo；留空回落环境变量 APP_GITHUB_REPO（PRD 实现备注 15）
     github_repo: str = ""
+
+    @field_validator("highlight_colors", mode="before")
+    @classmethod
+    def _normalize_hl_colors(cls, v):
+        merged = dict(DEFAULT_HL_COLORS)
+        if isinstance(v, dict):
+            for key in DEFAULT_HL_COLORS:
+                val = v.get(key)
+                if isinstance(val, str) and len(val) == 7 and val.startswith("#"):
+                    try:
+                        int(val[1:], 16)
+                    except ValueError:
+                        continue
+                    merged[key] = val.lower()
+        return merged
 
 
 def _mask(key: str) -> str:

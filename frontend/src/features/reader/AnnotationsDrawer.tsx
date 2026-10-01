@@ -1,13 +1,7 @@
 // 标注抽屉：本文全部标注 + orphan 重新挂载（PRD FR-3.3 / §9.3）
 import type { Annotation } from "../../lib/types";
 import { Badge, Button } from "../../components/ui";
-
-const COLOR_HEX: Record<string, string> = {
-  yellow: "#fde68a",
-  green: "#bbf7d0",
-  blue: "#bfdbfe",
-  pink: "#fbcfe8",
-};
+import { useHlColors } from "./colors";
 
 interface Props {
   annotations: Annotation[];
@@ -26,6 +20,7 @@ export default function AnnotationsDrawer({
   onStartReAnchor,
   onDelete,
 }: Props) {
+  const hlColors = useHlColors();
   return (
     <div className="fixed right-0 top-0 z-30 flex h-full w-full flex-col border-l border-gray-200 bg-white shadow-lg sm:w-80">
       <div className="border-b border-gray-100 px-4 py-3 text-sm font-semibold text-gray-900">
@@ -45,7 +40,7 @@ export default function AnnotationsDrawer({
             <button className="flex w-full items-start gap-2 text-left" onClick={() => onOpen(a)}>
               <span
                 className="mt-0.5 h-3 w-3 shrink-0 rounded-full"
-                style={{ backgroundColor: COLOR_HEX[a.color] }}
+                style={{ backgroundColor: hlColors[a.color] }}
               />
               <span className="line-clamp-2 flex-1 text-xs text-gray-700">{a.exact}</span>
             </button>

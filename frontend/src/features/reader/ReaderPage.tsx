@@ -13,12 +13,14 @@ import SelectionToolbar from "./SelectionToolbar";
 import AnnotationCard from "./AnnotationCard";
 import TocSidebar, { buildToc } from "./TocSidebar";
 import AnnotationsDrawer from "./AnnotationsDrawer";
+import { hlColorVars, useHlColors } from "./colors";
 
 export default function ReaderPage() {
   const { documentId } = useParams<{ documentId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
+  const hlColors = useHlColors();
 
   const contentQuery = useQuery({
     queryKey: ["doc", documentId],
@@ -381,7 +383,7 @@ export default function ReaderPage() {
         )}
 
         {/* 文档块 */}
-        <div ref={contentRef} className="pb-24">
+        <div ref={contentRef} className="pb-24" style={hlColorVars(hlColors)}>
           {parsed.map((b, i) => {
             const sid = sectionIdOf(i);
             return (
