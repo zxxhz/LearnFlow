@@ -112,6 +112,10 @@ fn main() {
     let port = port();
 
     tauri::Builder::default()
+        // 单实例（须最先注册）：二次启动立即退出并唤起主实例窗口——后端只应有一个
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main(app);
+        }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec![]),
