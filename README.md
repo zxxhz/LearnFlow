@@ -1,8 +1,34 @@
+<div align="center">
+
 # LearnFlow
 
-本地运行的 AI 学习助手。输入想学的科目（C++、高等数学之类），AI 先出大纲再逐章生成讲义；阅读时划线即可提问，也可以用自己的话把知识点讲给 AI 听（费曼式），讲得不牢的地方会自动变成复习卡，由 SM-2 算法安排每天复习。
+本地运行的 AI 学习助手
 
-自己的 Markdown 笔记也能导入，按标题拆章、原文不改写。`demos/` 下有两门示范课程（Python / C++ 基础语法），不配 LLM 也能导入体验代码运行。完整产品设计见 [docs/PRD.md](docs/PRD.md)。
+[![Release][release-shield]][release-url]
+[![Stars][stars-shield]][stars-url]
+[![Issues][issues-shield]][issues-url]
+
+[下载安装包](https://github.com/zxxhz/LearnFlow/releases) · [产品设计文档](docs/PRD.md) · [反馈问题](https://github.com/zxxhz/LearnFlow/issues)
+
+</div>
+
+输入想学的科目（C++、高等数学之类），AI 先出大纲再逐章生成讲义；阅读时划线即可提问，也可以用自己的话把知识点讲给 AI 听（费曼式），讲得不牢的地方会自动变成复习卡，由 SM-2 算法安排每天复习。
+
+自己的 Markdown 笔记也能导入，按标题拆章、原文不改写。`demos/` 下有两门示范课程（Python / C++ 基础语法），不配 LLM 也能导入体验代码运行。
+
+<details>
+<summary>目录</summary>
+
+- [功能](#功能)
+- [安装](#安装)
+- [平板 / 局域网访问](#平板--局域网访问)
+- [代码运行沙箱](#代码运行沙箱)
+- [数据与备份](#数据与备份)
+- [桌面版（Tauri）](#桌面版tauri)
+- [路线图](#路线图)
+- [技术栈](#技术栈)
+
+</details>
 
 ## 功能
 
@@ -96,15 +122,21 @@ npx tauri build   # 产出 NSIS 安装包，位于 src-tauri/target/release/bund
 
 > 国内网络提示：`tauri build` 首次会从 GitHub 下载 NSIS 工具链到 `%LOCALAPPDATA%/tauri/`，超时的话用镜像（如 `https://ghproxy.net/https://github.com/<原路径>`）手动下载 `nsis-3.11.zip` 解压成 `tauri/NSIS/`，`nsis_tauri_utils.dll` 放进 `tauri/NSIS/Plugins/x86-unicode/`（sha1 应为 75197FEE…，与 cli 二进制内嵌哈希一致）后重试。
 
-## 发新版本
+## 路线图
 
-应用启动时会静默查一次 GitHub Releases，有新版就在顶部横幅提示（设置页可手动检查、可配仓库）。发布步骤：
+- [ ] 语音讲解费曼
+- [ ] 向量检索增强长课程答疑
 
-1. 同步版本号：`backend/app/core/config.py` 的 `APP_VERSION`、`backend/pyproject.toml`、`desktop/package.json`、`desktop/src-tauri/tauri.conf.json` 的 `version`（Cargo.toml 构建时自动同步）
-2. `cd backend && uv run python scripts/build_backend.py` 打包后端，再 `cd desktop && npx tauri build` 出安装包
-3. GitHub 建 Release：tag 用 `v<版本号>`，更新说明写在 Release body（横幅只放链接）
-4. 检查走 GitHub API 未认证请求，超时 5 秒、失败静默、间隔 1 小时；仓库用 `APP_GITHUB_REPO=owner/repo`（`.env`）或在设置页填
+更多想法欢迎提 [Issue](https://github.com/zxxhz/LearnFlow/issues)，PR 也欢迎。
 
 ## 技术栈
 
 FastAPI + SQLAlchemy 2.0 (async) + SQLite，React 18 + TS + Vite + TailwindCSS。markdown-it 前后端同规则解析，KaTeX 公式，Shiki 高亮，diff-match-patch 做划线模糊锚定，SSE 流式输出，LLM 走 OpenAI 兼容协议。
+
+<!-- shields -->
+[release-shield]: https://img.shields.io/github/v/release/zxxhz/LearnFlow?style=for-the-badge
+[stars-shield]: https://img.shields.io/github/stars/zxxhz/LearnFlow?style=for-the-badge
+[issues-shield]: https://img.shields.io/github/issues/zxxhz/LearnFlow?style=for-the-badge
+[release-url]: https://github.com/zxxhz/LearnFlow/releases
+[stars-url]: https://github.com/zxxhz/LearnFlow/stargazers
+[issues-url]: https://github.com/zxxhz/LearnFlow/issues
