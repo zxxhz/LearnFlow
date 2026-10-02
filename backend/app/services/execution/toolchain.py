@@ -137,6 +137,35 @@ def _cleanup_stale_partials(root: Path) -> None:
             pass
 
 
+def _cleanup_stale_archives(root: Path) -> None:
+    """安装包缓存只保留当前版本的资产（版本 bump 后旧包自动淘汰）。"""
+    current = {MINGW_ASSET, PYTHON_ASSET}
+    adir = root / ".archives"
+    if not adir.is_dir():
+        return
+    for f in adir.iterdir():
+        try:
+            if f.is_file() and f.name not in current:
+                f.unlink()
+        except OSError:
+            pass
+
+
+def _archive_cache_path(kind: Component) -> Path:
+    name = MINGW_ASSET if kind == "cpp" else PYTHON_ASSET
+    return toolchains_root() / ".archives" / name
+
+
+def _cache_valid(cache: Path, kind: Component) -> bool:
+    """缓存包必须通过 SHA-256 校验才能复用（防损坏/被替换）。"""
+    if not ASSET_SHA256[kind] or not cache.is_file():
+        return False
+    try:
+        return _sha256_file(cache) == ASSET_SHA256[kind]
+    except OSError:
+        return False
+
+
 def start_install(component: str) -> None:
     """启动后台安装线程；已在装/平台不支持时抛 RuntimeError（API 层转 409）。"""
     if component not in ("python", "cpp"):
@@ -149,6 +178,7 @@ def start_install(component: str) -> None:
     root = toolchains_root()
     _cleanup_stale_workdirs(root)
     _cleanup_stale_partials(root)
+    _cleanup_stale_archives(root)
     _update(component, state="downloading", percent=0.0, error=None, message="准备下载…")
     thread = threading.Thread(target=_install_worker, args=(component,), daemon=True, name=f"tc-install-{component}")
     _THREADS[component] = thread
@@ -450,6 +480,30 @@ def _pick_url(urls: list[str]) -> str:
     raise RuntimeError(f"所有下载源均不可达（网络受限时可检查代理设置）：{detail or urls}")
 
 
+def _download_first_available(urls: list[str], dest: Path, kind: Component) -> str:
+    """竞速择优 + 逐源回退的完整下载：试读小包成功不代表大文件传输能撑住
+    （连接中途被掐很常见），失败自动换下一个源续传（.partials 跨源复用），
+    全部失败才抛错。返回最终成功的源 URL。"""
+    order: list[str] = []
+    try:
+        order.append(_pick_url(urls))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("竞速择源全部失败，退化为顺序尝试：%s", e)
+    order += [u for u in urls if u not in order]
+    last_err: Exception | None = None
+    for i, url in enumerate(order, 1):
+        host = httpx.URL(url).host
+        try:
+            _update(kind, message=f"尝试下载源（{i}/{len(order)}）：{host}")
+            _download_to(url, dest, kind)
+            return url
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            logger.warning("下载源失败 %s：%s", url, e)
+            _update(kind, message=f"下载源 {host} 失败，换下一个…")
+    raise RuntimeError(f"所有下载源均下载失败：{last_err}")
+
+
 def _partial_path(kind: Component) -> Path:
     # 分片名带资产名：版本 bump 后旧分片自动作废，不会错误续传到新资产上
     name = MINGW_ASSET if kind == "cpp" else PYTHON_ASSET
@@ -583,11 +637,23 @@ def _install_worker(kind: Component) -> None:
     workdir = Path(tempfile.mkdtemp(prefix=f"learnflow-tc-{kind}-", dir=root))
     dest = root / ("mingw64" if kind == "cpp" else "python")
     try:
-        _update(kind, message="探测可用下载源…")
-        url = _pick_url(_candidate_urls(kind))
-        _update(kind, message=f"使用下载源：{httpx.URL(url).host}")
         archive = workdir / ("toolchain.7z" if kind == "cpp" else "toolchain.zip")
-        _download_to(url, archive, kind)
+        cache = _archive_cache_path(kind)
+        if _cache_valid(cache, kind):
+            # 本地留档的安装包（上次下载已过校验）：直接复用，不重新下载
+            _update(kind, state="downloading", percent=90.0, message="命中本地缓存的安装包，跳过下载")
+            try:
+                os.link(cache, archive)  # 同卷硬链接：瞬时且零空间
+            except OSError:
+                shutil.copyfile(cache, archive)
+        else:
+            url = _download_first_available(_candidate_urls(kind), archive, kind)
+            logger.info("toolchain %s downloaded from %s", kind, httpx.URL(url).host)
+            try:  # 留档：重装/重试不再重新下载（版本 bump 后由 _cleanup_stale_archives 淘汰）
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(archive, cache)
+            except OSError:
+                logger.warning("安装包留档失败（不影响本次安装）：%s", cache)
 
         _update(kind, state="extracting", percent=90.0, message="解压准备中…")
         stage = workdir / "stage"
