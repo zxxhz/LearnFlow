@@ -3,28 +3,28 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
-import type { InstallState, RuntimeComponentName, RuntimeSource } from "../../lib/types";
+import type { InstallState, RuntimeComponentName } from "../../lib/types";
 import { Button, Spinner } from "../../components/ui";
 
-const SOURCE_META: Record<RuntimeSource, { label: string; cls: string }> = {
-  bundled: { label: "内置", cls: "border-emerald-300 bg-emerald-50 text-emerald-700" },
+// 来源徽章：已安装时补充说明装在哪（系统装 / 应用内装 / 打包内置）
+const SOURCE_META: Record<"bundled" | "managed" | "system", { label: string; cls: string }> = {
+  bundled: { label: "随包内置", cls: "border-emerald-300 bg-emerald-50 text-emerald-700" },
   managed: { label: "应用内", cls: "border-brand-300 bg-brand-50 text-brand-700" },
   system: { label: "系统", cls: "border-gray-300 bg-gray-50 text-gray-600" },
-  none: { label: "未安装", cls: "border-amber-300 bg-amber-50 text-amber-700" },
 };
 
 const ROWS: { key: RuntimeComponentName; title: string; desc: string; installLabel: string }[] = [
   {
     key: "python",
     title: "Python",
-    desc: "运行文档里的 ```python 代码块；打包版通常已随包内置，无需安装",
-    installLabel: "安装便携版 Python（约 11MB）",
+    desc: "运行文档里的 ```python 代码块；打包版通常已随包内置，无需下载",
+    installLabel: "⬇ 下载安装（约 11MB）",
   },
   {
     key: "cpp",
     title: "C++ 编译器（g++）",
     desc: "运行文档里的 ```cpp 代码块；系统装过 g++ / clang++ 时优先用系统的",
-    installLabel: "安装便携版 g++（约 92MB）",
+    installLabel: "⬇ 下载安装（约 92MB）",
   },
 ];
 
@@ -39,13 +39,22 @@ function Row({ name, state }: { name: RuntimeComponentName; state?: InstallState
     queryFn: api.runtime.status,
     select: (d) => d[name],
   });
-  const meta = status ? SOURCE_META[status.source] : null;
+  const meta = status?.installed && status.source !== "none" ? SOURCE_META[status.source] : null;
   const busy = state?.state === "downloading" || state?.state === "extracting";
 
   return (
     <div className="rounded-lg border border-gray-100 bg-gray-50/60 p-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-medium text-gray-800">{ROWS.find((r) => r.key === name)!.title}</span>
+        {status && (status.installed ? (
+          <span className="rounded border border-green-300 bg-green-50 px-1.5 py-0.5 text-[10px] font-bold text-green-700">
+            ✅ 已安装
+          </span>
+        ) : (
+          <span className="rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+            未安装
+          </span>
+        ))}
         {meta && (
           <span className={`rounded border px-1.5 py-0.5 text-[10px] font-bold ${meta.cls}`}>{meta.label}</span>
         )}
@@ -60,7 +69,7 @@ function Row({ name, state }: { name: RuntimeComponentName; state?: InstallState
           >
             {start.isPending || busy ? (
               <>
-                <Spinner /> 安装中…
+                <Spinner /> 下载中…
               </>
             ) : (
               ROWS.find((r) => r.key === name)!.installLabel
