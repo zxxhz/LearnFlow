@@ -38,6 +38,13 @@ logger = logging.getLogger(__name__)
 _IS_WINDOWS = sys.platform == "win32"
 _exec_lock = asyncio.Lock()  # 全局串行：本地单用户，避免资源风暴
 
+if _IS_WINDOWS:
+    # 沙箱子进程继承此错误模式：缺 DLL 等加载失败不再弹「系统错误」模态框
+    # （曾致 cc1plus 找不到 libwinpthread-1.dll 时弹窗挂起），而是直接以退出码失败
+    import ctypes
+
+    ctypes.windll.kernel32.SetErrorMode(0x0001)  # SEM_FAILCRITICALERRORS
+
 
 def _tail(data: bytes) -> str:
     text = data.decode("utf-8", errors="replace")
@@ -209,10 +216,14 @@ def run_code_sync(language: str, code: str) -> dict:
             with open(src, "w", encoding="utf-8") as f:
                 f.write(code)
             t0 = time.perf_counter()
+            # 编译步同样前置编译器 bin 到 PATH：cc1plus/collect2 等 g++ 子进程的
+            # libwinpthread-1.dll 等 DLL 都在其 bin 目录，且不继承应用自身环境
+            compile_env = toolchain.dll_run_env(compiler)
             cout, cerr, crc, _ = _run_process(
                 [compiler, "-std=c++17", "-O0", "-o", exe, src],
                 workdir,
                 COMPILE_TIMEOUT_SECONDS,
+                env=compile_env,
             )
             if crc != 0:
                 return {
