@@ -31,6 +31,9 @@ a = Analysis(
     binaries=[],
     datas=[
         ("app/static", "app/static"),
+        # prompt 模板是运行时按路径读取的数据文件（PyInstaller 不会自动收集）：
+        # 漏掉会导致配置 LLM 后所有走 render_prompt 的接口 500（如导入 md、建课）
+        ("app/prompts", "app/prompts"),
         ("build/python-runtime", "python-runtime"),
     ],
     hiddenimports=hiddenimports,

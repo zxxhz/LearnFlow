@@ -34,7 +34,6 @@ from app.services.llm import (
     create_adapter_from_settings,
     get_llm_temperature,
 )
-from app.services.llm.errors import LLMError
 from app.services.prompt import render_prompt
 from app.services.review import get_preferences
 
@@ -96,20 +95,20 @@ async def _read_uploads(files: list[UploadFile]) -> tuple[list[str], list[str]]:
 
 
 async def _llm_title(db: AsyncSession, chapter_titles: list[str]) -> str | None:
-    """LLM 修饰课程标题；未配置/失败返回 None（降级为文件名）。"""
+    """LLM 修饰课程标题；未配置/失败返回 None（降级为文件名）。
+
+    导入本身不依赖 LLM，这里捕获一切异常：LLM 层任何故障都不允许让导入 500。
+    """
     try:
         adapter: OpenAICompatAdapter = await create_adapter_from_settings(db, scene="generation")
-    except LLMError:
-        return None
-    listing = "\n".join(f"- {t}" for t in chapter_titles[:40])
-    try:
+        listing = "\n".join(f"- {t}" for t in chapter_titles[:40])
         result = await adapter.chat_json(
             [{"role": "user", "content": render_prompt("import_title", CHAPTERS=listing)}],
             ImportTitleLLM,
         )
         return result.title.strip() or None
-    except LLMError as e:
-        logger.info("import title suggestion skipped: %s", e.message)
+    except Exception as e:
+        logger.warning("import title suggestion skipped: %r", e)
         return None
 
 
@@ -128,8 +127,8 @@ async def _extract_kp(
             ChapterMeta,
             temperature=temperature,
         )
-    except LLMError as e:
-        logger.info("import kp extraction skipped: %s", e.message)
+    except Exception as e:
+        logger.warning("import kp extraction skipped: %r", e)
         return None
 
 
@@ -149,7 +148,7 @@ async def import_analyze(
     llm_title = None
     try:
         await create_adapter_from_settings(db)
-    except LLMError:
+    except Exception:  # 未配置或读取配置失败 → 视为不可用，机械切章不受影响
         llm_available = False
     if llm_available:
         llm_title = await _llm_title(db, [c["title"] for c in chapters])
@@ -183,8 +182,8 @@ async def import_confirm(
     adapter: OpenAICompatAdapter | None = None
     try:
         adapter = await create_adapter_from_settings(db, scene="generation")
-    except LLMError:
-        pass  # 未配置 LLM：跳过知识点提取，导入本身仍可用
+    except Exception:  # 未配置 LLM：跳过知识点提取，导入本身仍可用
+        adapter = None
 
     course = Course(
         title=spec_obj.title.strip() or "导入课程",

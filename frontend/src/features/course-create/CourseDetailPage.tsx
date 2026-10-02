@@ -211,12 +211,17 @@ export default function CourseDetailPage() {
         title="删除课程"
         message={`确定删除课程「${course.title}」？全部文档、标注、对话与复习卡将被删除，且无法恢复。`}
         onCancel={() => setConfirmDel(false)}
-        onConfirm={() => {
+        onConfirm={async () => {
           setConfirmDel(false);
-          api.courses.delete(course.id).then(
-            () => navigate("/"),
-            (err) => alert(err.message)
-          );
+          try {
+            await api.courses.delete(course.id);
+            // 删除会连带清掉复习卡/标注/对话，课程列表、复习队列、仪表盘等缓存全部失效；
+            // 否则 15s staleTime 内返回首页会直接命中旧缓存，看起来像"没删掉"
+            await queryClient.invalidateQueries();
+            navigate("/");
+          } catch (err) {
+            alert((err as Error).message);
+          }
         }}
       />
     </div>
