@@ -121,6 +121,7 @@ export interface Preferences {
   chapter_length: number;
   feynman_max_rounds: number;
   auto_create_cards: boolean;
+  exercises_per_kp: number;
   highlight_colors: Partial<Record<AnnotationColor, string>>;
   github_repo: string;
 }
@@ -218,6 +219,38 @@ export interface ReviewQueue {
   cards: ReviewCard[];
   new_quota_remaining: number;
   due_total: number;
+}
+
+export type ExerciseKind = "code" | "concept";
+
+export interface ExerciseAttempt {
+  id: string;
+  exercise_id: string;
+  content: string;
+  status: string;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+  duration_ms: number | null;
+  passed: boolean | null;
+  feedback: string;
+  created_at: string;
+}
+
+export interface Exercise {
+  id: string;
+  knowledge_point_id: string;
+  document_id: string;
+  kind: ExerciseKind;
+  title: string;
+  task_md: string;
+  language: string;
+  skeleton_code: string;
+  expected_output: string;
+  reference_answer: string;
+  created_at: string;
+  kp_title: string | null;
+  latest_attempt: ExerciseAttempt | null;
 }
 
 export interface DayCount {

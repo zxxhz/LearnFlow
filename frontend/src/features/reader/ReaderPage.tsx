@@ -13,6 +13,7 @@ import SelectionToolbar from "./SelectionToolbar";
 import AnnotationCard from "./AnnotationCard";
 import TocSidebar, { buildToc } from "./TocSidebar";
 import AnnotationsDrawer from "./AnnotationsDrawer";
+import ExerciseDrawer from "./ExerciseDrawer";
 import { hlColorVars, useHlColors } from "./colors";
 
 export default function ReaderPage() {
@@ -46,6 +47,11 @@ export default function ReaderPage() {
   const execsQuery = useQuery({
     queryKey: ["execs", documentId],
     queryFn: () => api.documents.executions(documentId!),
+    enabled: !!documentId,
+  });
+  const exercisesQuery = useQuery({
+    queryKey: ["exercises", documentId],
+    queryFn: () => api.exercises.list(documentId!),
     enabled: !!documentId,
   });
 
@@ -83,6 +89,8 @@ export default function ReaderPage() {
   const [convId, setConvId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [kpOpen, setKpOpen] = useState(false);
+  const [exerciseOpen, setExerciseOpen] = useState(false);
+  const [exerciseFocus, setExerciseFocus] = useState<string | null>(null);
   const [reAnchoring, setReAnchoring] = useState<Annotation | null>(null);
   const [flashSection, setFlashSection] = useState<string | null>(null);
   const [regenOpen, setRegenOpen] = useState(false);
@@ -267,6 +275,7 @@ export default function ReaderPage() {
             queryClient.invalidateQueries({ queryKey: ["doc", documentId] });
             invalidate();
             queryClient.invalidateQueries({ queryKey: ["doc-kps", documentId] });
+            queryClient.invalidateQueries({ queryKey: ["exercises", documentId] });
           } else if (ev.type === "chapter_failed") {
             setRegenMsg(`重新生成失败：${ev.error ?? "未知错误"}`);
           }
@@ -350,6 +359,16 @@ export default function ReaderPage() {
           <div className="flex items-center gap-1">
             <Button variant="ghost" className="text-xs" onClick={() => setKpOpen((v) => !v)}>
               💡 知识点 {activeKps.length > 0 && activeKps.length}
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-xs"
+              onClick={() => {
+                setExerciseOpen((v) => !v);
+                setExerciseFocus(null);
+              }}
+            >
+              📝 练习 {(exercisesQuery.data?.length ?? 0) > 0 && exercisesQuery.data!.length}
             </Button>
             <Button variant="ghost" className="text-xs" onClick={() => setDrawerOpen((v) => !v)}>
               🖍 标注 {annotations.length > 0 && annotations.length}
@@ -447,17 +466,43 @@ export default function ReaderPage() {
                 <div key={kp.id} className="rounded-lg border border-gray-100 p-2.5">
                   <div className="text-sm font-medium text-gray-800">{kp.title}</div>
                   <p className="mt-0.5 line-clamp-2 text-xs text-gray-500">{kp.summary}</p>
-                  <Link
-                    to={`/feynman?kp=${kp.id}`}
-                    className="mt-1.5 inline-block text-xs text-brand-600 underline"
-                  >
-                    🎤 费曼讲解
-                  </Link>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <Link
+                      to={`/feynman?kp=${kp.id}`}
+                      className="text-xs text-brand-600 underline"
+                    >
+                      🎤 费曼讲解
+                    </Link>
+                    <button
+                      className="text-xs text-brand-600 underline"
+                      onClick={() => {
+                        setKpOpen(false);
+                        setExerciseFocus(kp.id);
+                        setExerciseOpen(true);
+                      }}
+                    >
+                      📝 练习
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
           )}
         </div>
+      )}
+
+      {/* 练习抽屉 */}
+      {exerciseOpen && (
+        <ExerciseDrawer
+          documentId={doc.id}
+          kps={activeKps}
+          exercises={exercisesQuery.data ?? []}
+          focusKpId={exerciseFocus}
+          onClose={() => {
+            setExerciseOpen(false);
+            setExerciseFocus(null);
+          }}
+        />
       )}
 
       {/* 划线工具条 */}

@@ -31,6 +31,7 @@ DEFAULT_PREFS = {
     "chapter_length": 3000,
     "feynman_max_rounds": 4,
     "auto_create_cards": True,
+    "exercises_per_kp": 2,
 }
 
 

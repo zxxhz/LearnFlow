@@ -39,6 +39,7 @@ export default function SettingsPage() {
     chapter_length: 3000,
     feynman_max_rounds: 4,
     auto_create_cards: true,
+    exercises_per_kp: 2,
     highlight_colors: {},
     github_repo: "",
   });
@@ -290,7 +291,7 @@ export default function SettingsPage() {
       {/* 学习偏好 */}
       <section className="mt-4 rounded-xl border border-gray-200 bg-white p-6">
         <h2 className="text-base font-semibold text-gray-900">学习偏好</h2>
-        <div className="mt-4 grid grid-cols-3 gap-3">
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           <div>
             <label className="mb-1 block text-sm font-medium text-gray-700">每日新卡上限</label>
             <Input
@@ -318,6 +319,16 @@ export default function SettingsPage() {
               max={10}
               value={prefs.feynman_max_rounds}
               onChange={(e) => setPrefs({ ...prefs, feynman_max_rounds: Number(e.target.value) })}
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700">每知识点练习数</label>
+            <Input
+              type="number"
+              min={1}
+              max={4}
+              value={prefs.exercises_per_kp}
+              onChange={(e) => setPrefs({ ...prefs, exercises_per_kp: Number(e.target.value) })}
             />
           </div>
         </div>

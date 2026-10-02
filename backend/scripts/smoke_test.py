@@ -14,7 +14,7 @@ import uvicorn
 
 from app.core.config import settings
 from app.core.db import async_session_factory, init_db
-from app.models import Course, Document
+from app.models import Course, Document, Exercise, KnowledgePoint
 from app.models.base import utcnow_iso
 from app.services.generation.indexing import rebuild_sections
 
@@ -65,8 +65,31 @@ async def seed() -> tuple[str, str]:
         doc.version = 1
         doc.summary = "本章介绍指针。"
         await rebuild_sections(db, doc, SAMPLE_MD, 1)
+        kp = KnowledgePoint(document_id=doc.id, title="指针概念", summary="指针存放内存地址")
+        db.add(kp)
+        await db.flush()
+        db.add_all([
+            Exercise(
+                knowledge_point_id=kp.id,
+                document_id=doc.id,
+                kind="code",
+                title="打印两数之和",
+                task_md="补全 TODO，使程序输出 `2 + 3 = 5`。",
+                language="python",
+                skeleton_code="a = 2\nb = 3\n# TODO：打印 a + b\n",
+                expected_output="2 + 3 = 5\n",
+            ),
+            Exercise(
+                knowledge_point_id=kp.id,
+                document_id=doc.id,
+                kind="concept",
+                title="指针是什么",
+                task_md="用自己的话解释：指针是什么？它存放什么？",
+                reference_answer="指针是一个变量，其值为内存地址。【评分要点】提到指针存放地址",
+            ),
+        ])
         await db.commit()
-        return course.id, doc.id
+        return course.id, doc.id, kp.id
 
 
 def call(base: str, path: str, method: str = "GET", body=None):
@@ -147,7 +170,7 @@ new 与 delete 必须配对。
 
 
 def main() -> None:
-    course_id, document_id = asyncio.run(seed())
+    course_id, document_id, kp_id = asyncio.run(seed())
     port = settings.port  # 尊重 APP_PORT：8420 被已在跑的实例占用时可换端口
     base = f"http://127.0.0.1:{port}"
     config = uvicorn.Config("app.main:app", host="127.0.0.1", port=port, log_level="warning")
@@ -247,6 +270,31 @@ def main() -> None:
     s, body = call(base, "/api/runtime/install", "POST", {"component": "ruby"})
     check("未知组件 → 4xx 校验", s in (400, 422), str(body)[:120])
 
+    # 6.6 练习系统（PRD §5.10）：列表回显 / 代码题自动判定 / 删除（LLM 依赖路径见 §8.5）
+    s, body = call(base, f"/api/exercises?document_id={document_id}")
+    check(
+        "练习列表（含知识点标题）",
+        s == 200 and len(body) == 2 and all(e["kp_title"] == "指针概念" for e in body),
+        json.dumps(body, ensure_ascii=False)[:200],
+    )
+    if s == 200:
+        ex_code = next(e for e in body if e["kind"] == "code")
+        ex_concept = next(e for e in body if e["kind"] == "concept")
+        check("未作答时 latest_attempt 为空", ex_code["latest_attempt"] is None)
+        s, body = call(base, f"/api/exercises/{ex_code['id']}/submit", "POST", {"content": "print('2 + 3 =', 2 + 3)"})
+        check("代码题正确解 → passed", s == 200 and body["passed"] is True and body["status"] == "success", json.dumps(body, ensure_ascii=False)[:200])
+        s, body = call(base, f"/api/exercises/{ex_code['id']}/submit", "POST", {"content": "print('2 + 3 =', 2 + 4)"})
+        check("代码题输出不符 → 未通过", s == 200 and body["passed"] is False, json.dumps(body, ensure_ascii=False)[:200])
+        s, body = call(base, f"/api/exercises/{ex_code['id']}/submit", "POST", {"content": "  "})
+        check("空提交 → 400 校验", s == 400, str(body)[:120])
+        s, body = call(base, f"/api/exercises?document_id={document_id}")
+        latest = next(e for e in body if e["id"] == ex_code["id"])["latest_attempt"]
+        check("提交后最新作答回显", latest is not None and latest["passed"] is False)
+        s, body = call(base, f"/api/exercises/{ex_concept['id']}", "DELETE")
+        check("删除练习题", s == 200)
+        s, body = call(base, f"/api/exercises?document_id={document_id}")
+        check("删除后列表剩 1 题", s == 200 and len(body) == 1)
+
     # 7. 导入自有 Markdown（PRD 实现备注 12）：analyze → confirm → 原文保留
     s, body = call_multipart(base, "/api/courses/import/analyze", {}, [("files", "notes.md", IMPORT_MD.encode("utf-8"))])
     check("导入 analyze 识别 3 章", s == 200 and len(body.get("chapters", [])) == 3, json.dumps(body, ensure_ascii=False)[:200])
@@ -300,6 +348,14 @@ def main() -> None:
 
     m_primary, m_feynman, m_gen = _aio.run(_scene_check())
     check("场景回落：主/生成=主模型，费曼=覆盖模型", m_primary == "main-model" and m_gen == "main-model" and m_feynman == "strong-model", f"{m_primary}/{m_gen}/{m_feynman}")
+
+    # 8.5 练习的 LLM 依赖路径：模型置空后必须快速 400（不允许 5xx / 挂起）
+    call(base, "/api/settings", "PUT", {"llm": {"base_url": "", "model": ""}})
+    s, body = call(base, "/api/exercises/generate", "POST", {"knowledge_point_id": kp_id, "language": "python", "count": 2})
+    check("出题(LLM未配置) → 400", s == 400, str(body)[:150])
+    s, body = call(base, "/api/exercises/generate", "POST", {"knowledge_point_id": kp_id, "language": "ruby"})
+    check("出题语言校验 → 400", s in (400, 422), str(body)[:120])
+
     call(base, "/api/settings", "PUT", {"llm": {"base_url": orig["llm"]["base_url"], "api_key": orig["llm"]["api_key"], "model": orig["llm"]["model"], "temperature": orig["llm"]["temperature"]}, "scenes": {"generation": {}, "chat": {}, "feynman": {}}})
 
     # 9. 高数图形化（PRD §5.9）：SymPy + Matplotlib 渲染
@@ -337,6 +393,30 @@ def main() -> None:
     check("删除后文档 404", s == 404)
     s, body = call(base, f"/api/documents/{document_id}/executions")
     check("删除后执行历史为空", s == 200 and body == [])
+
+    async def _exercise_left():
+        from sqlalchemy import func, select
+
+        from app.models import Exercise, ExerciseAttempt
+
+        async with async_session_factory() as sdb:
+            n_ex = (
+                await sdb.scalars(
+                    select(func.count()).select_from(Exercise).where(Exercise.document_id == document_id)
+                )
+            ).one()
+            n_at = (
+                await sdb.scalars(
+                    select(func.count())
+                    .select_from(ExerciseAttempt)
+                    .join(Exercise, ExerciseAttempt.exercise_id == Exercise.id)
+                    .where(Exercise.document_id == document_id)
+                )
+            ).one()
+            return n_ex, n_at
+
+    n_ex, n_at = _aio.run(_exercise_left())
+    check("课程删除后练习/作答级联清零", (n_ex, n_at) == (0, 0), f"{n_ex}/{n_at}")
 
     print("\n结果:", "全部通过 ✅" if ok else "存在失败 ❌")
     server.should_exit = True

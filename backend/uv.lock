@@ -1087,7 +1087,7 @@ wheels = [
 
 [[package]]
 name = "learnflow-backend"
-version = "0.1.6"
+version = "0.2.0"
 source = { virtual = "." }
 dependencies = [
     { name = "aiosqlite" },

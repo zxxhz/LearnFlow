@@ -7,6 +7,7 @@ from app.api import (
     dashboard,
     documents,
     execution,
+    exercise,
     feynman,
     imports,
     math,
@@ -26,5 +27,6 @@ api_router.include_router(feynman.router)
 api_router.include_router(review.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(execution.router)
+api_router.include_router(exercise.router)
 api_router.include_router(math.router)
 api_router.include_router(runtime.router)

@@ -229,7 +229,7 @@
 ### 5.7 设置（P0 基础版）
 
 - **LLM 配置**：base_url、api_key、模型名、温度默认值；`测试连接` 按钮（发一条最小请求验证连通并显示模型回包）。支持保存多套配置并切换（如"便宜模型做生成 / 强模型做费曼评价"——M1 先做单配置 + 字段分组预留）。
-- **生成参数**：每章篇幅预算、每日新卡上限、费曼最大追问轮数。
+- **生成参数**：每章篇幅预算、每日新卡上限、费曼最大追问轮数、每知识点练习数。
 - **数据**：显示数据目录位置；提供"打开数据目录"按钮；说明备份方式（复制 `data/` 目录即可，文档为纯 Markdown 可用 git 管理）。
 
 ### 5.8 [M3 TODO] 代码运行沙箱
@@ -244,6 +244,31 @@
 
 - 平板：前端做响应式适配（划线交互改为长按选择）；后端提供 `--host 0.0.0.0` 启动选项 + 启动时展示局域网地址；文档化推荐的内网穿透方案（Tailscale/自建 frp）。平板只作客户端，服务始终运行在电脑上（符合用户"平板远程控制电脑"的设想）。
 - 桌面壳：Tauri 包装（加载本地服务 URL），提供独立窗口、系统托盘、开机自启。数据与服务端不变。
+
+### 5.10 练习系统（P1）
+
+把"运用刚学的知识点"从静态文档练习升级为可交互、有判定的做题闭环（§5.1 的章节文档末尾练习仍保留，作为随文小练）。
+
+**FR-10.1 出题**
+- 入口：阅读页顶栏「📝 练习」抽屉 / 知识点浮层每条「📝 练习」链接；按**知识点**手动生成（可选 Python / C++，默认 2 题/知识点，设置可调 1–4）。
+- LLM 单次调用产出题组（`chat_json` 校验，重试 ≤2）：代码题 + 概念简答题混合（≥1 道代码题 + ≥1 道概念题）。
+- 出题与判定都以**教材原文**为依据，禁止超纲；重新生成会替换该知识点现有练习与作答记录。
+- 章节重新生成时练习随知识点重建一并重置；删除课程级联清理。
+
+**FR-10.2 代码题（自动判定）**
+- 题面（任务说明）+ 带 `TODO` 注释的代码骨架 + 预期输出；学习者补全后点「▶ 运行判定」。
+- 复用代码运行沙箱（§5.8）真实执行，**stdout 归一化对比**（统一换行、去行尾空白与首尾空行）自动判通过/未通过；编译失败/超时/运行错误给出对应中文提示。
+- 题目硬约束（写入出题 prompt）：单文件可运行、禁标准输入、禁随机/时间/网络（保证输出确定）；预期输出与正确解法逐字符一致。
+- 预期输出默认折叠，点「查看预期输出」按需揭示。
+
+**FR-10.3 概念简答题（LLM 评分）**
+- 题面具体（针对概念/区别/步骤/原因），附分点参考答案与评分要点（评分要点不下发前端）。
+- 学习者作答后提交，LLM 按参考答案 + 教材原文评分：通过/未通过 + 分数（0–100）+ 中文评语（先肯定后指出缺漏，≤200 字）；"意思对即可"，有实质概念错误或关键要点缺失才判不通过。
+- 参考答案默认折叠，作答后可按需查看。
+
+**FR-10.4 作答记录**
+- 每次提交落库（提交内容 + 判定结果 + 输出/评语），可无限次重试；抽屉回显**最近一次**作答（内容与通过状态），重开文档不丢。
+- 每题可单独删除（连带作答记录）。
 
 ---
 
@@ -543,6 +568,32 @@ code_executions：[M3 TODO] 预留，见 §8.2
 | language / code | 语言与代码快照 |
 | status / stdout / stderr / exit_code / duration_ms | 执行结果 |
 
+**exercises**（§5.10）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| id / user_id / created_at | | 常规 |
+| knowledge_point_id | TEXT FK | 所属知识点（重建知识点时连带删除） |
+| document_id | TEXT | 冗余章节 id，按文档列题用 |
+| kind | TEXT | `code`（自动判定）/ `concept`（LLM 评分） |
+| title / task_md | TEXT | 题目标题与任务描述（markdown） |
+| language | TEXT | 代码题 `python / cpp`；概念题为空 |
+| skeleton_code | TEXT | 代码题骨架（含 TODO 挖空） |
+| expected_output | TEXT | 代码题预期 stdout（判定基准） |
+| reference_answer | TEXT | 概念题参考答案与评分要点 |
+
+**exercise_attempts**（§5.10，每次提交一条）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| id / user_id / created_at | | 常规 |
+| exercise_id | TEXT FK | |
+| content | TEXT | 提交的代码或答案文本 |
+| status | TEXT | 代码题=执行状态（§5.8）；概念题=`graded` |
+| exit_code / stdout / stderr / duration_ms | | 代码题执行结果 |
+| passed | BOOL(NULL) | 判定结果；执行未完成时为 NULL |
+| feedback | TEXT | 概念题评语（含分数）；代码题失败提示 |
+
 ### 8.3 文档不可变原则与 Section 稳定 ID（不可逆决策，已定）
 
 1. **正文只存文件，数据库存派生索引**：课程文档正文是磁盘上的纯 Markdown 文件（无任何内嵌 ID 标记，git 友好、可手工阅读）；`sections` 表是从文件解析出的**派生索引**，任何时候可删除重建（re-index 任务）。
@@ -694,6 +745,15 @@ orphan 标注在标注列表中点"重新挂载"→ 进入选择模式 → 用�
 
 费曼专用：`POST /api/feynman/sessions`（指定 knowledge_point 开启）、`POST /api/feynman/sessions/{id}/evaluate`（触发评价，SSE 或同步返回 JSON）、`GET /api/feynman/sessions?knowledge_point_id=`。
 
+### 练习（§5.10）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| POST | `/api/exercises/generate` | `{knowledge_point_id, language, count?}` 为知识点出题（替换旧题），LLM 同步返回 |
+| GET | `/api/exercises?document_id=` | 文档全部练习（含知识点标题与最近一次作答） |
+| POST | `/api/exercises/{id}/submit` | `{content}` 提交作答：代码题执行并判定 / 概念题 LLM 评分 |
+| DELETE | `/api/exercises/{id}` | 删除练习（连带作答记录） |
+
 ### 复习
 
 | 方法 | 路径 | 说明 |
@@ -813,3 +873,4 @@ orphan 标注在标注列表中点"重新挂载"→ 进入选择模式 → 用�
 14. **高数图形化（§5.9 已实现）**：`POST /api/math/render`（SymPy 解析 + Matplotlib Agg 渲染 SVG，即时返回不持久化）；前端 ` ```plot ` 代码块「📐 绘图」按钮，支持多函数、奇点断线；sympify 后校验自由符号只允许 x（防止把任意标识符当符号渲染）。平板访问：`APP_HOST=0.0.0.0` + 启动打印局域网地址 + 前端响应式（移动抽屉导航/目录浮层/触屏划线/卡片全宽）；内网穿透推荐 Tailscale（README 有安全提示）。
 15. **启动时更新检查（已实现）**：`GET /api/version`（版本源为 `app/core/config.py` 的 `APP_VERSION`，发布时与 tauri.conf.json/package.json 一同 bump）+ `POST /api/update/check?force=`。查 GitHub Releases latest（未认证 API，5s 超时，失败静默降级绝不阻塞启动）；仓库来源=设置页偏好 `github_repo`（owner/repo）→ 回落环境变量 `APP_GITHUB_REPO`，两者皆空则禁用。前端打开时自动检查（后端节流 1h，设置页按钮强制），有新版显示可关闭横幅（「本次忽略」按版本记忆于 sessionStorage）。版本比较忽略 tag 前缀 v、预发布版小于正式版。
 16. **运行环境一键安装（§5.8 增补，已实现）**：`GET /api/runtime/status`（检测 bundled/managed/system/none + 版本）+ `POST /api/runtime/install`（后台线程，进度走 `GET /api/runtime/install/status` 轮询）。便携包落在软件目录 `toolchains/`（安装目录只读时兜底数据目录），**不写系统 PATH/注册表**；C++ 用 niXman mingw-builds 14.2.0 UCRT（7z 约 92MB，py7zr 解压），Python 用 python.org embeddable 3.12.10（约 11MB）。下载源用 512KB Range 试读择优（GitHub 直连 → ghproxy/gh-proxy 镜像；python.org → 华为云 → npmmirror）。沙箱查找顺序：系统 PATH → 托管目录（Python 为 打包内置 → 托管 → PATH）。已知坑的处置：7z 解压会还原只读属性（删目录前先递归清只读位）；杀软短暂锁文件用退避重试；gcc 对 argv[0] 做 realpath 导致 junction 别名失效，改用**硬链接镜像**到纯 ASCII 基（系统码页表示不了非 ASCII 安装路径时 ld 会找不到 crt 对象，GBK 码页系统不受影响）；MinGW 编译产物的运行时 DLL 与 g++ 同目录，运行时把该 bin 目录前置到子进程 PATH；**编译步同理**——cc1plus/collect2 等 g++ 子进程的 libwinpthread-1.dll 等 DLL 也只在 bin 目录（打包版实测：漏掉编译步会在用户机器上弹「找不到 libwinpthread-1.dll」系统错误，开发环境能跑纯因 PATH 里恰有 Git 自带的同名 DLL）；后端进程启动即 SetErrorMode(SEM_FAILCRITICALERRORS)，沙箱子进程继承后缺 DLL 等加载硬错误静默转为退出码，不再弹模态框卡住应用。前端入口：设置页「代码运行环境」区块 + 代码块 `compiler_missing` 结果下的内联一键安装。
+17. **练习系统（§5.10，已实现）**：出题复用 `generation` 场景、概念题评分复用 `chat` 场景（不新增场景槽位）；出题 prompt 的占位符用 `[[VAR]]` 语法（与代码大括号天然不冲突）。代码题判定在服务层做 stdout 归一化对比（统一 CRLF、去行尾空白与首尾空行），沙箱 runner 零改动（stdin 仍 DEVNULL，题目一律禁 `input()`）；概念题分数不单独落库，折叠进 feedback（`（90 分）…`）。练习挂在知识点上：章节重新生成即重置（与自动复习卡同策略），出题接口为"替换式"（重新生成覆盖旧题与作答）。前端不做代码高亮编辑器（v1 用 mono textarea + Tab 缩进），抽屉 420px；提交后靠 `["exercises", documentId]` 查询失效回显最新作答（与代码块执行回显同模式）。冒烟测试覆盖非 LLM 路径（判定/回显/级联/未配 LLM 400）；出题与评分链路用本地 OpenAI 兼容 mock 服务手测验证。

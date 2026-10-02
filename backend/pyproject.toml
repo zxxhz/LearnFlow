@@ -1,6 +1,6 @@
 [project]
 name = "learnflow-backend"
-version = "0.1.6"
+version = "0.2.0"
 description = "LearnFlow 学习 Agent 后端（FastAPI + SQLite）"
 requires-python = ">=3.11"
 dependencies = [

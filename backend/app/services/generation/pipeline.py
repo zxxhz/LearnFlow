@@ -24,6 +24,7 @@ from app.models import (
 from app.models.base import utcnow_iso
 from app.services.generation.indexing import rebuild_sections
 from app.services.generation.knowledge import parse_chapter_output
+from app.services.exercise import delete_kp_exercises, purge_document_exercises
 from app.services.llm import create_adapter_from_settings, get_llm_temperature
 from app.services.llm.errors import LLMError
 from app.services.prompt import render_prompt
@@ -136,6 +137,8 @@ async def run_chapter(
     ).all()
     old_kp_ids = [k.id for k in old_kps]
     if old_kp_ids:
+        # 练习挂在知识点上，随知识点重建一并重置
+        await delete_kp_exercises(db, old_kp_ids)
         await db.execute(
             delete(ReviewCard).where(
                 ReviewCard.source_type == "knowledge_point",
@@ -307,6 +310,8 @@ async def purge_course_data(db: AsyncSession, course: Course) -> None:
             await db.scalars(select(Annotation).where(Annotation.document_id.in_(doc_ids)))
         ).all()
         ann_ids = [a.id for a in anns]
+        # 练习/作答须先于知识点删除（FK 约束）
+        await purge_document_exercises(db, doc_ids)
         sessions = (
             await db.scalars(select(FeynmanSession).where(FeynmanSession.document_id.in_(doc_ids)))
         ).all()

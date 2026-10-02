@@ -4,6 +4,7 @@ from app.models.conversation import Conversation, Message
 from app.models.course import Course
 from app.models.document import Document, Section
 from app.models.execution import CodeExecution
+from app.models.exercise import Exercise, ExerciseAttempt
 from app.models.feynman import FeynmanSession
 from app.models.knowledge_point import KnowledgePoint
 from app.models.review import ReviewCard, ReviewLog
@@ -18,6 +19,8 @@ __all__ = [
     "Document",
     "Section",
     "CodeExecution",
+    "Exercise",
+    "ExerciseAttempt",
     "FeynmanSession",
     "KnowledgePoint",
     "ReviewCard",

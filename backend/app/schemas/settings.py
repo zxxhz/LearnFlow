@@ -30,6 +30,8 @@ class Preferences(BaseModel):
     chapter_length: int = 3000
     feynman_max_rounds: int = 4
     auto_create_cards: bool = True
+    # 每个知识点生成的练习题数量（1-4，PRD §5.10）
+    exercises_per_kp: int = 2
     # 划线高亮四色（hex），缺失/非法项回落默认
     highlight_colors: dict[str, str] = dict(DEFAULT_HL_COLORS)
     # GitHub 仓库 owner/repo；留空回落环境变量 APP_GITHUB_REPO（PRD 实现备注 15）

@@ -10,6 +10,8 @@ import type {
   CourseListItem,
   DashboardSummary,
   DocumentContent,
+  Exercise,
+  ExerciseAttempt,
   FeynmanSession,
   FeynmanSessionDetail,
   ImportAnalysis,
@@ -145,6 +147,18 @@ export const api = {
   executions: {
     run: (body: { document_id: string; section_id: string; language: string; code: string }) =>
       request<CodeExecution>("/executions", { method: "POST", ...jsonBody(body) }),
+  },
+  exercises: {
+    generate: (body: { knowledge_point_id: string; language: string; count?: number }) =>
+      request<Exercise[]>("/exercises/generate", { method: "POST", ...jsonBody(body) }),
+    list: (documentId: string) =>
+      request<Exercise[]>(`/exercises?document_id=${documentId}`),
+    submit: (id: string, content: string) =>
+      request<ExerciseAttempt>(`/exercises/${id}/submit`, {
+        method: "POST",
+        ...jsonBody({ content }),
+      }),
+    remove: (id: string) => request<{ ok: boolean }>(`/exercises/${id}`, { method: "DELETE" }),
   },
   annotations: {
     listForDoc: (docId: string) =>
