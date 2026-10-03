@@ -117,7 +117,12 @@ export default function BankQuestionCard({
           )}
         </div>
       ) : (
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex items-center justify-end gap-2">
+          {multi && picked.length > 0 && !pending && (
+            <span className="text-xs text-gray-400 dark:text-gray-500">
+              已选 {picked.sort().join("、")}
+            </span>
+          )}
           <Button disabled={pending || picked.length === 0} onClick={submit}>
             {pending ? (
               <>
@@ -129,11 +134,6 @@ export default function BankQuestionCard({
               "提交"
             )}
           </Button>
-          {multi && picked.length > 0 && !pending && (
-            <span className="text-xs text-gray-400 dark:text-gray-500">
-              已选 {picked.sort().join("、")}
-            </span>
-          )}
         </div>
       )}
       <ErrorText>{error}</ErrorText>

@@ -1,5 +1,6 @@
-// 题库刷题页：随机练习 / 错题重刷两种模式，一轮抽 N 题，答完出小结
-import { useMemo, useState } from "react";
+// 题库刷题页：随机练习 / 错题重刷两种模式，一轮抽 N 题，答完出小结；
+// 轮中进度（轮 / 位置 / 作答）即时持久化 localStorage，中途退出可从「继续上次」恢复
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -9,6 +10,37 @@ import type { BankAttemptResult, BankRound } from "../../lib/types";
 
 const SIZES = [10, 20, 50];
 const TYPE_LABEL: Record<string, string> = { single: "单选", multi: "多选", judge: "判断" };
+
+// 未完成轮的存档：按题库分 key，退出刷题后进度保留，重进可继续
+interface DrillDraft {
+  round: BankRound;
+  idx: number;
+  results: Record<string, BankAttemptResult>;
+}
+
+const draftKey = (bankId: string) => `learnflow.bank-drill.${bankId}`;
+
+function loadDraft(bankId: string): DrillDraft | null {
+  try {
+    const raw = localStorage.getItem(draftKey(bankId));
+    if (!raw) return null;
+    const d = JSON.parse(raw) as DrillDraft;
+    if (d.round?.bank_id !== bankId || d.round.questions.length === 0) return null;
+    if (typeof d.idx !== "number" || d.idx < 0) return null;
+    return d;
+  } catch {
+    return null;
+  }
+}
+
+function saveDraft(bankId: string, d: DrillDraft | null) {
+  try {
+    if (!d) localStorage.removeItem(draftKey(bankId));
+    else localStorage.setItem(draftKey(bankId), JSON.stringify(d));
+  } catch {
+    // 存储不可用（隐私模式 / 配额满）：进度持久化失败不影响作答
+  }
+}
 
 export default function BankDrillPage() {
   const { bankId } = useParams();
@@ -21,11 +53,35 @@ export default function BankDrillPage() {
   });
   const bank = banks?.find((b) => b.id === bankId);
 
-  const [round, setRound] = useState<BankRound | null>(null);
-  const [idx, setIdx] = useState(0);
-  const [results, setResults] = useState<Record<string, BankAttemptResult>>({});
+  // 存档恢复：答完的轮（小结态）直接回看；未答完的不自动跳，经模式选择页「继续上次」恢复
+  const [draft, setDraft] = useState<DrillDraft | null>(() => loadDraft(bankId!));
+  const draftFinished = !!draft && draft.idx >= draft.round.questions.length;
+  const [round, setRound] = useState<BankRound | null>(() => (draftFinished ? draft!.round : null));
+  const [idx, setIdx] = useState(() => (draftFinished ? draft!.idx : 0));
+  const [results, setResults] = useState<Record<string, BankAttemptResult>>(() =>
+    draftFinished ? { ...draft!.results } : {},
+  );
   const [size, setSize] = useState(20);
   const [startError, setStartError] = useState("");
+
+  // 轮中任何变化即时落盘；round 为空（无轮）时不写，round 归属不符（路由复用残留）也不写
+  useEffect(() => {
+    if (!round || round.bank_id !== bankId) return;
+    saveDraft(bankId!, { round, idx, results });
+  }, [bankId, round, idx, results]);
+
+  const resumeDraft = () => {
+    if (!draft) return;
+    setRound(draft.round);
+    setIdx(draft.idx);
+    setResults({ ...draft.results });
+  };
+
+  const discardRound = () => {
+    setDraft(null);
+    saveDraft(bankId!, null);
+    setRound(null);
+  };
 
   const start = useMutation({
     mutationFn: (mode: "random" | "wrong") => api.banks.round(bankId!, mode, size),
@@ -116,7 +172,7 @@ export default function BankDrillPage() {
             {start.isPending ? <Spinner className="h-3.5 w-3.5" /> : null}
             {round.mode === "wrong" ? "再刷一轮错题" : "再来一轮"}
           </Button>
-          <Button variant="secondary" onClick={() => setRound(null)}>
+          <Button variant="secondary" onClick={discardRound}>
             返回模式选择
           </Button>
           <Link to="/bank" className="inline-flex items-center px-3 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
@@ -131,14 +187,21 @@ export default function BankDrillPage() {
   if (round && current) {
     return (
       <div className="mx-auto max-w-3xl p-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h1 className="text-base font-bold text-gray-900 dark:text-gray-100">
-            {round.mode === "wrong" ? "📕 错题重刷" : "🎯 随机练习"} · {bank.name}
-          </h1>
-          <span className="text-xs text-gray-400 dark:text-gray-500">
-            {idx + 1} / {questions.length}
-          </span>
-        </div>
+      <div className="mb-3 flex items-center gap-2">
+        <Button
+          variant="secondary"
+          onClick={() => navigate("/bank")}
+          title="返回题库列表，本轮进度已保留，下次进入可继续"
+        >
+          ← 退出本轮
+        </Button>
+        <h1 className="min-w-0 flex-1 truncate text-base font-bold text-gray-900 dark:text-gray-100">
+          {round.mode === "wrong" ? "📕 错题重刷" : "🎯 随机练习"} · {bank.name}
+        </h1>
+        <span className="shrink-0 text-xs text-gray-400 dark:text-gray-500">
+          {idx + 1} / {questions.length}
+        </span>
+      </div>
         <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
           <div
             className="h-full rounded-full bg-brand-500 transition-all"
@@ -170,6 +233,23 @@ export default function BankDrillPage() {
       </Link>
       <h1 className="mt-1 text-xl font-bold text-gray-900 dark:text-gray-100">🎯 {bank.name}</h1>
       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">来源：{bank.source_file}</p>
+
+      {draft && !draftFinished && (
+        <div className="mt-4 rounded-xl border border-brand-200 dark:border-brand-800 bg-brand-50/60 dark:bg-brand-900/20 p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex-1">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                ↩ 上次刷到第 {Math.min(draft.idx + 1, draft.round.questions.length)} /{" "}
+                {draft.round.questions.length} 题
+              </h2>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                已作答 {Object.keys(draft.results).length} 题，进度已保留；开始新一轮会覆盖它。
+              </p>
+            </div>
+            <Button onClick={resumeDraft}>继续刷题 →</Button>
+          </div>
+        </div>
+      )}
 
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard label="题库总题数" value={String(s.question_count)} />
