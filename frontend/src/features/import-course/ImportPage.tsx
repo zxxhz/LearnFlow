@@ -67,7 +67,7 @@ export default function ImportPage() {
   const included = chapters.filter((c) => c.include).length;
 
   return (
-    <div className="mx-auto max-w-3xl p-8">
+    <div className="mx-auto max-w-5xl p-8">
       <Link to="/" className="text-sm text-gray-500 dark:text-gray-400 hover:text-brand-600">
         ← 返回首页
       </Link>

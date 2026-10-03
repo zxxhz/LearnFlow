@@ -165,7 +165,8 @@ export default function Layout() {
             {theme === "dark" ? "☀️" : "🌙"}
           </button>
         </header>
-        <main className="min-h-0 flex-1 overflow-auto">
+        {/* scrollbar-gutter: 滚动条出现/消失不再让居中内容横移（各页面标题位置保持一致） */}
+        <main className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]">
           <Outlet />
         </main>
       </div>

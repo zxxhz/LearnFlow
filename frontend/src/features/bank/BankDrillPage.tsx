@@ -118,7 +118,7 @@ export default function BankDrillPage() {
   }
   if (!bank) {
     return (
-      <div className="mx-auto max-w-3xl p-6">
+      <div className="mx-auto max-w-5xl p-8">
         <ErrorText>{loadError ? (loadError as Error).message : "题库不存在"}</ErrorText>
         <Button variant="secondary" className="mt-3" onClick={() => navigate("/bank")}>
           ← 返回题库列表
@@ -130,8 +130,8 @@ export default function BankDrillPage() {
   // ---------- 轮末小结（答完最后一题后手动进入，避免跳过判分反馈） ----------
   if (round && idx >= questions.length && questions.length > 0) {
     return (
-      <div className="mx-auto max-w-3xl p-6">
-        <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">
+      <div className="mx-auto max-w-5xl p-8">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
           {round.mode === "wrong" ? "📕 错题重刷 · 小结" : "🎯 随机练习 · 小结"}
         </h1>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -186,7 +186,7 @@ export default function BankDrillPage() {
   // ---------- 轮中作答 ----------
   if (round && current) {
     return (
-      <div className="mx-auto max-w-3xl p-6">
+      <div className="mx-auto max-w-5xl p-8">
       <div className="mb-3 flex items-center gap-2">
         <Button
           variant="secondary"
@@ -227,11 +227,11 @@ export default function BankDrillPage() {
   // ---------- 模式选择 ----------
   const s = bank.stats;
   return (
-    <div className="mx-auto max-w-3xl p-6">
+    <div className="mx-auto max-w-5xl p-8">
       <Link to="/bank" className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
         ← 题库列表
       </Link>
-      <h1 className="mt-1 text-xl font-bold text-gray-900 dark:text-gray-100">🎯 {bank.name}</h1>
+      <h1 className="mt-1 text-2xl font-bold text-gray-900 dark:text-gray-100">🎯 {bank.name}</h1>
       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">来源：{bank.source_file}</p>
 
       {draft && !draftFinished && (

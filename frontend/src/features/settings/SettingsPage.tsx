@@ -140,7 +140,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl p-8">
+    <div className="mx-auto max-w-5xl p-8">
       <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">设置</h1>
       {saveMsg && <span className="ml-3 text-sm text-green-600 dark:text-green-400">{saveMsg}</span>}
 

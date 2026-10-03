@@ -31,9 +31,9 @@ export default function BankListPage() {
   });
 
   return (
-    <div className="mx-auto max-w-3xl p-6">
+    <div className="mx-auto max-w-5xl p-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">🎯 题库刷题</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">🎯 题库刷题</h1>
         <Button onClick={() => setImportOpen(true)}>📥 导入题库</Button>
       </div>
       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">

@@ -12,8 +12,8 @@ export default function WrongBookPage() {
   });
 
   return (
-    <div className="mx-auto max-w-3xl p-6">
-      <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">📕 错题本</h1>
+    <div className="mx-auto max-w-5xl p-8">
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">📕 错题本</h1>
       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
         最近一次作答未通过的题都在这里；重刷通过后自动出池。
       </p>

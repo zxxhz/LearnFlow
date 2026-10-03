@@ -24,8 +24,8 @@ export default function SearchPage() {
       .replace(/&lt;\/mark&gt;/g, "</mark>");
 
   return (
-    <div className="mx-auto max-w-3xl p-6">
-      <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">🔍 全局搜索</h1>
+    <div className="mx-auto max-w-5xl p-8">
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">🔍 全局搜索</h1>
       <form
         className="mt-3 flex gap-2"
         onSubmit={(e) => {
