@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.common import OutlineItem
 from app.schemas.course import CourseCreate
-from app.services.llm import OpenAICompatAdapter, get_llm_temperature
+from app.services.llm import OpenAICompatAdapter
 from app.services.prompt import render_prompt
 
 
@@ -49,9 +49,8 @@ async def generate_outline(
         SCOPE=req.scope or "（未填写）",
         CHAPTER_COUNT=count,
     )
-    temperature = await get_llm_temperature(db)
     result: OutlineLLM = await adapter.chat_json(
-        [{"role": "user", "content": prompt}], OutlineLLM, temperature=temperature
+        [{"role": "user", "content": prompt}], OutlineLLM
     )
     outline = [
         OutlineItem(index=i + 1, title=c.title, points=[p for p in c.points if p.strip()])

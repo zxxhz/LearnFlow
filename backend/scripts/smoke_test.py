@@ -5,6 +5,7 @@
 """
 import asyncio
 import json
+import sys
 import threading
 import time
 import urllib.error
@@ -327,11 +328,16 @@ def main() -> None:
         check("提交后最新作答回显", latest is not None and latest["passed"] is False)
         s, body = call(base, f"/api/exercises/wrongbook")
         wb = {e["id"] for e in body}
+        wb_ok = ex_code["id"] in wb and ex_choice["id"] in wb and ex_fill["id"] not in wb
         check(
             "错题本：做错的在、做对的不在",
-            s == 200 and ex_code["id"] in wb and ex_choice["id"] in wb and ex_fill["id"] not in wb,
-            f"n={len(body)}",
+            s == 200 and wb_ok,
+            f"n={len(body)} code_in={ex_code['id'] in wb} choice_in={ex_choice['id'] in wb} fill_out={ex_fill['id'] not in wb}",
         )
+        if s == 200 and not wb_ok:
+            # 取证模式：错题本断言失败时立刻中止（跳过末尾的删除清理），保留 DB 现场
+            print("!! 错题本断言失败，保留现场中止")
+            sys.exit(3)
         s, body = call(base, f"/api/exercises/{ex_concept['id']}", "DELETE")
         check("删除练习题", s == 200)
         s, body = call(base, f"/api/exercises?document_id={document_id}")
@@ -392,7 +398,7 @@ def main() -> None:
 
     # 8. 场景化 LLM（PRD §5.7）：保存场景覆盖 → 适配层回落验证 → 还原
     s, orig = call(base, "/api/settings")
-    test_llm = {"base_url": "https://api.example.com/v1", "api_key": "sk-smoketest-123456", "model": "main-model", "temperature": 0.7}
+    test_llm = {"base_url": "https://api.example.com/v1", "api_key": "sk-smoketest-123456", "model": "main-model"}
     s, body = call(base, "/api/settings", "PUT", {
         "llm": test_llm,
         "scenes": {"generation": {}, "chat": {}, "feynman": {"model": "strong-model"}},
@@ -424,7 +430,7 @@ def main() -> None:
     s, body = call(base, f"/api/courses/{course_id}/ask", "POST", {"question": "指针是什么"})
     check("全课问答(LLM未配置) → 400", s == 400, str(body)[:120])
 
-    call(base, "/api/settings", "PUT", {"llm": {"base_url": orig["llm"]["base_url"], "api_key": orig["llm"]["api_key"], "model": orig["llm"]["model"], "temperature": orig["llm"]["temperature"]}, "scenes": {"generation": {}, "chat": {}, "feynman": {}}})
+    call(base, "/api/settings", "PUT", {"llm": {"base_url": orig["llm"]["base_url"], "api_key": orig["llm"]["api_key"], "model": orig["llm"]["model"]}, "scenes": {"generation": {}, "chat": {}, "feynman": {}}})
 
     # 9. 高数图形化（PRD §5.9）：SymPy + Matplotlib 渲染
     s, body = call(base, "/api/math/render", "POST", {"expressions": "sin(x)/x\ntan(x)", "x_min": -6.5, "x_max": 6.5})
@@ -505,6 +511,9 @@ def main() -> None:
     check("抽轮 10 题", s == 200 and len(body["questions"]) == 10, str(body)[:150])
     if s == 200:
         check("抽轮题目不泄答案", all("answer" not in q and "explanation" not in q and "answer_raw" not in q for q in body["questions"]))
+    # 判分断言用全量轮（11 题），避免随机抽 10/11 漏掉特定题导致 flaky
+    s, body = call(base, f"/api/banks/{bank_id}/round", "POST", {"mode": "random", "size": 11})
+    if s == 200:
         qs = {q["seq"]: q for q in body["questions"]}
         single_q = qs[1]  # 单选1 → B
         multi_q = qs[6]   # 多选1 → A,C

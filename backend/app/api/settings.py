@@ -25,7 +25,7 @@ from app.services.llm.errors import LLMError
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["settings"])
 
-DEFAULT_LLM = {"base_url": "", "api_key": "", "model": "", "temperature": 0.7, "scenes": {}}
+DEFAULT_LLM = {"base_url": "", "api_key": "", "model": "", "scenes": {}}
 DEFAULT_PREFS = {
     "daily_new_cards": 20,
     "chapter_length": 3000,
@@ -79,6 +79,7 @@ async def update_settings(body: SettingsUpdate, db: AsyncSession = Depends(get_d
         if not new_key or "****" in new_key:
             incoming["api_key"] = current.get("api_key", "")
         current.update({k: v for k, v in incoming.items() if v is not None})
+        current.pop("temperature", None)  # 兼容：清掉移除温度参数前老库存量的键
     if body.scenes is not None:
         scenes_new = body.scenes.model_dump()
         scenes_old = current.get("scenes") or {}
@@ -100,7 +101,7 @@ async def test_llm(db: AsyncSession = Depends(get_db)):
     try:
         adapter = await create_adapter_from_settings(db)
         reply = await adapter.chat(
-            [{"role": "user", "content": "请只回复两个字母：OK"}], temperature=0
+            [{"role": "user", "content": "请只回复两个字母：OK"}]
         )
         latency = int((time.perf_counter() - t0) * 1000)
         return LLMTestResult(ok=True, model_reply=str(reply)[:100], latency_ms=latency)

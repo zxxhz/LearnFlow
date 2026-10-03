@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import re
 import shutil
 
 from sqlalchemy import delete, select, update
@@ -25,7 +26,7 @@ from app.models.base import utcnow_iso
 from app.services.generation.indexing import rebuild_sections
 from app.services.generation.knowledge import parse_chapter_output
 from app.services.exercise import delete_kp_exercises, purge_document_exercises
-from app.services.llm import create_adapter_from_settings, get_llm_temperature
+from app.services.llm import create_adapter_from_settings
 from app.services.llm.errors import LLMError
 from app.services.prompt import render_prompt
 from app.services.review import get_preferences
@@ -109,8 +110,7 @@ async def run_chapter(
         prompt += f"\n\n## 本次重新生成的额外要求\n{instruction}\n请在保持上述输出格式的前提下满足该要求。"
 
     adapter = await create_adapter_from_settings(db, scene="generation")
-    temperature = await get_llm_temperature(db)
-    raw = await adapter.chat([{"role": "user", "content": prompt}], temperature=temperature)
+    raw = await adapter.chat([{"role": "user", "content": prompt}])
     body, meta = parse_chapter_output(raw)
     if not body.strip():
         raise LLMError("模型未返回正文内容")
@@ -153,6 +153,30 @@ async def run_chapter(
         if hp:
             section_by_heading.setdefault(hp[-1], s.id)
 
+    def _resolve_heading(heading: str) -> str | None:
+        """LLM 填的 heading 与正文小节标题做容错对齐：精确 → 归一化 → 互相包含。"""
+        if not heading:
+            return None
+        if heading in section_by_heading:
+            return section_by_heading[heading]
+
+        def norm(t: str) -> str:
+            # 去编号前缀（"3.1 " / "一、"），压掉空白与大小写噪声
+            t = re.sub(r"^[\d一二三四五六七八九十]+(?:\.\d+)*[.、\s]+", "", t.strip())
+            return re.sub(r"\s+", "", t).lower()
+
+        target = norm(heading)
+        for title, sid in section_by_heading.items():
+            if norm(title) == target:
+                return sid
+        # 模型常丢编号或丢冒号后的说明后缀：互相包含即命中；取最短命中防误配
+        candidates = [
+            (len(title), sid)
+            for title, sid in section_by_heading.items()
+            if target and (target in norm(title) or norm(title) in target)
+        ]
+        return min(candidates)[1] if candidates else None
+
     auto_cards = bool(prefs.get("auto_create_cards", True))
     course_settings = json.loads(course.course_settings or "{}")
     if course_settings.get("auto_create_cards") is False:
@@ -160,11 +184,8 @@ async def run_chapter(
 
     if meta:
         for item in meta.knowledge_points:
-            sec_ids = (
-                [section_by_heading[item.heading]]
-                if item.heading and item.heading in section_by_heading
-                else []
-            )
+            resolved = _resolve_heading(item.heading)
+            sec_ids = [resolved] if resolved else []
             kp = KnowledgePoint(
                 document_id=doc.id,
                 title=item.title,

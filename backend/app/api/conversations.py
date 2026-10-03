@@ -10,7 +10,7 @@ from app.models import Annotation, Conversation, Document, Message
 from app.models.base import utcnow_iso
 from app.schemas.conversation import MessageCreate, MessageOut
 from app.services.context import build_annotation_messages
-from app.services.llm import create_adapter_from_settings, get_llm_temperature
+from app.services.llm import create_adapter_from_settings
 from app.services.llm.errors import LLMError
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -60,8 +60,7 @@ async def post_message(
         await db.commit()
         messages = await build_annotation_messages(db, conv)
         adapter = await create_adapter_from_settings(db, scene="chat")
-        temperature = await get_llm_temperature(db)
-        deltas = adapter.chat(messages, stream=True, temperature=temperature)
+        deltas = adapter.chat(messages, stream=True)
         annotation_mode = True
 
     async def gen():

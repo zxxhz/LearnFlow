@@ -22,7 +22,6 @@ class LLMConfig(BaseModel):
     base_url: str = ""
     api_key: str = ""
     model: str = ""
-    temperature: float = 0.7
 
 
 class Preferences(BaseModel):

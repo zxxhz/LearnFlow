@@ -32,7 +32,6 @@ from app.services.imports import (
 from app.services.llm import (
     OpenAICompatAdapter,
     create_adapter_from_settings,
-    get_llm_temperature,
 )
 from app.services.prompt import render_prompt
 from app.services.review import get_preferences
@@ -113,10 +112,9 @@ async def _llm_title(db: AsyncSession, chapter_titles: list[str]) -> str | None:
 
 
 async def _extract_kp(
-    db: AsyncSession, adapter: OpenAICompatAdapter, content: str
+    adapter: OpenAICompatAdapter, content: str
 ) -> ChapterMeta | None:
     try:
-        temperature = await get_llm_temperature(db)
         return await adapter.chat_json(
             [
                 {
@@ -125,7 +123,6 @@ async def _extract_kp(
                 }
             ],
             ChapterMeta,
-            temperature=temperature,
         )
     except Exception as e:
         logger.warning("import kp extraction skipped: %r", e)
@@ -238,7 +235,7 @@ async def import_confirm(
 
         # 知识点提取 + 自动出卡（LLM 不可用时静默跳过）
         if adapter is not None:
-            meta = await _extract_kp(db, adapter, content)
+            meta = await _extract_kp(adapter, content)
             if meta:
                 doc.summary = meta.summary
                 kp_extracted += len(meta.knowledge_points)

@@ -29,7 +29,7 @@ export default function SettingsPage() {
   const queryClient = useQueryClient();
   const { data: settings, isLoading } = useQuery({ queryKey: ["settings"], queryFn: api.settings.get });
 
-  const [llm, setLlm] = useState<LLMConfig>({ base_url: "", api_key: "", model: "", temperature: 0.7 });
+  const [llm, setLlm] = useState<LLMConfig>({ base_url: "", api_key: "", model: "" });
   const [scenes, setScenes] = useState<Record<SceneName, SceneLLMConfig>>({
     generation: { ...EMPTY_SCENE },
     chat: { ...EMPTY_SCENE },
@@ -67,7 +67,6 @@ export default function SettingsPage() {
         llm: {
           base_url: llm.base_url,
           model: llm.model,
-          temperature: llm.temperature,
           ...(llm.api_key ? { api_key: llm.api_key } : {}),
         },
         scenes: {
@@ -222,17 +221,6 @@ export default function SettingsPage() {
                 value={llm.model}
                 onChange={(e) => setLlm({ ...llm, model: e.target.value })}
                 placeholder="glm-4-flash / deepseek-chat"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Temperature</label>
-              <Input
-                type="number"
-                step={0.1}
-                min={0}
-                max={2}
-                value={llm.temperature}
-                onChange={(e) => setLlm({ ...llm, temperature: Number(e.target.value) })}
               />
             </div>
           </div>

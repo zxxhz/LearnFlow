@@ -24,7 +24,6 @@ class LLMAdapter(ABC):
         messages: list[dict],
         *,
         stream: bool = False,
-        temperature: float | None = None,
         max_tokens: int | None = None,
         json_mode: bool = False,
     ) -> str | AsyncIterator[str]:
@@ -35,7 +34,6 @@ class LLMAdapter(ABC):
         messages: list[dict],
         schema: type[T],
         *,
-        temperature: float | None = None,
         max_retries: int = 2,
     ) -> T:
         """请求结构化 JSON 输出并用 Pydantic 校验；失败自动重试（PRD §7.3）。"""
@@ -54,7 +52,6 @@ class LLMAdapter(ABC):
             raw = await self.chat(  # type: ignore[misc]
                 prompt + extra,
                 stream=False,
-                temperature=temperature,
                 json_mode=True,
             )
             try:

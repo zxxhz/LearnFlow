@@ -12,7 +12,6 @@ from app.schemas.feynman import FeynmanEvaluation
 from app.services.llm import (
     OpenAICompatAdapter,
     create_adapter_from_settings,
-    get_llm_temperature,
 )
 from app.services.prompt import render_prompt
 from app.services.review import get_preferences
@@ -124,8 +123,7 @@ async def reply_as_tutor(
     messages = await _tutor_prompt(db, kp, texts, list(history), round_no, max_rounds)
 
     adapter: OpenAICompatAdapter = await create_adapter_from_settings(db, scene="feynman")
-    temperature = await get_llm_temperature(db)
-    turn = FeynmanTurn(adapter.chat(messages, stream=True, temperature=temperature))
+    turn = FeynmanTurn(adapter.chat(messages, stream=True))
 
     async def _wrap() -> AsyncIterator[str]:
         buffer: list[str] = []

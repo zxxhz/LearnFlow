@@ -25,7 +25,7 @@ from app.schemas.exercise import (
     ExerciseOut,
 )
 from app.services.execution.runner import run_code
-from app.services.llm import create_adapter_from_settings, get_llm_temperature
+from app.services.llm import create_adapter_from_settings
 from app.services.prompt import render_prompt
 from app.services.review import apply_sm2, get_preferences, parse_dt
 from app.services.sections_text import get_section_text
@@ -186,9 +186,8 @@ async def generate_for_kp(
         COUNT=str(count),
     )
     adapter = await create_adapter_from_settings(db, scene="generation")
-    temperature = await get_llm_temperature(db)
     drafts: ExerciseDraftSet = await adapter.chat_json(
-        [{"role": "system", "content": system}], ExerciseDraftSet, temperature=temperature
+        [{"role": "system", "content": system}], ExerciseDraftSet
     )
 
     await delete_kp_exercises(db, [kp.id])
@@ -407,10 +406,7 @@ async def _grade_concept(db: AsyncSession, exercise: Exercise, content: str) -> 
         LEARNER_ANSWER=content,
     )
     adapter = await create_adapter_from_settings(db, scene="chat")
-    temperature = await get_llm_temperature(db)
-    return await adapter.chat_json(
-        [{"role": "system", "content": system}], ConceptGrade, temperature=temperature
-    )
+    return await adapter.chat_json([{"role": "system", "content": system}], ConceptGrade)
 
 
 async def delete_exercise(db: AsyncSession, exercise_id: str) -> None:

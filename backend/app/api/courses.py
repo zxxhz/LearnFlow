@@ -21,7 +21,7 @@ from app.schemas.course import (
 from app.services.exports import course_html, course_markdown
 from app.services.generation import pipeline
 from app.services.generation.outline import generate_outline
-from app.services.llm import create_adapter_from_settings, get_llm_temperature
+from app.services.llm import create_adapter_from_settings
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 
@@ -257,11 +257,9 @@ async def ask_course(course_id: str, body: dict, db: AsyncSession = Depends(get_
         "\n\n要求：中文回答，紧扣课程内容；课程里没有依据的，明确说明课程未覆盖。"
     )
     adapter = await create_adapter_from_settings(db, scene="chat")
-    temperature = await get_llm_temperature(db)
     deltas = adapter.chat(
         [{"role": "system", "content": system}, {"role": "user", "content": question}],
         stream=True,
-        temperature=temperature,
     )
 
     async def gen():

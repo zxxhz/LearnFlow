@@ -6,7 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, UUIDPk
 from app.models.base import utcnow_iso
 
-DEFAULT_LLM = {"base_url": "", "api_key": "", "model": "", "temperature": 0.7}
+DEFAULT_LLM = {"base_url": "", "api_key": "", "model": ""}
 DEFAULT_HL_COLORS = {"yellow": "#fde68a", "green": "#bbf7d0", "blue": "#bfdbfe", "pink": "#fbcfe8"}
 DEFAULT_PREFERENCES = {
     "daily_new_cards": 20,

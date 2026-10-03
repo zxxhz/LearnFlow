@@ -64,7 +64,6 @@ class OpenAICompatAdapter(LLMAdapter):
         messages: list[dict],
         *,
         stream: bool = False,
-        temperature: float | None = None,
         max_tokens: int | None = None,
         json_mode: bool = False,
     ):
@@ -72,8 +71,6 @@ class OpenAICompatAdapter(LLMAdapter):
             "model": self.model,
             "messages": messages,
         }
-        if temperature is not None:
-            kwargs["temperature"] = temperature
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
         if json_mode:
@@ -184,9 +181,3 @@ async def create_adapter_from_settings(
         model=merged["model"],
         scene=scene or "chat",
     )
-
-
-async def get_llm_temperature(db: AsyncSession) -> float:
-    row = await db.get(AppSetting, "local")
-    cfg = json.loads(row.llm) if row and row.llm else {}
-    return float(cfg.get("temperature", 0.7))
