@@ -8,6 +8,9 @@ from app.models import LLMUsage
 logger = logging.getLogger(__name__)
 
 
+_pending_tasks: set[asyncio.Task] = set()  # 持强引用防 GC（create_task 只留弱引用）
+
+
 def record_usage(
     scene: str, model: str, prompt_tokens: int, completion_tokens: int, duration_ms: int
 ) -> None:
@@ -17,7 +20,9 @@ def record_usage(
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    loop.create_task(_persist(scene, model, prompt_tokens, completion_tokens, duration_ms))
+    task = loop.create_task(_persist(scene, model, prompt_tokens, completion_tokens, duration_ms))
+    _pending_tasks.add(task)
+    task.add_done_callback(_pending_tasks.discard)
 
 
 async def _persist(

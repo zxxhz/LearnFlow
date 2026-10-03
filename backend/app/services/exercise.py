@@ -269,23 +269,33 @@ async def _attach_meta(db: AsyncSession, exercises: list[Exercise]) -> list[Exer
 
 
 async def wrongbook(db: AsyncSession) -> list[ExerciseOut]:
-    """错题本：最近一次作答未通过的题（含小测题），按作答时间倒序。"""
+    """错题本：最近一次作答未通过的题（含小测题），按该次作答时间倒序。"""
     rn = func.row_number().over(
         partition_by=ExerciseAttempt.exercise_id,
         order_by=ExerciseAttempt.created_at.desc(),
     ).label("rn")
-    sq = select(ExerciseAttempt.id.label("aid"), ExerciseAttempt.exercise_id.label("eid"), rn).subquery()
-    failed_ids = (
-        await db.scalars(
-            select(sq.c.eid).where(sq.c.rn == 1).order_by(sq.c.aid.desc()).limit(200)
+    sq = select(
+        ExerciseAttempt.id.label("aid"),
+        ExerciseAttempt.exercise_id.label("eid"),
+        ExerciseAttempt.created_at.label("cat"),
+        ExerciseAttempt.passed.label("ok"),
+        rn,
+    ).subquery()
+    rows = (
+        await db.execute(
+            select(sq.c.eid, sq.c.cat)
+            .where(sq.c.rn == 1, sq.c.ok.is_(False))  # 最新一次仍未通过才进错题本
+            .order_by(sq.c.cat.desc())
+            .limit(200)
         )
     ).all()
-    if not failed_ids:
+    if not rows:
         return []
+    ordered = [r.eid for r in rows]
     exercises = (
-        await db.scalars(select(Exercise).where(Exercise.id.in_(failed_ids)))
+        await db.scalars(select(Exercise).where(Exercise.id.in_(ordered)))
     ).all()
-    exercises.sort(key=lambda e: failed_ids.index(e.id))
+    exercises.sort(key=lambda e: ordered.index(e.id))
     return await _attach_meta(db, exercises)
 
 

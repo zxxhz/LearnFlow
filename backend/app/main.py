@@ -75,7 +75,10 @@ class _AccessGuard:
         if scope["type"] == "http":
             client = scope.get("client")
             host = client[0] if client else ""
+            if host.startswith("::ffff:"):  # IPv4-mapped IPv6 归一化（双栈绑定下的本机回环）
+                host = host[7:]
             if host not in ("127.0.0.1", "::1"):
+                import secrets
                 import urllib.parse
 
                 token = ""
@@ -89,7 +92,7 @@ class _AccessGuard:
                         break
                 from app.services.system import get_access_token
 
-                if not token or token != get_access_token():
+                if not token or not secrets.compare_digest(token, get_access_token()):
                     resp = JSONResponse(
                         status_code=401,
                         content={"detail": "需要访问令牌：请用设置页「局域网访问」里带 token 的完整地址打开。"},

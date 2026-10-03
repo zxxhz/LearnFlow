@@ -327,7 +327,11 @@ def main() -> None:
         check("提交后最新作答回显", latest is not None and latest["passed"] is False)
         s, body = call(base, f"/api/exercises/wrongbook")
         wb = {e["id"] for e in body}
-        check("错题本含做错的题", s == 200 and ex_code["id"] in wb and ex_choice["id"] in wb, f"n={len(body)}")
+        check(
+            "错题本：做错的在、做对的不在",
+            s == 200 and ex_code["id"] in wb and ex_choice["id"] in wb and ex_fill["id"] not in wb,
+            f"n={len(body)}",
+        )
         s, body = call(base, f"/api/exercises/{ex_concept['id']}", "DELETE")
         check("删除练习题", s == 200)
         s, body = call(base, f"/api/exercises?document_id={document_id}")
