@@ -95,13 +95,16 @@ export default function SettingsPage() {
     setUpdateResult("");
     try {
       const r = await api.update.check(force);
-      setUpdateResult(
-        r.has_update
-          ? `🎉 有新版本 ${r.latest}（当前 ${r.current}），点击横幅中的「查看发布页」更新。`
-          : r.error
-            ? `ℹ️ ${r.error}`
-            : `✅ 已是最新版本（${r.current}）`
-      );
+      if (r.has_update) {
+        // 更新全局缓存并通知 Layout 弹出更新弹窗（无视本会话已忽略）
+        queryClient.setQueryData(["update-check"], r);
+        window.dispatchEvent(new CustomEvent("learnflow:update-found", { detail: r }));
+        setUpdateResult(`🎉 有新版本 ${r.latest}（当前 ${r.current}）`);
+      } else {
+        setUpdateResult(
+          r.error ? `ℹ️ ${r.error}` : `✅ 已是最新版本（${r.current}）`
+        );
+      }
     } catch (e) {
       setUpdateResult(`❌ ${(e as Error).message}`);
     } finally {

@@ -1,11 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { UpdateCheckResult } from "../lib/types";
-import { notify } from "../lib/notify";
-import { isTauri, tauriSelfUpdate, relaunchApp } from "../lib/updater";
 import { getTheme, applyTheme, type Theme } from "../lib/theme";
+import UpdateDialog from "./UpdateDialog";
 
 const NAV_ITEMS = [
   { to: "/", label: "首页", icon: "🏠" },
@@ -67,48 +66,10 @@ function NavActions({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-// 应用内自动更新：桌面壳内下载新安装包（带进度）→ 静默安装 → 自动重启；
-// 浏览器/局域网模式不渲染（isTauri 为 false），横幅回退「查看发布页」链接（PRD 实现备注 19）
-function AutoUpdateButton() {
-  const [phase, setPhase] = useState<"idle" | "downloading" | "installing">("idle");
-  const [pct, setPct] = useState<number | null>(null);
-
-  if (!isTauri()) return null;
-
-  const run = async () => {
-    setPhase("downloading");
-    setPct(null);
-    try {
-      await tauriSelfUpdate((done, total) => {
-        setPct(total ? Math.min(100, Math.round((done / total) * 100)) : null);
-      });
-      setPhase("installing");
-      await relaunchApp();
-    } catch {
-      setPhase("idle");
-      notify("更新失败", "自动更新出错，请到发布页手动下载安装包。");
-    }
-  };
-
-  return (
-    <button
-      disabled={phase !== "idle"}
-      onClick={run}
-      className="rounded-md bg-green-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-800 disabled:opacity-70"
-    >
-      {phase === "idle" && "⬇ 一键更新"}
-      {phase === "downloading" && (pct !== null ? `下载中 ${pct}%` : "下载中…")}
-      {phase === "installing" && "安装中，即将重启…"}
-    </button>
-  );
-}
-
 export default function Layout() {
   const [navOpen, setNavOpen] = useState(false);
   const [theme, setThemeState] = useState<Theme>(() => getTheme());
-  const [dismissed, setDismissed] = useState(
-    () => sessionStorage.getItem("update-dismissed") ?? ""
-  );
+  const [dialogUpdate, setDialogUpdate] = useState<UpdateCheckResult | null>(null);
 
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
@@ -116,7 +77,8 @@ export default function Layout() {
     setThemeState(next);
   };
 
-  // 打开应用时静默检查新版本（后端节流 1h；失败静默）（PRD 实现备注 15）
+  // 打开应用时静默检查新版本（后端节流 1h；失败静默）→ 发现更新弹窗；
+  // 同一会话内点过「稍后」的版本不再自动弹（PRD 实现备注 15）
   const { data: update } = useQuery<UpdateCheckResult>({
     queryKey: ["update-check"],
     queryFn: () => api.update.check(false),
@@ -125,16 +87,22 @@ export default function Layout() {
     refetchOnWindowFocus: false,
   });
 
-  const showBanner =
-    update?.has_update && update.latest && dismissed !== update.latest;
-
-  const dismiss = () => {
-    if (update?.latest) {
-      sessionStorage.setItem("update-dismissed", update.latest);
-      setDismissed(update.latest);
-    } else {
-      setDismissed("*");
+  useEffect(() => {
+    if (update?.has_update && update.latest && sessionStorage.getItem("update-dismissed") !== update.latest) {
+      setDialogUpdate(update);
     }
+  }, [update]);
+
+  // 设置页「检查更新」发现新版本 → 强制弹窗（无视本会话已忽略）
+  useEffect(() => {
+    const onFound = (e: Event) => setDialogUpdate((e as CustomEvent<UpdateCheckResult>).detail);
+    window.addEventListener("learnflow:update-found", onFound);
+    return () => window.removeEventListener("learnflow:update-found", onFound);
+  }, []);
+
+  const closeUpdateDialog = () => {
+    if (dialogUpdate?.latest) sessionStorage.setItem("update-dismissed", dialogUpdate.latest);
+    setDialogUpdate(null);
   };
 
   return (
@@ -179,34 +147,6 @@ export default function Layout() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* 更新提示横幅 */}
-        {showBanner && (
-          <div className="flex items-center justify-between gap-3 border-b border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/30 px-4 py-2 text-sm text-green-800">
-            <span>
-              🎉 新版本 <strong>{update!.latest}</strong> 已发布（当前{" "}
-              {update!.current}）
-            </span>
-            <div className="flex items-center gap-2">
-              <AutoUpdateButton />
-              {update!.url && (
-                <a
-                  href={update!.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-xs text-green-700 dark:text-green-400 underline"
-                >
-                  查看发布页
-                </a>
-              )}
-              <button
-                className="text-xs text-green-700 dark:text-green-400 underline"
-                onClick={dismiss}
-              >
-                本次忽略
-              </button>
-            </div>
-          </div>
-        )}
         {/* 移动端顶栏 */}
         <header className="flex items-center gap-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-2.5 md:hidden">
           <button
@@ -229,6 +169,7 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+      <UpdateDialog update={dialogUpdate} onClose={closeUpdateDialog} />
     </div>
   );
 }
