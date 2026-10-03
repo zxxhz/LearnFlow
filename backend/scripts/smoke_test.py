@@ -74,11 +74,29 @@ async def seed() -> tuple[str, str]:
                 knowledge_point_id=kp.id,
                 document_id=doc.id,
                 kind="code",
-                title="打印两数之和",
-                task_md="补全 TODO，使程序输出 `2 + 3 = 5`。",
+                title="第 1 关：打印两数之和",
+                task_md="写一个程序，输出 `2 + 3 = 5`。",
                 language="python",
                 skeleton_code="a = 2\nb = 3\n# TODO：打印 a + b\n",
                 expected_output="2 + 3 = 5\n",
+                hints=json.dumps(
+                    ["用 print 同时打印算式和结果", "print 里多个参数会用空格连接"], ensure_ascii=False
+                ),
+                order_index=0,
+            ),
+            Exercise(
+                knowledge_point_id=kp.id,
+                document_id=doc.id,
+                kind="code",
+                title="第 2 关：打印乘积",
+                task_md="写一个程序，输出 `2 * 3 = 6`。",
+                language="python",
+                expected_output="2 * 3 = 6\n",
+                hints=json.dumps(
+                    ["仿照第 1 关：print 的多参数写法", "把加法换成乘法"], ensure_ascii=False
+                ),
+                reference_code="print('2 * 3 =', 2 * 3)\n",
+                order_index=1,
             ),
             Exercise(
                 knowledge_point_id=kp.id,
@@ -244,20 +262,7 @@ def main() -> None:
     s, body2 = call(base, f"/api/annotations/{ann_id}/conversation")
     check("标注→对话查询", s == 200 and body2.get("conversation_id") == conv_id)
 
-    # 4. 复习队列（应包含自动卡之外的空队列 + 新卡不存在，因为无 kp——检查结构即可）
-    s, body = call(base, "/api/review/queue/today")
-    check("复习队列接口", s == 200 and "cards" in body)
-
-    # 5. 手动建卡 → 评分 → SM-2 推进
-    s, body = call(base, "/api/review/cards", "POST", {"front": "指针和引用的区别？", "back": "指针可空可改指向；引用必须初始化且不可改绑。"})
-    check("手动建卡", s == 200)
-    card_id = body.get("id", "")
-    s, body = call(base, f"/api/review/cards/{card_id}/grade", "POST", {"quality": 5})
-    check("评分(轻松) → 1 天后到期", s == 200 and body["interval_days"] == 1.0, json.dumps(body, ensure_ascii=False)[:150])
-    s, body = call(base, f"/api/review/cards/{card_id}/grade", "POST", {"quality": 1})
-    check("评分(忘了) → 10分钟后重现(relearning)", s == 200 and body["state"] == "relearning" and body["interval_days"] < 0.01)
-
-    # 6. 代码运行沙箱（PRD §5.8）：文档代码块走真实 API
+    # 4. 代码运行沙箱（PRD §5.8）：文档代码块走真实 API
     code_block = next(b for b in call(base, f"/api/documents/{document_id}/content")[1]["blocks"] if b["block_type"] == "code")
     s, body = call(base, "/api/executions", "POST", {
         "document_id": document_id,
@@ -298,21 +303,35 @@ def main() -> None:
     s, body = call(base, "/api/runtime/install", "POST", {"component": "ruby"})
     check("未知组件 → 4xx 校验", s in (400, 422), str(body)[:120])
 
-    # 6.6 练习系统（PRD §5.10）：列表回显 / 代码题自动判定 / 删除（LLM 依赖路径见 §8.5）
+    # 6.6 闯关练习（PRD §5.10）：列表回显 / 顺序解锁 / 代码关自动判定 / 删除（LLM 依赖路径见 §8.5）
     s, body = call(base, f"/api/exercises?document_id={document_id}")
     check(
         "练习列表（含知识点标题）",
-        s == 200 and len(body) == 4 and all(e["kp_title"] == "指针概念" for e in body),
+        s == 200 and len(body) == 5 and all(e["kp_title"] == "指针概念" for e in body),
         json.dumps(body, ensure_ascii=False)[:200],
     )
     if s == 200:
-        ex_code = next(e for e in body if e["kind"] == "code")
+        ex_code = next(e for e in body if e["kind"] == "code" and e["order_index"] == 0)
+        ex_code2 = next(e for e in body if e["kind"] == "code" and e["order_index"] == 1)
         ex_concept = next(e for e in body if e["kind"] == "concept")
         ex_choice = next(e for e in body if e["kind"] == "choice")
         ex_fill = next(e for e in body if e["kind"] == "fill")
         check("未作答时 latest_attempt 为空", ex_code["latest_attempt"] is None)
+        check(
+            "闯关字段回显（提示列表/首关解锁/次关锁定）",
+            isinstance(ex_code["hints"], list)
+            and len(ex_code["hints"]) == 2
+            and ex_code["unlocked"] is True
+            and ex_code2["unlocked"] is False
+            and ex_code2["ever_passed"] is False,
+            json.dumps({"h": ex_code["hints"], "u1": ex_code["unlocked"], "u2": ex_code2["unlocked"]}, ensure_ascii=False),
+        )
+        s, body = call(base, f"/api/exercises/{ex_code2['id']}/submit", "POST", {"content": "print('2 * 3 =', 2 * 3)"})
+        check("未通关上一关提交第 2 关 → 403", s == 403, str(body)[:120])
         s, body = call(base, f"/api/exercises/{ex_code['id']}/submit", "POST", {"content": "print('2 + 3 =', 2 + 3)"})
         check("代码题正确解 → passed", s == 200 and body["passed"] is True and body["status"] == "success", json.dumps(body, ensure_ascii=False)[:200])
+        s, body = call(base, f"/api/exercises/{ex_code2['id']}/submit", "POST", {"content": "print('2 * 3 =', 2 * 3)"})
+        check("通过第 1 关后第 2 关解锁并判过", s == 200 and body["passed"] is True, json.dumps(body, ensure_ascii=False)[:200])
         s, body = call(base, f"/api/exercises/{ex_code['id']}/submit", "POST", {"content": "print('2 + 3 =', 2 + 4)"})
         check("代码题输出不符 → 未通过", s == 200 and body["passed"] is False, json.dumps(body, ensure_ascii=False)[:200])
         s, body = call(base, f"/api/exercises/{ex_code['id']}/submit", "POST", {"content": "  "})
@@ -326,6 +345,12 @@ def main() -> None:
         s, body = call(base, f"/api/exercises?document_id={document_id}")
         latest = next(e for e in body if e["id"] == ex_code["id"])["latest_attempt"]
         check("提交后最新作答回显", latest is not None and latest["passed"] is False)
+        relisted = {e["id"]: e for e in body}
+        check(
+            "通关后解锁状态回显（第 2 关已解锁且 ever_passed）",
+            relisted[ex_code2["id"]]["unlocked"] is True and relisted[ex_code2["id"]]["ever_passed"] is True,
+            f"unlocked={relisted[ex_code2['id']]['unlocked']} ever_passed={relisted[ex_code2['id']]['ever_passed']}",
+        )
         s, body = call(base, f"/api/exercises/wrongbook")
         wb = {e["id"] for e in body}
         wb_ok = ex_code["id"] in wb and ex_choice["id"] in wb and ex_fill["id"] not in wb
@@ -341,7 +366,7 @@ def main() -> None:
         s, body = call(base, f"/api/exercises/{ex_concept['id']}", "DELETE")
         check("删除练习题", s == 200)
         s, body = call(base, f"/api/exercises?document_id={document_id}")
-        check("删除后列表剩 3 题", s == 200 and len(body) == 3)
+        check("删除后列表剩 4 题", s == 200 and len(body) == 4)
 
     # 6.7 搜索 / 学习时长 / 仪表盘扩展 / 导出 / 备份
     s, body = call(base, "/api/search", )
@@ -354,14 +379,12 @@ def main() -> None:
     check("打点超限 → 400", s == 400)
     s, body = call(base, "/api/dashboard/summary")
     check(
-        "仪表盘扩展（掌握度/遗忘曲线/时长）",
-        s == 200 and all("mastery" in w for w in body["weak_points"]) and "retention" in body and "study_days" in body and "study_minutes_7d" in body,
+        "仪表盘扩展（掌握度/时长）",
+        s == 200 and all("mastery" in w for w in body["weak_points"]) and "study_days" in body and "study_minutes_7d" in body and "retention" not in body,
         str(body)[:150],
     )
     s, raw, headers = call_raw(base, f"/api/courses/{course_id}/export.md")
     check("课程导出 MD", s == 200 and "指针" in raw.decode("utf-8", "replace") and "attachment" in headers.get("content-disposition", ""), s and len(raw))
-    s, raw, headers = call_raw(base, "/api/review/export.csv")
-    check("复习卡导出 CSV", s == 200 and raw.startswith(b"front,back,tags"), len(raw))
     s, raw, headers = call_raw(base, f"/api/courses/{course_id}/export.html")
     check("课程导出 HTML", s == 200 and b"katex" in raw and b"markdown-body" in raw, len(raw))
 
@@ -401,9 +424,9 @@ def main() -> None:
     test_llm = {"base_url": "https://api.example.com/v1", "api_key": "sk-smoketest-123456", "model": "main-model"}
     s, body = call(base, "/api/settings", "PUT", {
         "llm": test_llm,
-        "scenes": {"generation": {}, "chat": {}, "feynman": {"model": "strong-model"}},
+        "scenes": {"generation": {}, "chat": {"model": "fast-model"}},
     })
-    check("保存场景化配置", s == 200 and body["scenes"]["feynman"]["model"] == "strong-model", str(body)[:150])
+    check("保存场景化配置", s == 200 and body["scenes"]["chat"]["model"] == "fast-model", str(body)[:150])
     import asyncio as _aio
 
     from app.core.db import async_session_factory
@@ -412,15 +435,15 @@ def main() -> None:
     async def _scene_check():
         async with async_session_factory() as sdb:
             a_primary = await create_adapter_from_settings(sdb)
-            a_feynman = await create_adapter_from_settings(sdb, "feynman")
+            a_chat = await create_adapter_from_settings(sdb, "chat")
             a_gen = await create_adapter_from_settings(sdb, "generation")
-            return a_primary.model, a_feynman.model, a_gen.model
+            return a_primary.model, a_chat.model, a_gen.model
 
-    m_primary, m_feynman, m_gen = _aio.run(_scene_check())
-    check("场景回落：主/生成=主模型，费曼=覆盖模型", m_primary == "main-model" and m_gen == "main-model" and m_feynman == "strong-model", f"{m_primary}/{m_gen}/{m_feynman}")
+    m_primary, m_chat, m_gen = _aio.run(_scene_check())
+    check("场景回落：主/生成=主模型，答疑=覆盖模型", m_primary == "main-model" and m_gen == "main-model" and m_chat == "fast-model", f"{m_primary}/{m_gen}/{m_chat}")
 
     # 8.5 练习的 LLM 依赖路径：模型置空后必须快速 400（不允许 5xx / 挂起）
-    call(base, "/api/settings", "PUT", {"llm": {"base_url": "", "model": ""}})
+    call(base, "/api/settings", "PUT", {"llm": {"base_url": "", "model": ""}, "scenes": {"generation": {}, "chat": {}}})
     s, body = call(base, "/api/exercises/generate", "POST", {"knowledge_point_id": kp_id, "language": "python", "count": 2})
     check("出题(LLM未配置) → 400", s == 400, str(body)[:150])
     s, body = call(base, "/api/exercises/generate", "POST", {"knowledge_point_id": kp_id, "language": "ruby"})
@@ -430,7 +453,7 @@ def main() -> None:
     s, body = call(base, f"/api/courses/{course_id}/ask", "POST", {"question": "指针是什么"})
     check("全课问答(LLM未配置) → 400", s == 400, str(body)[:120])
 
-    call(base, "/api/settings", "PUT", {"llm": {"base_url": orig["llm"]["base_url"], "api_key": orig["llm"]["api_key"], "model": orig["llm"]["model"]}, "scenes": {"generation": {}, "chat": {}, "feynman": {}}})
+    call(base, "/api/settings", "PUT", {"llm": {"base_url": orig["llm"]["base_url"], "api_key": orig["llm"]["api_key"], "model": orig["llm"]["model"]}, "scenes": {"generation": {}, "chat": {}}})
 
     # 9. 高数图形化（PRD §5.9）：SymPy + Matplotlib 渲染
     s, body = call(base, "/api/math/render", "POST", {"expressions": "sin(x)/x\ntan(x)", "x_min": -6.5, "x_max": 6.5})

@@ -73,7 +73,7 @@ export default function ImportPage() {
       </Link>
       <h1 className="mt-4 text-2xl font-bold text-gray-900 dark:text-gray-100">导入 Markdown 课程</h1>
       <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-        选择你自己的 .md 文件，系统按标题结构自动识别章节；原文保留、不做改写，并提取知识点进入复习循环。
+        选择你自己的 .md 文件，系统按标题结构自动识别章节；原文保留、不做改写，并提取知识点。
       </p>
 
       {/* 文件选择 */}

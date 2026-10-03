@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import get_db
-from app.models import Course, Document, KnowledgePoint, ReviewCard, Section
+from app.models import Course, Document, KnowledgePoint, Section
 from app.models.base import utcnow_iso
 from app.schemas.common import OutlineItem
 from app.schemas.course import CourseOut
@@ -34,7 +34,7 @@ from app.services.llm import (
     create_adapter_from_settings,
 )
 from app.services.prompt import render_prompt
-from app.services.review import get_preferences
+from app.services.prefs import get_preferences
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["imports"])
@@ -174,8 +174,6 @@ async def import_confirm(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"导入参数无效：{e}")
 
-    prefs = await get_preferences(db)
-    auto_cards = bool(prefs.get("auto_create_cards", True))
     adapter: OpenAICompatAdapter | None = None
     try:
         adapter = await create_adapter_from_settings(db, scene="generation")
@@ -263,16 +261,6 @@ async def import_confirm(
                     )
                     db.add(kp)
                     await db.flush()
-                    if auto_cards:
-                        db.add(
-                            ReviewCard(
-                                source_type="knowledge_point",
-                                knowledge_point_id=kp.id,
-                                front=f"请解释：{item.title}",
-                                back=f"{item.summary}\n\n（来自《{course.title}》· 导入文档）",
-                                state="new",
-                            )
-                        )
 
     course.outline = json.dumps([o.model_dump() for o in outline_items], ensure_ascii=False)
     course.updated_at = utcnow_iso()

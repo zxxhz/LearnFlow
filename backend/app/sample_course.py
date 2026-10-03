@@ -14,7 +14,6 @@ from app.models import (
     Document,
     Exercise,
     KnowledgePoint,
-    ReviewCard,
 )
 from app.models.exercise import EXERCISE_CHOICE, EXERCISE_CODE, EXERCISE_FILL
 from app.services.generation.indexing import rebuild_sections
@@ -62,10 +61,13 @@ y = x^2, sin(x)/x
 SAMPLE_EXERCISES = [
     {
         "kind": EXERCISE_CODE,
-        "title": "解引用入门",
-        "task_md": "补全下面的 TODO，让程序输出 `7`。",
+        "title": "第 1 关：解引用入门",
+        "task_md": "写一个 Python 程序：从字典 `{'value': 7}` 里取出 `'value'` 的值并打印出来，让输出为 `7`。",
         "language": "python",
-        "skeleton_code": "def deref(d):\n    # TODO：返回字典 d 中 key 为 'value' 的值\n    return None\n\nprint(deref({'value': 7}))",
+        "hints": json.dumps(
+            ["字典取值用方括号或 .get()", "print(7) 就能输出 7，关键是先取到它"], ensure_ascii=False
+        ),
+        "reference_code": "d = {'value': 7}\nprint(d['value'])",
         "expected_output": "7",
     },
     {
@@ -155,6 +157,8 @@ async def seed_sample_course(db: AsyncSession) -> None:
                     task_md=ex["task_md"],
                     language=ex.get("language", ""),
                     skeleton_code=ex.get("skeleton_code", ""),
+                    hints=ex.get("hints", "[]"),
+                    reference_code=ex.get("reference_code", ""),
                     expected_output=ex.get("expected_output", ""),
                     options=json.dumps(ex.get("options", []), ensure_ascii=False),
                     answer=json.dumps(ex["answer"], ensure_ascii=False)
@@ -162,20 +166,6 @@ async def seed_sample_course(db: AsyncSession) -> None:
                     else ex.get("answer", ""),
                 )
             )
-        db.add(
-            ReviewCard(
-                source_type="knowledge_point",
-                front="&x 和 *p 各是什么意思？",
-                back="& 取地址；* 解引用（访问地址指向的值）。",
-            )
-        )
-        db.add(
-            ReviewCard(
-                source_type="manual",
-                front="Python 的 b = a 之后修改 b，a 会变吗？",
-                back="会。赋值是引用语义，a、b 指向同一对象。",
-            )
-        )
         await db.commit()
         flag.write_text("ok", encoding="utf-8")
         logger.info("示例课程已注入（首跑）")

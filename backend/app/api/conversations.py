@@ -44,24 +44,16 @@ async def post_message(
     if not body.content.strip():
         raise HTTPException(status_code=400, detail="消息内容为空")
 
-    if conv.kind == "feynman":
-        # 费曼追问：由 feynman 服务全权处理（存消息/更新轮次/建议评价）
-        from app.services.feynman import reply_as_tutor
-
-        turn = await reply_as_tutor(db, conv, body.content)
-        deltas = turn.deltas
-        annotation_mode = False
-    else:
-        ann = await db.get(Annotation, conv.annotation_id) if conv.annotation_id else None
-        if ann is None:
-            raise HTTPException(status_code=400, detail="标注不存在")
-        db.add(Message(conversation_id=conv.id, role="user", content=body.content))
-        ann.updated_at = utcnow_iso()
-        await db.commit()
-        messages = await build_annotation_messages(db, conv)
-        adapter = await create_adapter_from_settings(db, scene="chat")
-        deltas = adapter.chat(messages, stream=True)
-        annotation_mode = True
+    ann = await db.get(Annotation, conv.annotation_id) if conv.annotation_id else None
+    if ann is None:
+        raise HTTPException(status_code=400, detail="标注不存在")
+    db.add(Message(conversation_id=conv.id, role="user", content=body.content))
+    ann.updated_at = utcnow_iso()
+    await db.commit()
+    messages = await build_annotation_messages(db, conv)
+    adapter = await create_adapter_from_settings(db, scene="chat")
+    deltas = adapter.chat(messages, stream=True)
+    annotation_mode = True
 
     async def gen():
         buffer: list[str] = []

@@ -1,4 +1,4 @@
-// 仪表盘：今日概览 / 课程进度 / 薄弱知识点 / 学习热力图（PRD §5.6）
+// 仪表盘：课程进度 / 薄弱知识点 / 学习热力图（PRD §5.6）
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -18,7 +18,7 @@ function MasteryPill({ mastery }: { mastery: number }) {
         ? "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400"
         : "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400";
   return (
-    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${cls}`} title="掌握度：复习间隔 / 费曼评分 / 练习通过率合成">
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${cls}`} title="掌握度：闯关练习通过率">
       掌握 {mastery}%
     </span>
   );
@@ -60,18 +60,6 @@ export default function DashboardPage() {
     <div className="mx-auto max-w-4xl p-8">
       <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">学习仪表盘</h1>
 
-      {/* 今日概览 */}
-      <div className="mt-5 grid grid-cols-2 gap-4">
-        <Link to="/review" className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 transition hover:border-brand-500">
-          <div className="text-3xl font-bold text-brand-600">{data.today.due_reviews}</div>
-          <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">今日待复习</div>
-        </Link>
-        <Link to="/feynman" className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 transition hover:border-brand-500">
-          <div className="text-3xl font-bold text-brand-600">{data.today.feynman_active}</div>
-          <div className="mt-1 text-sm text-gray-500 dark:text-gray-400">进行中的费曼讲解</div>
-        </Link>
-      </div>
-
       {/* 课程进度 */}
       <h2 className="mt-8 mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">课程进度</h2>
       {data.courses.length === 0 ? (
@@ -109,10 +97,10 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* 薄弱知识点（按掌握度升序：复习遗忘 + 费曼漏洞 + 练习未通过三信号合成） */}
+      {/* 薄弱知识点（按掌握度升序：闯关练习通过率） */}
       <h2 className="mt-8 mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">薄弱知识点</h2>
       {data.weak_points.length === 0 ? (
-        <p className="text-sm text-gray-400 dark:text-gray-500">暂无数据（复习遗忘、费曼漏洞或练习出错后在这里出现）</p>
+        <p className="text-sm text-gray-400 dark:text-gray-500">暂无数据（闯关练习出错后在这里出现）</p>
       ) : (
         <div className="space-y-2">
           {data.weak_points.map((w, i) => (
@@ -127,45 +115,16 @@ export default function DashboardPage() {
               <div className="flex shrink-0 items-center gap-2">
                 <MasteryPill mastery={w.mastery} />
                 <div className="flex gap-1.5 text-xs">
-                  {w.lapses > 0 && <Badge color="red">遗忘 {w.lapses} 次</Badge>}
-                  {w.gap_count > 0 && <Badge color="amber">漏洞 {w.gap_count} 个</Badge>}
                   {w.exercise_fail > 0 && <Badge color="red">错题 {w.exercise_fail} 道</Badge>}
                 </div>
-                <Link
-                  to={`/feynman?kp=${w.knowledge_point_id}`}
-                  className="text-xs text-brand-600 underline"
-                  title="用费曼方式重新讲解这个知识点"
-                >
-                  🎤 讲一遍
-                </Link>
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* 遗忘曲线 + 学习时长 */}
+      {/* 学习时长 */}
       <div className="mt-8 grid gap-4 md:grid-cols-2">
-        {data.retention.length > 0 && (
-          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">遗忘曲线（按间隔留存率）</h3>
-            <p className="mt-0.5 text-[10px] text-gray-400 dark:text-gray-500">某次复习后隔了 N 天的下一次还记得的比例</p>
-            <div className="mt-3 flex h-32 items-end gap-3">
-              {data.retention.map((b) => {
-                const rate = b.total > 0 ? Math.round((b.passed / b.total) * 100) : 0;
-                return (
-                  <div key={b.label} className="flex flex-1 flex-col items-center gap-1">
-                    <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400">{rate}%</span>
-                    <div className="flex h-full w-full items-end rounded-t bg-gray-100 dark:bg-gray-800">
-                      <div className="w-full rounded-t bg-brand-500" style={{ height: `${Math.max(3, rate)}%` }} />
-                    </div>
-                    <span className="text-[10px] text-gray-400 dark:text-gray-500">{b.label}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
         <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">阅读时长</h3>
           <div className="mt-1 flex items-baseline gap-2">
@@ -204,7 +163,7 @@ export default function DashboardPage() {
           <div className="mt-1.5 flex flex-wrap gap-2 text-[10px] text-gray-400 dark:text-gray-500">
             {data.llm_usage.by_scene.map((s) => (
               <span key={s.scene} className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5">
-                {s.scene === "generation" ? "生成" : s.scene === "feynman" ? "费曼" : "答疑"} {s.tokens.toLocaleString()}
+                {s.scene === "generation" ? "生成" : "答疑"} {s.tokens.toLocaleString()}
               </span>
             ))}
           </div>

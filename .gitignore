@@ -30,3 +30,6 @@ backend/build/
 
 # 一键安装的便携工具链（缓存性质，不入库）
 backend/toolchains/
+
+# 冒烟测试隔离数据目录（scripts/smoke_test.py 的 APP_DATA_DIR）
+backend/data-smoke/

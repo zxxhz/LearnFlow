@@ -5,17 +5,14 @@ from app.models.base import Base, CreatedAt, Timestamps, UUIDPk, UserIdMixin
 
 
 class Conversation(UUIDPk, UserIdMixin, CreatedAt, Base):
-    """统一对话模型：划线答疑与费曼共用。"""
+    """划线答疑对话（费曼模块已于 v0.4.0 移除，历史 kind='feynman' 行在迁移时清理）。"""
 
     __tablename__ = "conversations"
 
-    # annotation / feynman
+    # annotation（历史遗留 feynman 值仅存于旧库）
     kind: Mapped[str] = mapped_column(String(20))
     annotation_id: Mapped[str | None] = mapped_column(
         String(32), ForeignKey("annotations.id"), nullable=True, index=True
-    )
-    feynman_session_id: Mapped[str | None] = mapped_column(
-        String(32), ForeignKey("feynman_sessions.id"), nullable=True, index=True
     )
 
 

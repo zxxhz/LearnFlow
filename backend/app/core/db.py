@@ -56,12 +56,61 @@ async def init_db() -> None:
             "ALTER TABLE exercises ADD COLUMN options TEXT DEFAULT ''",
             "ALTER TABLE exercises ADD COLUMN answer TEXT DEFAULT ''",
             "ALTER TABLE exercises ADD COLUMN quiz_id VARCHAR(32) DEFAULT ''",
-            # v0.2.1 练习错题自动成卡的溯源
-            "ALTER TABLE review_cards ADD COLUMN exercise_id VARCHAR(32) DEFAULT ''",
+            # v0.4.0 练习闯关化：关卡顺序 / 渐进提示 / 参考实现
+            "ALTER TABLE exercises ADD COLUMN order_index INTEGER DEFAULT 0",
+            "ALTER TABLE exercises ADD COLUMN hints TEXT DEFAULT '[]'",
+            "ALTER TABLE exercises ADD COLUMN reference_code TEXT DEFAULT ''",
         ]
         for ddl in migrations:
             try:
                 await conn.execute(text(ddl))
             except Exception:  # 列已存在
                 pass
+
+    # v0.4.0 移除费曼/复习模块的老库清理。须在 foreign_keys=OFF 的独立连接上做：
+    # feynman 对话连带消息先删 → DROP 三张表；conversations 里指向已删表的
+    # feynman_session_id 列受 FK 约束无法 DROP COLUMN，按 SQLite 流程重建表。
+    # 新库没有这些表/列，全部幂等跳过。
+    async with engine.connect() as legacy:
+        await legacy.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        tables = {
+            r[0] for r in (
+                await legacy.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+            )
+        }
+        has_session_col = False
+        if "conversations" in tables:
+            cols = [r[1] for r in (await legacy.execute(text("PRAGMA table_info(conversations)")))]
+            has_session_col = "feynman_session_id" in cols
+            if has_session_col:
+                await legacy.execute(text(
+                    "DELETE FROM messages WHERE conversation_id IN "
+                    "(SELECT id FROM conversations WHERE kind = 'feynman')"
+                ))
+                await legacy.execute(text("DELETE FROM conversations WHERE kind = 'feynman'"))
+        for t in ("review_logs", "review_cards", "feynman_sessions"):
+            if t in tables:
+                await legacy.execute(text(f"DROP TABLE {t}"))
+        if has_session_col:
+            await legacy.execute(text(
+                "CREATE TABLE conversations_new ("
+                "id VARCHAR(32) NOT NULL PRIMARY KEY, "
+                "user_id VARCHAR(32), "
+                "kind VARCHAR(20), "
+                "annotation_id VARCHAR(32) REFERENCES annotations(id), "
+                "created_at VARCHAR(40))"
+            ))
+            await legacy.execute(text(
+                "INSERT INTO conversations_new (id, user_id, kind, annotation_id, created_at) "
+                "SELECT id, user_id, kind, annotation_id, created_at FROM conversations"
+            ))
+            await legacy.execute(text("DROP TABLE conversations"))
+            await legacy.execute(text("ALTER TABLE conversations_new RENAME TO conversations"))
+            await legacy.execute(text(
+                "CREATE INDEX ix_conversations_user_id ON conversations (user_id)"
+            ))
+            await legacy.execute(text(
+                "CREATE INDEX ix_conversations_annotation_id ON conversations (annotation_id)"
+            ))
+        await legacy.commit()
     logger.info("数据库已就绪: %s", settings.db_path)

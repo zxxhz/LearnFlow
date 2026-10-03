@@ -16,10 +16,8 @@ from app.models import (
     Conversation,
     Course,
     Document,
-    FeynmanSession,
     KnowledgePoint,
     Message,
-    ReviewCard,
     Section,
 )
 from app.models.base import utcnow_iso
@@ -29,7 +27,7 @@ from app.services.exercise import delete_kp_exercises, purge_document_exercises
 from app.services.llm import create_adapter_from_settings
 from app.services.llm.errors import LLMError
 from app.services.prompt import render_prompt
-from app.services.review import get_preferences
+from app.services.prefs import get_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -139,12 +137,6 @@ async def run_chapter(
     if old_kp_ids:
         # 练习挂在知识点上，随知识点重建一并重置
         await delete_kp_exercises(db, old_kp_ids)
-        await db.execute(
-            delete(ReviewCard).where(
-                ReviewCard.source_type == "knowledge_point",
-                ReviewCard.knowledge_point_id.in_(old_kp_ids),
-            )
-        )
         await db.execute(delete(KnowledgePoint).where(KnowledgePoint.document_id == doc.id))
 
     section_by_heading: dict[str, str] = {}
@@ -177,11 +169,6 @@ async def run_chapter(
         ]
         return min(candidates)[1] if candidates else None
 
-    auto_cards = bool(prefs.get("auto_create_cards", True))
-    course_settings = json.loads(course.course_settings or "{}")
-    if course_settings.get("auto_create_cards") is False:
-        auto_cards = False
-
     if meta:
         for item in meta.knowledge_points:
             resolved = _resolve_heading(item.heading)
@@ -194,16 +181,6 @@ async def run_chapter(
             )
             db.add(kp)
             await db.flush()
-            if auto_cards:
-                db.add(
-                    ReviewCard(
-                        source_type="knowledge_point",
-                        knowledge_point_id=kp.id,
-                        front=f"请解释：{item.title}",
-                        back=f"{item.summary}\n\n（来自《{course.title}》第{doc.chapter_index}章）",
-                        state="new",
-                    )
-                )
     await db.commit()
     publish(
         course.id,
@@ -317,7 +294,7 @@ async def resume_pending_generations() -> None:
 
 
 async def purge_course_data(db: AsyncSession, course: Course) -> None:
-    """删除课程的全部派生数据（文档/索引/标注/对话/复习卡/文件），保留课程行。"""
+    """删除课程的全部派生数据（文档/索引/标注/对话/文件），保留课程行。"""
     docs = (
         await db.scalars(select(Document).where(Document.course_id == course.id))
     ).all()
@@ -333,10 +310,6 @@ async def purge_course_data(db: AsyncSession, course: Course) -> None:
         ann_ids = [a.id for a in anns]
         # 练习/作答须先于知识点删除（FK 约束）
         await purge_document_exercises(db, doc_ids)
-        sessions = (
-            await db.scalars(select(FeynmanSession).where(FeynmanSession.document_id.in_(doc_ids)))
-        ).all()
-        session_conv_ids = [s.conversation_id for s in sessions]
         ann_conv_ids = [
             c.id
             for c in (
@@ -345,26 +318,9 @@ async def purge_course_data(db: AsyncSession, course: Course) -> None:
                 )
             ).all()
         ]
-        conv_ids = list({*session_conv_ids, *ann_conv_ids})
-        if conv_ids:
-            await db.execute(delete(Message).where(Message.conversation_id.in_(conv_ids)))
-        if session_conv_ids:
-            await db.execute(delete(Conversation).where(Conversation.id.in_(session_conv_ids)))
         if ann_conv_ids:
+            await db.execute(delete(Message).where(Message.conversation_id.in_(ann_conv_ids)))
             await db.execute(delete(Conversation).where(Conversation.id.in_(ann_conv_ids)))
-        if sessions:
-            await db.execute(
-                delete(FeynmanSession).where(FeynmanSession.id.in_([s.id for s in sessions]))
-            )
-        if kp_ids or ann_ids:
-            cond = []
-            if kp_ids:
-                cond.append(ReviewCard.knowledge_point_id.in_(kp_ids))
-            if ann_ids:
-                cond.append(ReviewCard.annotation_id.in_(ann_ids))
-            from sqlalchemy import or_
-
-            await db.execute(delete(ReviewCard).where(or_(*cond)))
         if ann_ids:
             await db.execute(delete(Annotation).where(Annotation.id.in_(ann_ids)))
         if kp_ids:

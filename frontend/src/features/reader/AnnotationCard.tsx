@@ -96,19 +96,6 @@ export default function AnnotationCard({
       queryClient.invalidateQueries({ queryKey: ["doc-anns", annotation.document_id] }),
   });
 
-  const makeCard = useMutation({
-    mutationFn: () =>
-      api.review.createCard({
-        front: `请解释：${annotation.exact.slice(0, 60)}`,
-        back: annotation.exact,
-        annotation_id: annotation.id,
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["review-queue"] });
-      setStreamErr("");
-    },
-  });
-
   const remove = useMutation({
     mutationFn: () => api.annotations.remove(annotation.id),
     onSuccess: () => {
@@ -168,14 +155,6 @@ export default function AnnotationCard({
           <Button variant="ghost" className="text-xs" onClick={() => onJump(annotation)}>
             📍 定位原文
           </Button>
-          <Button
-            variant="ghost"
-            className="text-xs"
-            disabled={makeCard.isPending}
-            onClick={() => makeCard.mutate()}
-          >
-            ➕ 转复习卡
-          </Button>
           <Button variant="ghost" className="text-xs" onClick={() => setNoteOpen((v) => !v)}>
             📝 备注
           </Button>
@@ -209,7 +188,6 @@ export default function AnnotationCard({
             </div>
           </div>
         )}
-        {makeCard.isSuccess && <p className="mt-1 text-xs text-green-600 dark:text-green-400">已加入复习队列 ✓</p>}
       </div>
 
       {/* 对话区 */}

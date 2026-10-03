@@ -152,19 +152,6 @@ export default function CourseDetailPage() {
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">章节</h2>
             <div className="flex items-center gap-4">
-              <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400" title="关闭后，本章重新生成时不再自动创建知识点复习卡">
-                <input
-                  type="checkbox"
-                  checked={course.course_settings?.auto_create_cards ?? true}
-                  onChange={(e) =>
-                    api.courses
-                      .update(course.id, { auto_create_cards: e.target.checked })
-                      .then(() => queryClient.invalidateQueries({ queryKey: ["course", courseId] }))
-                      .catch((err) => alert(err.message))
-                  }
-                />
-                自动生成知识点复习卡
-              </label>
               <span className="text-sm text-gray-500 dark:text-gray-400">
                 {doneCount}/{docs.length} 章
                 {course.status === "generating" && (
@@ -227,13 +214,13 @@ export default function CourseDetailPage() {
       <ConfirmDialog
         open={confirmDel}
         title="删除课程"
-        message={`确定删除课程「${course.title}」？全部文档、标注、对话与复习卡将被删除，且无法恢复。`}
+        message={`确定删除课程「${course.title}」？全部文档、标注与对话将被删除，且无法恢复。`}
         onCancel={() => setConfirmDel(false)}
         onConfirm={async () => {
           setConfirmDel(false);
           try {
             await api.courses.delete(course.id);
-            // 删除会连带清掉复习卡/标注/对话，课程列表、复习队列、仪表盘等缓存全部失效；
+            // 删除会连带清掉练习/标注/对话，课程列表、仪表盘等缓存全部失效；
             // 否则 15s staleTime 内返回首页会直接命中旧缓存，看起来像"没删掉"
             await queryClient.invalidateQueries();
             navigate("/");

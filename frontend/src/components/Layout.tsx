@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
@@ -10,46 +10,11 @@ import { getTheme, applyTheme, type Theme } from "../lib/theme";
 const NAV_ITEMS = [
   { to: "/", label: "首页", icon: "🏠" },
   { to: "/dashboard", label: "仪表盘", icon: "📊" },
-  { to: "/review", label: "复习", icon: "🔁" },
-  { to: "/feynman", label: "费曼讲解", icon: "🎤" },
   { to: "/wrongbook", label: "错题本", icon: "📕" },
   { to: "/bank", label: "题库刷题", icon: "🎯" },
   { to: "/search", label: "搜索", icon: "🔍" },
   { to: "/settings", label: "设置", icon: "⚙️" },
 ];
-
-// 每日复习提醒：到设置的时间点查一次到期数，桌面通知（每天最多一次）
-function useDailyReminder() {
-  const { data: settings } = useQuery({
-    queryKey: ["settings"],
-    queryFn: api.settings.get,
-    staleTime: 60_000,
-  });
-  const enabled = settings?.preferences.reminder_enabled ?? false;
-  const time = settings?.preferences.reminder_time ?? "20:00";
-
-  useEffect(() => {
-    if (!enabled) return;
-    const timer = setInterval(async () => {
-      const now = new Date();
-      const [h, m] = time.split(":").map(Number);
-      if (now.getHours() !== h || now.getMinutes() !== m) return;
-      const key = `reminder-sent-${now.toDateString()}`;
-      if (localStorage.getItem(key)) return;
-      localStorage.setItem(key, "1");
-      try {
-        const q = await api.review.queueToday();
-        const count = q.cards.length;
-        if (count > 0) {
-          await notify("LearnFlow 复习提醒", `今天有 ${count} 张卡到期，去看看吧 📖`);
-        }
-      } catch {
-        /* 拉不到队列就静默 */
-      }
-    }, 20_000);
-    return () => clearInterval(timer);
-  }, [enabled, time]);
-}
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   return (
@@ -144,7 +109,6 @@ export default function Layout() {
   const [dismissed, setDismissed] = useState(
     () => sessionStorage.getItem("update-dismissed") ?? ""
   );
-  useDailyReminder();
 
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";

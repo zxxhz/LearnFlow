@@ -46,6 +46,8 @@ async def submit(exercise_id: str, body: ExerciseSubmitRequest, db: AsyncSession
         attempt = await exercise_service.submit(db, exercise_id, body.content)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except LLMError:
         raise
     return ExerciseAttemptOut.model_validate(attempt)

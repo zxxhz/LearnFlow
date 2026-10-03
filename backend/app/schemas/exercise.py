@@ -100,12 +100,30 @@ class ExerciseOut(ORMModel):
     skeleton_code: str
     expected_output: str
     reference_answer: str
+    reference_code: str = ""
     options: str = ""
     answer: str = ""
     quiz_id: str = ""
+    order_index: int = 0
+    hints: list[str] = []
     created_at: str
+    # 闯关状态：同一知识点内前一关通过后才可作答（小测题/非代码题恒为可作答）
+    unlocked: bool = True
+    ever_passed: bool = False
     kp_title: str | None = None
     latest_attempt: ExerciseAttemptOut | None = None
+
+    @field_validator("hints", mode="before")
+    @classmethod
+    def _parse_hints(cls, v):
+        """库中 hints 存 JSON 字符串，出参统一为列表。"""
+        if isinstance(v, str):
+            try:
+                data = json.loads(v)
+            except json.JSONDecodeError:
+                return []
+            return [str(x) for x in data] if isinstance(data, list) else []
+        return v or []
 
 
 class QuizOut(BaseModel):
@@ -135,6 +153,9 @@ class ExerciseDraftItem(BaseModel):
     skeleton_code: str = ""
     expected_output: str = ""
     reference_answer: str = ""
+    reference_code: str = ""
+    # 闯关代码关的渐进提示（按展开顺序）
+    hints: list[str] = []
     options: list[str] = []
     answer: str | list[str] = ""
     # 仅组卷出题用：题目归属的知识点序号（1-based，0/缺省 = 由服务端分配）
@@ -184,7 +205,12 @@ class ExerciseDraftItem(BaseModel):
 
     def is_complete(self) -> bool:
         if self.kind == EXERCISE_CODE:
-            return bool(self.task.strip() and self.skeleton_code.strip() and self.expected_output.strip())
+            # 闯关关必须有任务与目标输出；参考实现任取其一（组卷题用骨架，闯关题用完整实现）
+            return bool(
+                self.task.strip()
+                and self.expected_output.strip()
+                and (self.skeleton_code.strip() or self.reference_code.strip())
+            )
         if self.kind == EXERCISE_CHOICE:
             return bool(self.task.strip() and len(self.options) >= 2 and self.answer_letter())
         if self.kind == EXERCISE_FILL:

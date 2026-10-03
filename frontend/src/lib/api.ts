@@ -12,8 +12,6 @@ import type {
   DocumentContent,
   Exercise,
   ExerciseAttempt,
-  FeynmanSession,
-  FeynmanSessionDetail,
   ImportAnalysis,
   ImportSpec,
   KnowledgePoint,
@@ -22,9 +20,6 @@ import type {
   Message,
   OutlineItem,
   Preferences,
-  ReviewCard,
-  ReviewQueue,
-  ReviewStats,
   SceneLLMConfig,
   SceneName,
   SettingsData,
@@ -326,52 +321,6 @@ export const api = {
   knowledgePoints: {
     forDoc: (docId: string) =>
       request<KnowledgePoint[]>(`/documents/${docId}/knowledge-points`),
-  },
-  feynman: {
-    start: (body: { knowledge_point_id: string; explanation: string }) =>
-      request<FeynmanSessionDetail>("/feynman/sessions", {
-        method: "POST",
-        ...jsonBody(body),
-      }),
-    kpContext: (kpId: string) =>
-      request<{
-        knowledge_point: KnowledgePoint;
-        document_id: string;
-        document_title: string;
-        course_id: string;
-        course_title: string;
-      }>(`/feynman/kp-context/${kpId}`),
-    list: (knowledgePointId?: string) =>
-      request<FeynmanSession[]>(
-        `/feynman/sessions${
-          knowledgePointId ? `?knowledge_point_id=${knowledgePointId}` : ""
-        }`
-      ),
-    get: (id: string) => request<FeynmanSessionDetail>(`/feynman/sessions/${id}`),
-    evaluate: (id: string) =>
-      request<FeynmanSessionDetail>(`/feynman/sessions/${id}/evaluate`, {
-        method: "POST",
-      }),
-  },
-  review: {
-    queueToday: () => request<ReviewQueue>("/review/queue/today"),
-    exportCsv: () => downloadFile("/review/export.csv"),
-    grade: (cardId: string, quality: 1 | 3 | 4 | 5) =>
-      request<ReviewCard>(`/review/cards/${cardId}/grade`, {
-        method: "POST",
-        ...jsonBody({ quality }),
-      }),
-    createCard: (body: {
-      front: string;
-      back?: string;
-      knowledge_point_id?: string | null;
-      annotation_id?: string | null;
-    }) => request<ReviewCard>("/review/cards", { method: "POST", ...jsonBody(body) }),
-    updateCard: (id: string, body: { front?: string; back?: string; suspended?: boolean }) =>
-      request<ReviewCard>(`/review/cards/${id}`, { method: "PATCH", ...jsonBody(body) }),
-    deleteCard: (id: string) =>
-      request<void>(`/review/cards/${id}`, { method: "DELETE" }),
-    stats: () => request<ReviewStats>("/review/stats"),
   },
   dashboard: {
     summary: () => request<DashboardSummary>("/dashboard/summary"),

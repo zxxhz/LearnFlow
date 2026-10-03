@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import get_db
 from app.models import StudyDay
 from app.models.base import utcnow_iso
-from app.services.review import local_today
+from app.services.prefs import local_today
 
 router = APIRouter(prefix="/study", tags=["study"])
 

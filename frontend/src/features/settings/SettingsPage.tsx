@@ -20,7 +20,6 @@ const PROVIDER_PRESETS: { label: string; base_url: string; model: string }[] = [
 const SCENE_META: { name: SceneName; label: string; hint: string }[] = [
   { name: "generation", label: "生成模型", hint: "章节生成、导入知识点提取——建议用便宜量大的模型" },
   { name: "chat", label: "答疑模型", hint: "划线提问对话——建议用响应快的模型" },
-  { name: "feynman", label: "费曼模型", hint: "学生追问与理解度评价——建议用推理强的模型" },
 ];
 
 const EMPTY_SCENE: SceneLLMConfig = { base_url: "", api_key: "", model: "" };
@@ -33,16 +32,10 @@ export default function SettingsPage() {
   const [scenes, setScenes] = useState<Record<SceneName, SceneLLMConfig>>({
     generation: { ...EMPTY_SCENE },
     chat: { ...EMPTY_SCENE },
-    feynman: { ...EMPTY_SCENE },
   });
   const [prefs, setPrefs] = useState<Preferences>({
-    daily_new_cards: 20,
     chapter_length: 3000,
-    feynman_max_rounds: 4,
-    auto_create_cards: true,
-    exercises_per_kp: 2,
-    reminder_enabled: true,
-    reminder_time: "20:00",
+    exercises_per_kp: 3,
     highlight_colors: {},
   });
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
@@ -54,7 +47,6 @@ export default function SettingsPage() {
       setScenes({
         generation: { ...EMPTY_SCENE, ...settings.scenes?.generation, api_key: "" },
         chat: { ...EMPTY_SCENE, ...settings.scenes?.chat, api_key: "" },
-        feynman: { ...EMPTY_SCENE, ...settings.scenes?.feynman, api_key: "" },
       });
       setPrefs(settings.preferences);
     }
@@ -74,10 +66,6 @@ export default function SettingsPage() {
             ...(scenes.generation.api_key ? {} : { api_key: undefined }),
           },
           chat: { ...scenes.chat, ...(scenes.chat.api_key ? {} : { api_key: undefined }) },
-          feynman: {
-            ...scenes.feynman,
-            ...(scenes.feynman.api_key ? {} : { api_key: undefined }),
-          },
         },
       }),
     onSuccess: () => {
@@ -250,7 +238,7 @@ export default function SettingsPage() {
           )}
           {saveLlm.isError && <p className="text-sm text-red-600 dark:text-red-400">{saveLlm.error.message}</p>}
 
-          {/* 场景化模型（PRD §5.7：便宜模型做生成、强模型做费曼评价） */}
+          {/* 场景化模型（PRD §5.7：便宜模型做生成） */}
           <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">场景模型（留空 = 使用主配置）</h3>
             <div className="mt-3 space-y-4">
@@ -307,15 +295,6 @@ export default function SettingsPage() {
         <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">学习偏好</h2>
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">每日新卡上限</label>
-            <Input
-              type="number"
-              min={0}
-              value={prefs.daily_new_cards}
-              onChange={(e) => setPrefs({ ...prefs, daily_new_cards: Number(e.target.value) })}
-            />
-          </div>
-          <div>
             <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">每章篇幅（字）</label>
             <Input
               type="number"
@@ -326,17 +305,7 @@ export default function SettingsPage() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">费曼最大追问轮数</label>
-            <Input
-              type="number"
-              min={1}
-              max={10}
-              value={prefs.feynman_max_rounds}
-              onChange={(e) => setPrefs({ ...prefs, feynman_max_rounds: Number(e.target.value) })}
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">每知识点练习数</label>
+            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">每知识点关卡数</label>
             <Input
               type="number"
               min={1}
@@ -345,31 +314,6 @@ export default function SettingsPage() {
               onChange={(e) => setPrefs({ ...prefs, exercises_per_kp: Number(e.target.value) })}
             />
           </div>
-        </div>
-        <label className="mt-3 flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-          <input
-            type="checkbox"
-            checked={prefs.auto_create_cards}
-            onChange={(e) => setPrefs({ ...prefs, auto_create_cards: e.target.checked })}
-          />
-          文档生成后自动为知识点创建复习卡
-        </label>
-        <div className="mt-3 flex items-end gap-2">
-          <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-            <input
-              type="checkbox"
-              checked={prefs.reminder_enabled}
-              onChange={(e) => setPrefs({ ...prefs, reminder_enabled: e.target.checked })}
-            />
-            每日复习提醒（桌面通知）
-          </label>
-          <input
-            type="time"
-            value={prefs.reminder_time}
-            onChange={(e) => setPrefs({ ...prefs, reminder_time: e.target.value })}
-            disabled={!prefs.reminder_enabled}
-            className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 text-sm text-gray-800 dark:text-gray-200 disabled:opacity-50"
-          />
         </div>
         <div className="mt-3">
           <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">划线高亮颜色</label>

@@ -5,9 +5,6 @@ import NewCoursePage from "./features/course-create/NewCoursePage";
 import ImportPage from "./features/import-course/ImportPage";
 import CourseDetailPage from "./features/course-create/CourseDetailPage";
 import ReaderPage from "./features/reader/ReaderPage";
-import ReviewPage from "./features/review/ReviewPage";
-import FeynmanIndexPage from "./features/feynman/FeynmanIndexPage";
-import FeynmanSessionPage from "./features/feynman/FeynmanSessionPage";
 import DashboardPage from "./features/dashboard/DashboardPage";
 import SettingsPage from "./features/settings/SettingsPage";
 import WrongBookPage from "./features/wrongbook/WrongBookPage";
@@ -24,9 +21,6 @@ export default function App() {
         <Route path="/import" element={<ImportPage />} />
         <Route path="/courses/:courseId" element={<CourseDetailPage />} />
         <Route path="/read/:documentId" element={<ReaderPage />} />
-        <Route path="/review" element={<ReviewPage />} />
-        <Route path="/feynman" element={<FeynmanIndexPage />} />
-        <Route path="/feynman/:sessionId" element={<FeynmanSessionPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/wrongbook" element={<WrongBookPage />} />
         <Route path="/search" element={<SearchPage />} />

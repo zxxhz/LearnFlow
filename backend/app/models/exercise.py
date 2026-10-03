@@ -5,7 +5,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, CreatedAt, UUIDPk, UserIdMixin
 
 # kind 取值
-EXERCISE_CODE = "code"  # 补全代码骨架，stdout 对比自动判定
+EXERCISE_CODE = "code"  # 从零手写代码的闯关关卡，stdout 对比自动判定
 EXERCISE_CONCEPT = "concept"  # 概念简答题，LLM 按参考答案评分
 EXERCISE_CHOICE = "choice"  # 单选题，对比选项字母自动判定
 EXERCISE_FILL = "fill"  # 填空题，归一化后对比参考答案自动判定
@@ -35,6 +35,12 @@ class Exercise(UUIDPk, UserIdMixin, CreatedAt, Base):
     answer: Mapped[str] = mapped_column(Text, default="")
     # 非空 = 属于某次随堂小测（组卷生成），与普通练习区分展示
     quiz_id: Mapped[str] = mapped_column(String(32), default="", index=True)
+    # 闯关链内顺序（同一知识点内 0 起递增；小测题/旧数据为 0，按创建时间兜底排序）
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    # 渐进提示（JSON 数组，逐条展开；仅闯关代码关使用）
+    hints: Mapped[str] = mapped_column(Text, default="[]")
+    # 通关后展示的完整参考实现（旧数据回落 skeleton_code）
+    reference_code: Mapped[str] = mapped_column(Text, default="")
 
 
 class ExerciseAttempt(UUIDPk, UserIdMixin, CreatedAt, Base):

@@ -27,13 +27,14 @@ router = APIRouter(tags=["settings"])
 
 DEFAULT_LLM = {"base_url": "", "api_key": "", "model": "", "scenes": {}}
 DEFAULT_PREFS = {
-    "daily_new_cards": 20,
     "chapter_length": 3000,
-    "feynman_max_rounds": 4,
-    "auto_create_cards": True,
-    "exercises_per_kp": 2,
-    "reminder_enabled": True,
-    "reminder_time": "20:00",
+    "exercises_per_kp": 3,
+    "highlight_colors": {
+        "yellow": "#fde68a",
+        "green": "#bbf7d0",
+        "blue": "#bfdbfe",
+        "pink": "#fbcfe8",
+    },
 }
 
 
@@ -85,7 +86,7 @@ async def update_settings(body: SettingsUpdate, db: AsyncSession = Depends(get_d
         scenes_old = current.get("scenes") or {}
         current["scenes"] = {
             name: _blank_inherit(scenes_old.get(name) or {}, scenes_new.get(name) or {})
-            for name in ("generation", "chat", "feynman")
+            for name in ("generation", "chat")
         }
     if body.preferences is not None:
         row.preferences = json.dumps(body.preferences.model_dump())

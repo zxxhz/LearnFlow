@@ -9,11 +9,9 @@ from app.api import (
     documents,
     execution,
     exercise,
-    feynman,
     imports,
     math,
     quiz,
-    review,
     runtime,
     search,
     settings,
@@ -28,8 +26,6 @@ api_router.include_router(courses.router)
 api_router.include_router(documents.router)
 api_router.include_router(annotations.router)
 api_router.include_router(conversations.router)
-api_router.include_router(feynman.router)
-api_router.include_router(review.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(execution.router)
 api_router.include_router(exercise.router)

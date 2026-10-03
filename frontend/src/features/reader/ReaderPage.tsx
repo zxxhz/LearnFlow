@@ -228,7 +228,7 @@ export default function ReaderPage() {
     }
   };
 
-  // URL ?section= 定位（费曼漏洞跳转入口）
+  // URL ?section= 定位（知识点浮层跳转入口）
   useEffect(() => {
     const target = searchParams.get("section");
     if (!target || !content) return;
@@ -379,7 +379,7 @@ export default function ReaderPage() {
                 setExerciseFocus(null);
               }}
             >
-              📝 练习 {(exercisesQuery.data?.length ?? 0) > 0 && exercisesQuery.data!.length}
+              🎮 闯关 {(exercisesQuery.data?.length ?? 0) > 0 && exercisesQuery.data!.length}
             </Button>
             <Button variant="ghost" className="text-xs" onClick={() => setDrawerOpen((v) => !v)}>
               🖍 标注 {annotations.length > 0 && annotations.length}
@@ -478,12 +478,6 @@ export default function ReaderPage() {
                   <div className="text-sm font-medium text-gray-800 dark:text-gray-200">{kp.title}</div>
                   <p className="mt-0.5 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">{kp.summary}</p>
                   <div className="mt-1.5 flex items-center gap-2">
-                    <Link
-                      to={`/feynman?kp=${kp.id}`}
-                      className="text-xs text-brand-600 underline"
-                    >
-                      🎤 费曼讲解
-                    </Link>
                     <button
                       className="text-xs text-brand-600 underline"
                       onClick={() => {
@@ -492,7 +486,7 @@ export default function ReaderPage() {
                         setExerciseOpen(true);
                       }}
                     >
-                      📝 练习
+                      🎮 闯关
                     </button>
                   </div>
                 </div>

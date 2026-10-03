@@ -9,10 +9,8 @@ from app.models.base import utcnow_iso
 DEFAULT_LLM = {"base_url": "", "api_key": "", "model": ""}
 DEFAULT_HL_COLORS = {"yellow": "#fde68a", "green": "#bbf7d0", "blue": "#bfdbfe", "pink": "#fbcfe8"}
 DEFAULT_PREFERENCES = {
-    "daily_new_cards": 20,
     "chapter_length": 3000,
-    "feynman_max_rounds": 4,
-    "auto_create_cards": True,
+    "exercises_per_kp": 3,
     "highlight_colors": DEFAULT_HL_COLORS,
 }
 

@@ -1,4 +1,4 @@
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { Badge, Button, EmptyState, Spinner } from "../../components/ui";
@@ -12,21 +12,15 @@ const STATUS_BADGE: Record<string, { label: string; color: "gray" | "green" | "b
 export default function HomePage() {
   const navigate = useNavigate();
   const { data: courses, isLoading } = useQuery({ queryKey: ["courses"], queryFn: api.courses.list });
-  const { data: queue } = useQuery({ queryKey: ["review-queue"], queryFn: api.review.queueToday });
 
   return (
     <div className="mx-auto max-w-5xl p-8">
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">我的课程</h1>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">学 · 问 · 讲 · 复习，一个闭环</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">学 · 问 · 练 · 错题重刷，一个闭环</p>
         </div>
         <div className="flex items-center gap-3">
-          {queue && queue.due_total + queue.new_quota_remaining > 0 && (
-            <Link to="/review">
-              <Badge color="amber">今日到期 {queue.due_total + queue.new_quota_remaining} 张</Badge>
-            </Link>
-          )}
           <Button onClick={() => navigate("/courses/new")}>＋ 新建课程</Button>
         </div>
       </div>

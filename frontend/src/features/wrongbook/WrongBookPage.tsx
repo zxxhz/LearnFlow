@@ -1,4 +1,4 @@
-// 错题本：最近一次作答未通过的练习（跨课程），重练通过后对应复习卡自动过一遍
+// 错题本：最近一次作答未通过的练习（跨课程），重刷通过后自动出池
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -15,7 +15,7 @@ export default function WrongBookPage() {
     <div className="mx-auto max-w-3xl p-6">
       <h1 className="text-xl font-bold text-gray-900 dark:text-gray-100">📕 错题本</h1>
       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        最近一次作答未通过的题都在这里；重练通过后，对应的复习卡会自动按「记得」过一遍。
+        最近一次作答未通过的题都在这里；重刷通过后自动出池。
       </p>
       {isLoading ? (
         <div className="mt-10 flex justify-center">

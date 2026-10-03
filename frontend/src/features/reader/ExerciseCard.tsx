@@ -1,4 +1,4 @@
-// 单题卡片：代码题（补全骨架→运行→stdout 自动判定）/ 概念题（LLM 评分）/ 单选·填空（本地判定）（PRD §5.10）
+// 单题卡片：闯关代码关（看提示→从零手写→运行→stdout 判定）/ 概念题（LLM 评分）/ 单选·填空（本地判定）（PRD §5.10）
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -9,6 +9,8 @@ import MarkdownLite from "../../components/MarkdownLite";
 interface Props {
   exercise: Exercise;
   documentId: string;
+  /** 闯关链内的关卡序号（1 起）；小测题/旧列表不传则不显示关卡徽标 */
+  level?: number;
 }
 
 const STATUS_BADGE: Record<string, { label: string; color: "gray" | "green" | "blue" | "red" | "amber" }> = {
@@ -32,15 +34,19 @@ export function parseOptions(exercise: Exercise): string[] {
   }
 }
 
-export default function ExerciseCard({ exercise, documentId }: Props) {
+export default function ExerciseCard({ exercise, documentId, level }: Props) {
   const queryClient = useQueryClient();
   const isCode = exercise.kind === "code";
   const isChoice = exercise.kind === "choice";
   const isFill = exercise.kind === "fill";
+  const locked = isCode && !exercise.unlocked;
+  const hints = isCode ? (exercise.hints ?? []) : [];
   const [draft, setDraft] = useState<string | null>(null); // 代码题：非空 = 用户改过
   const [answer, setAnswer] = useState("");
   const [choicePick, setChoicePick] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
+  const [hintsShown, setHintsShown] = useState(1); // 第 1 条提示默认给出
+  const [showRef, setShowRef] = useState(false);
   const adoptedAttempt = useRef<string | null>(null);
 
   // 打开时回显最近一次作答（提交后 invalidate 拉到新 attempt，同 BlockView 模式）
@@ -49,7 +55,7 @@ export default function ExerciseCard({ exercise, documentId }: Props) {
     if (!a || adoptedAttempt.current === a.id) return;
     adoptedAttempt.current = a.id;
     if (isCode) {
-      if (draft === null && a.content !== exercise.skeleton_code) setDraft(a.content);
+      if (draft === null && a.content) setDraft(a.content);
     } else if (isChoice) {
       if (a.content) setChoicePick(a.content.toUpperCase());
     } else if (!isChoice && answer === "" && a.content) {
@@ -62,7 +68,7 @@ export default function ExerciseCard({ exercise, documentId }: Props) {
 
   const submit = useMutation({
     mutationFn: () => {
-      const content = isCode ? (draft ?? exercise.skeleton_code) : isChoice ? (choicePick ?? "") : answer;
+      const content = isCode ? (draft ?? "") : isChoice ? (choicePick ?? "") : answer;
       return api.exercises.submit(exercise.id, content);
     },
     onSuccess: () => {
@@ -93,7 +99,7 @@ export default function ExerciseCard({ exercise, documentId }: Props) {
   };
 
   const pending = submit.isPending;
-  const content = isCode ? draft ?? exercise.skeleton_code : isChoice ? "" : answer;
+  const content = isCode ? draft ?? "" : isChoice ? "" : answer;
   const options = isChoice ? parseOptions(exercise) : [];
 
   const answerReveal = () => {
@@ -115,7 +121,7 @@ export default function ExerciseCard({ exercise, documentId }: Props) {
       <div className="mt-2 space-y-2">
         {attempt.passed === true ? (
           <div className="rounded-lg bg-green-50 dark:bg-green-900/30 px-3 py-2 text-sm font-medium text-green-700 dark:text-green-400">
-            ✅ 通过{isCode ? "！输出与预期一致。" : ""}
+            ✅ 通过{isCode ? "！输出与目标一致，关卡已通关。" : ""}
           </div>
         ) : (
           attempt.passed === false && (
@@ -126,6 +132,7 @@ export default function ExerciseCard({ exercise, documentId }: Props) {
         )}
         {isCode && (attempt.stdout || attempt.stderr) && (
           <div className="rounded-lg bg-gray-900/95 p-2.5 font-mono text-xs">
+            <div className="mb-1 text-[10px] text-gray-400 dark:text-gray-500">你的输出</div>
             {attempt.stdout && <pre className="whitespace-pre-wrap text-green-200">{attempt.stdout}</pre>}
             {attempt.stderr && <pre className="whitespace-pre-wrap text-red-300">{attempt.stderr}</pre>}
             <div className="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
@@ -134,15 +141,27 @@ export default function ExerciseCard({ exercise, documentId }: Props) {
             </div>
           </div>
         )}
-        {!isChoice && (
+        {!isChoice && !isCode && (
           <button className="text-xs text-gray-400 dark:text-gray-500 underline hover:text-gray-600 dark:hover:text-gray-300" onClick={() => setRevealed((v) => !v)}>
-            {revealed ? (isFill ? "收起参考答案" : "收起预期输出") : isFill ? "查看参考答案" : "查看预期输出"}
+            {revealed ? (isFill ? "收起参考答案" : "收起参考答案") : isFill ? "查看参考答案" : "查看参考答案"}
           </button>
         )}
-        {revealed && (
+        {revealed && !isCode && (
           <pre className="whitespace-pre-wrap rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 p-2 font-mono text-xs text-gray-600 dark:text-gray-400">
-            {isCode ? exercise.expected_output || "（空）" : isFill ? answerReveal() : exercise.reference_answer}
+            {isFill ? answerReveal() : exercise.reference_answer}
           </pre>
+        )}
+        {isCode && attempt.passed === true && (
+          <>
+            <button className="text-xs text-gray-400 dark:text-gray-500 underline hover:text-gray-600 dark:hover:text-gray-300" onClick={() => setShowRef((v) => !v)}>
+              {showRef ? "收起参考实现" : "查看参考实现"}
+            </button>
+            {showRef && (
+              <pre className="whitespace-pre-wrap rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 p-2 font-mono text-xs text-gray-600 dark:text-gray-400">
+                {exercise.reference_code || exercise.skeleton_code || "（无）"}
+              </pre>
+            )}
+          </>
         )}
       </div>
     );
@@ -151,10 +170,12 @@ export default function ExerciseCard({ exercise, documentId }: Props) {
     <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3">
       <div className="flex items-start justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
+          {level != null && <Badge color="blue">🎮 第 {level} 关</Badge>}
           <Badge color={isCode ? "blue" : isChoice || isFill ? "amber" : "gray"}>
-            {isCode ? "💻 代码题" : isChoice ? "🔤 单选题" : isFill ? "✏️ 填空题" : "💬 概念题"}
+            {isCode ? "💻 代码关" : isChoice ? "🔤 单选题" : isFill ? "✏️ 填空题" : "💬 概念题"}
           </Badge>
-          {attempt?.passed === true && <Badge color="green">✅ 通过</Badge>}
+          {locked && <Badge color="gray">🔒 未解锁</Badge>}
+          {attempt?.passed === true && <Badge color="green">✅ 通关</Badge>}
           {attempt?.passed === false && <Badge color="red">❌ 未通过</Badge>}
           {attempt && isCode && STATUS_BADGE[attempt.status] && (
             <Badge color={STATUS_BADGE[attempt.status].color}>{STATUS_BADGE[attempt.status].label}</Badge>
@@ -176,38 +197,73 @@ export default function ExerciseCard({ exercise, documentId }: Props) {
       </div>
 
       {isCode ? (
-        <>
-          <textarea
-            value={content}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={onKeyDown}
-            rows={Math.min(14, Math.max(4, content.split("\n").length + 1))}
-            spellCheck={false}
-            aria-label="练习代码（可编辑）"
-            className="mt-2 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-2.5 font-mono text-xs leading-5 text-gray-800 dark:text-gray-200 focus:border-brand-500 dark:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-500"
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <Button
-              className="bg-green-700/90 text-white hover:bg-green-700"
-              disabled={pending || !content.trim()}
-              onClick={() => submit.mutate()}
-            >
-              {pending ? (
-                <>
-                  <Spinner className="h-3.5 w-3.5 border-gray-300 dark:border-gray-600 border-t-white" /> 运行判定中…
-                </>
-              ) : (
-                "▶ 运行判定"
-              )}
-            </Button>
-            {draft !== null && draft !== exercise.skeleton_code && (
-              <Button variant="ghost" className="text-xs" onClick={() => setDraft(null)}>
-                ↺ 重置
-              </Button>
-            )}
+        locked ? (
+          <div className="mt-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 px-3 py-2.5 text-xs text-gray-500 dark:text-gray-400">
+            🔒 通关上一关后解锁挑战
           </div>
-          {renderAttemptResult()}
-        </>
+        ) : (
+          <>
+            {hints.length > 0 && (
+              <div className="mt-2 space-y-1.5">
+                {hints.slice(0, hintsShown).map((h, i) => (
+                  <div
+                    key={i}
+                    className="rounded-lg bg-amber-50 dark:bg-amber-900/20 px-3 py-2 text-sm text-amber-800 dark:text-amber-200"
+                  >
+                    💡 提示 {i + 1}：{h}
+                  </div>
+                ))}
+                {hintsShown < hints.length && (
+                  <button
+                    className="text-xs text-amber-600 dark:text-amber-300 underline hover:text-amber-700 dark:hover:text-amber-200"
+                    onClick={() => setHintsShown((n) => n + 1)}
+                  >
+                    再给一条提示（{hintsShown + 1}/{hints.length}）
+                  </button>
+                )}
+              </div>
+            )}
+            <div className="mt-2">
+              <div className="mb-1 text-xs font-medium text-gray-500 dark:text-gray-400">
+                🎯 目标输出（运行结果必须与之逐字符一致）
+              </div>
+              <pre className="whitespace-pre-wrap rounded-lg bg-gray-900/95 p-2.5 font-mono text-xs text-green-200">
+                {exercise.expected_output || "（空）"}
+              </pre>
+            </div>
+            <textarea
+              value={content}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={onKeyDown}
+              rows={Math.min(14, Math.max(6, content.split("\n").length + 1))}
+              spellCheck={false}
+              aria-label="关卡代码（从零手写）"
+              placeholder="从零写下你的代码…"
+              className="mt-2 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-2.5 font-mono text-xs leading-5 text-gray-800 dark:text-gray-200 focus:border-brand-500 dark:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-500"
+            />
+            <div className="mt-2 flex items-center gap-2">
+              <Button
+                className="bg-green-700/90 text-white hover:bg-green-700"
+                disabled={pending || !content.trim()}
+                onClick={() => submit.mutate()}
+              >
+                {pending ? (
+                  <>
+                    <Spinner className="h-3.5 w-3.5 border-gray-300 dark:border-gray-600 border-t-white" /> 运行判定中…
+                  </>
+                ) : (
+                  "▶ 运行判定"
+                )}
+              </Button>
+              {draft !== null && draft !== "" && (
+                <Button variant="ghost" className="text-xs" onClick={() => setDraft(null)}>
+                  ↺ 清空
+                </Button>
+              )}
+            </div>
+            {renderAttemptResult()}
+          </>
+        )
       ) : isChoice ? (
         <>
           <div className="mt-2 space-y-1.5">

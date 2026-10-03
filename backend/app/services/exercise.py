@@ -1,16 +1,15 @@
-"""练习服务（PRD §5.10）：按知识点出题 + 代码题自动判定 + 概念题 LLM 评分。
+"""练习服务（PRD §5.10）：闯关式代码练习 + 概念题 LLM 评分。
 
-闭环扩展：练习做错自动成 SM-2 复习卡（source=exercise），同一题做对时把
-这张卡自动按「记得」过一遍（仅当卡片未到期或还是新卡时才补一次）。
+代码关在同一知识点内按 order_index 成链，前一关通过后才解锁下一关；
+提交后由执行沙箱运行，stdout 与目标输出精确对比判定；做错的题进错题本。
 """
 import json
 import logging
-from datetime import datetime, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Course, Document, Exercise, ExerciseAttempt, KnowledgePoint, ReviewCard, ReviewLog
+from app.models import Course, Document, Exercise, ExerciseAttempt, KnowledgePoint
 from app.models.exercise import (
     ATTEMPT_GRADED,
     EXERCISE_CHOICE,
@@ -27,7 +26,7 @@ from app.schemas.exercise import (
 from app.services.execution.runner import run_code
 from app.services.llm import create_adapter_from_settings
 from app.services.prompt import render_prompt
-from app.services.review import apply_sm2, get_preferences, parse_dt
+from app.services.prefs import get_preferences
 from app.services.sections_text import get_section_text
 
 logger = logging.getLogger(__name__)
@@ -90,81 +89,13 @@ async def delete_kp_exercises(db: AsyncSession, kp_ids: list[str]) -> None:
         await db.execute(
             ExerciseAttempt.__table__.delete().where(ExerciseAttempt.exercise_id.in_(old_ids))
         )
-        # 错题卡随练习一并删除（卡片未复习过才删，已入调度的不动以免打断节奏）
-        await db.execute(
-            ReviewCard.__table__.delete().where(
-                ReviewCard.exercise_id.in_(old_ids), ReviewCard.state == "new"
-            )
-        )
         await db.execute(Exercise.__table__.delete().where(Exercise.id.in_(old_ids)))
-
-
-async def _exercise_card(db: AsyncSession, exercise: Exercise) -> ReviewCard | None:
-    return (
-        await db.scalars(
-            select(ReviewCard).where(
-                ReviewCard.exercise_id == exercise.id, ReviewCard.source_type == "exercise"
-            )
-        )
-    ).first()
-
-
-async def _ensure_wrong_card(db: AsyncSession, exercise: Exercise) -> ReviewCard:
-    """练习做错 → 保证存在一张对应的复习卡（已有则不再重复建）。"""
-    card = await _exercise_card(db, exercise)
-    if card:
-        return card
-    if exercise.kind == EXERCISE_CODE:
-        back = exercise.expected_output
-    elif exercise.kind == EXERCISE_CHOICE:
-        idx = CHOICE_LETTERS.find(exercise.answer.strip().upper()[:1])
-        opts = json.loads(exercise.options) if exercise.options else []
-        back = f"{exercise.answer}（{opts[idx] if 0 <= idx < len(opts) else '?'}）"
-    elif exercise.kind == EXERCISE_FILL:
-        back = " / ".join(_fill_answers(exercise.answer))
-    else:
-        back = exercise.reference_answer
-    card = ReviewCard(
-        source_type="exercise",
-        knowledge_point_id=exercise.knowledge_point_id,
-        exercise_id=exercise.id,
-        front=exercise.title,
-        back=back,
-    )
-    db.add(card)
-    return card
-
-
-async def _auto_review_passed_card(db: AsyncSession, exercise: Exercise, now: datetime) -> None:
-    """同一题做对时，把对应的错题卡按「记得」(q=4) 过一遍；仅限新卡或已到期卡。"""
-    card = await _exercise_card(db, exercise)
-    if card is None or card.suspended:
-        return
-    due = parse_dt(card.due_at) or now
-    if card.state != "new" and due > now:
-        return
-    if card.introduced_at is None:
-        card.introduced_at = now.isoformat()
-    state_before = card.state
-    apply_sm2(card, 4, now)
-    db.add(
-        ReviewLog(
-            card_id=card.id,
-            reviewed_at=now.isoformat(),
-            quality=4,
-            interval_days=card.interval_days,
-            ease_factor=card.easiness_factor,
-            state_before=state_before,
-            state_after=card.state,
-        )
-    )
-    card.last_reviewed_at = now.isoformat()
 
 
 async def generate_for_kp(
     db: AsyncSession, knowledge_point_id: str, language: str, count: int
 ) -> list[Exercise]:
-    """为知识点出题（替换旧题）。count<=0 时取偏好 exercises_per_kp。"""
+    """为知识点生成闯关关卡（替换旧关卡）。count<=0 时取偏好 exercises_per_kp。"""
     kp = await db.get(KnowledgePoint, knowledge_point_id)
     if kp is None:
         raise LookupError("知识点不存在")
@@ -173,7 +104,7 @@ async def generate_for_kp(
 
     if count <= 0:
         prefs = await get_preferences(db)
-        count = max(1, min(4, int(prefs.get("exercises_per_kp", 2))))
+        count = max(1, min(4, int(prefs.get("exercises_per_kp", 3))))
 
     system = render_prompt(
         "exercise_gen",
@@ -192,7 +123,7 @@ async def generate_for_kp(
 
     await delete_kp_exercises(db, [kp.id])
     saved: list[Exercise] = []
-    for item in drafts.exercises:
+    for idx, item in enumerate(drafts.exercises):
         if not item.is_complete():
             logger.warning("skip incomplete exercise draft: kind=%s title=%s", item.kind, item.title)
             continue
@@ -205,6 +136,13 @@ async def generate_for_kp(
             language=item.resolved_language(language) if item.kind == EXERCISE_CODE else "",
             skeleton_code=item.skeleton_code if item.kind == EXERCISE_CODE else "",
             expected_output=item.expected_output if item.kind == EXERCISE_CODE else "",
+            reference_code=item.reference_code if item.kind == EXERCISE_CODE else "",
+            hints=(
+                json.dumps([h for h in item.hints if str(h).strip()][:3], ensure_ascii=False)
+                if item.kind == EXERCISE_CODE
+                else "[]"
+            ),
+            order_index=idx,
             reference_answer=item.reference_answer if item.kind == EXERCISE_CONCEPT else "",
             options=json.dumps(item.options, ensure_ascii=False) if item.kind == EXERCISE_CHOICE else "",
             answer=item.stored_answer(),
@@ -256,10 +194,33 @@ async def _attach_meta(db: AsyncSession, exercises: list[Exercise]) -> list[Exer
                 await db.scalars(select(ExerciseAttempt).where(ExerciseAttempt.id.in_(latest_ids)))
             ).all():
                 latest[a.exercise_id] = a
+    # 闯关状态：通过过（任一次）的关卡永久解锁；同一知识点代码关按 order_index 成链
+    passed_ids: set[str] = set()
+    if ex_ids:
+        passed_ids = set(
+            await db.scalars(
+                select(ExerciseAttempt.exercise_id).where(
+                    ExerciseAttempt.exercise_id.in_(ex_ids),
+                    ExerciseAttempt.passed.is_(True),
+                )
+            )
+        )
+    unlocked_ids: set[str] = set()
+    chains: dict[str, list[Exercise]] = {}
+    for e in exercises:
+        if e.kind == EXERCISE_CODE and not e.quiz_id:
+            chains.setdefault(e.knowledge_point_id, []).append(e)
+    for chain in chains.values():
+        chain.sort(key=lambda e: (e.order_index, e.created_at, e.id))
+        for i, e in enumerate(chain):
+            if i == 0 or e.id in passed_ids or chain[i - 1].id in passed_ids:
+                unlocked_ids.add(e.id)
     out: list[ExerciseOut] = []
     for e in exercises:
         o = ExerciseOut.model_validate(e)
         o.kp_title = kp_titles.get(e.knowledge_point_id)
+        o.ever_passed = e.id in passed_ids
+        o.unlocked = e.kind != EXERCISE_CODE or bool(e.quiz_id) or e.id in unlocked_ids
         o.latest_attempt = (
             ExerciseAttemptOut.model_validate(latest[e.id]) if e.id in latest else None
         )
@@ -299,10 +260,12 @@ async def wrongbook(db: AsyncSession) -> list[ExerciseOut]:
 
 
 async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAttempt:
-    """提交作答：代码题运行对比 stdout；单选/填空本地判定；概念题 LLM 评分。"""
+    """提交作答：代码关运行对比 stdout；单选/填空本地判定；概念题 LLM 评分。"""
     exercise = await db.get(Exercise, exercise_id)
     if exercise is None:
         raise LookupError("练习题不存在")
+    if exercise.kind == EXERCISE_CODE and not exercise.quiz_id:
+        await _ensure_unlocked(db, exercise)
 
     if exercise.kind == EXERCISE_CODE:
         result = await run_code(exercise.language, content)
@@ -361,15 +324,36 @@ async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAt
             feedback=f"（{grade.score} 分）{grade.feedback}".strip(),
         )
 
-    # 练习 ↔ 复习闭环：做错成卡，做对把已有卡按「记得」过一遍
-    if passed:
-        await _auto_review_passed_card(db, exercise, datetime.now(timezone.utc))
-    else:
-        await _ensure_wrong_card(db, exercise)
-
     db.add(attempt)
     await db.commit()
     return attempt
+
+
+async def _ensure_unlocked(db: AsyncSession, exercise: Exercise) -> None:
+    """闯关顺序校验：上一关从未通过且本关也从未通过时，禁止提交本关。"""
+    chain = (
+        await db.scalars(
+            select(Exercise).where(
+                Exercise.knowledge_point_id == exercise.knowledge_point_id,
+                Exercise.kind == EXERCISE_CODE,
+                Exercise.quiz_id == "",
+            )
+        )
+    ).all()
+    chain.sort(key=lambda e: (e.order_index, e.created_at, e.id))
+    idx = next((i for i, e in enumerate(chain) if e.id == exercise.id), None)
+    if idx is None or idx == 0:
+        return
+    passed = set(
+        await db.scalars(
+            select(ExerciseAttempt.exercise_id).where(
+                ExerciseAttempt.exercise_id.in_([e.id for e in chain[: idx + 1]]),
+                ExerciseAttempt.passed.is_(True),
+            )
+        )
+    )
+    if chain[idx - 1].id not in passed and exercise.id not in passed:
+        raise PermissionError("先通过上一关，才能挑战本关")
 
 
 def _choice_fail_hint(exercise: Exercise) -> str:
@@ -415,11 +399,6 @@ async def delete_exercise(db: AsyncSession, exercise_id: str) -> None:
         raise LookupError("练习题不存在")
     await db.execute(
         ExerciseAttempt.__table__.delete().where(ExerciseAttempt.exercise_id == exercise.id)
-    )
-    await db.execute(
-        ReviewCard.__table__.delete().where(
-            ReviewCard.exercise_id == exercise.id, ReviewCard.state == "new"
-        )
     )
     await db.execute(Exercise.__table__.delete().where(Exercise.id == exercise.id))
     await db.commit()

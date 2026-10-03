@@ -1,4 +1,4 @@
-// 练习抽屉：按知识点分组的做题面板 + 随堂小测（跨知识点组卷）（PRD §5.10）
+// 闯关练习抽屉：按知识点分组的关卡链 + 随堂小测（跨知识点组卷）（PRD §5.10）
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -36,8 +36,33 @@ export default function ExerciseDrawer({ documentId, kps, exercises, focusKpId, 
       list.push(e);
       m.set(e.knowledge_point_id, list);
     }
+    // 每个知识点内：代码关按闯关顺序在前，其余题型按时间在后
+    for (const list of m.values()) {
+      list.sort((a, b) => {
+        const aLadder = a.kind === "code" && !a.quiz_id ? 0 : 1;
+        const bLadder = b.kind === "code" && !b.quiz_id ? 0 : 1;
+        if (aLadder !== bLadder) return aLadder - bLadder;
+        return (
+          a.order_index - b.order_index ||
+          a.created_at.localeCompare(b.created_at) ||
+          a.id.localeCompare(b.id)
+        );
+      });
+    }
     return m;
   }, [exercises]);
+
+  // 代码关在各自知识点链内的关卡序号（1 起）
+  const levelById = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const list of byKp.values()) {
+      let n = 0;
+      for (const e of list) {
+        if (e.kind === "code" && !e.quiz_id) m.set(e.id, ++n);
+      }
+    }
+    return m;
+  }, [byKp]);
 
   // 从知识点浮层进入时滚到对应分组
   useEffect(() => {
@@ -91,13 +116,20 @@ export default function ExerciseDrawer({ documentId, kps, exercises, focusKpId, 
     onError: (e) => alert((e as Error).message),
   });
 
+  const ladder = exercises.filter((e) => e.kind === "code" && !e.quiz_id);
+  const cleared = ladder.filter((e) => e.ever_passed).length;
   const total = exercises.length;
 
   return (
     <div className="fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg sm:w-[420px]">
       <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">📝 练习{total > 0 && `（${total}）`}</span>
+          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">🎮 闯关练习{total > 0 && `（${total}）`}</span>
+          {ladder.length > 0 && (
+            <span className={`text-xs font-medium ${cleared === ladder.length ? "text-green-600 dark:text-green-400" : "text-gray-400 dark:text-gray-500"}`}>
+              已通关 {cleared}/{ladder.length} 关
+            </span>
+          )}
           {kps.length > 0 && (
             <Button
               variant="ghost"
@@ -142,7 +174,7 @@ export default function ExerciseDrawer({ documentId, kps, exercises, focusKpId, 
                     <ExerciseCard key={e.id} exercise={e} documentId={documentId} />
                   ))}
                 </div>
-                <p className="text-[10px] text-gray-400 dark:text-gray-500">全部通过后可删除本卷重新生成；错题会自动进入复习队列。</p>
+                <p className="text-[10px] text-gray-400 dark:text-gray-500">全部通过后可删除本卷重新生成；错题自动进错题本。</p>
               </>
             ) : (
               <>
@@ -183,7 +215,7 @@ export default function ExerciseDrawer({ documentId, kps, exercises, focusKpId, 
           </div>
         )}
         {kps.length === 0 && (
-          <p className="mt-8 text-center text-xs text-gray-400 dark:text-gray-500">本章还没有知识点，生成文档后即可出练习</p>
+          <p className="mt-8 text-center text-xs text-gray-400 dark:text-gray-500">本章还没有知识点，生成文档后即可闯关</p>
         )}
         {kps.map((kp) => {
           const list = byKp.get(kp.id) ?? [];
@@ -220,14 +252,14 @@ export default function ExerciseDrawer({ documentId, kps, exercises, focusKpId, 
                   ) : list.length > 0 ? (
                     "↻ 重新生成"
                   ) : (
-                    "＋ 生成练习"
+                    "＋ 生成关卡"
                   )}
                 </Button>
               </div>
               {list.length > 0 && (
                 <div className="space-y-2">
                   {list.map((e) => (
-                    <ExerciseCard key={e.id} exercise={e} documentId={documentId} />
+                    <ExerciseCard key={e.id} exercise={e} documentId={documentId} level={levelById.get(e.id)} />
                   ))}
                 </div>
               )}
