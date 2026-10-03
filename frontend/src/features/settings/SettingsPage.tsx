@@ -44,7 +44,6 @@ export default function SettingsPage() {
     reminder_enabled: true,
     reminder_time: "20:00",
     highlight_colors: {},
-    github_repo: "",
   });
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
@@ -370,16 +369,6 @@ export default function SettingsPage() {
             onChange={(e) => setPrefs({ ...prefs, reminder_time: e.target.value })}
             disabled={!prefs.reminder_enabled}
             className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 text-sm text-gray-800 dark:text-gray-200 disabled:opacity-50"
-          />
-        </div>
-        <div className="mt-3">
-          <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-            GitHub 仓库（更新检查用，格式 owner/repo；留空用内置默认）
-          </label>
-          <Input
-            value={prefs.github_repo}
-            onChange={(e) => setPrefs({ ...prefs, github_repo: e.target.value })}
-            placeholder="zxxhz/LearnFlow（默认，留空即用）"
           />
         </div>
         <div className="mt-3">

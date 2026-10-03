@@ -1,6 +1,6 @@
 """更新检查（PRD 实现备注 15）：查询 GitHub Releases 最新版并与 APP_VERSION 比较。
 
-- 仓库来源：设置页偏好 github_repo（owner/repo）→ 回落环境变量 APP_GITHUB_REPO
+- 仓库来源：环境变量 APP_GITHUB_REPO → 内置默认 zxxhz/LearnFlow（无需配置）
 - 非阻塞：短超时（5s），任何失败都优雅降级为不可用，绝不影响应用启动与使用
 - 节流：自动检查（打开应用时前端触发）1 小时内不重复请求；设置页按钮可强制刷新
 """
@@ -11,7 +11,6 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import APP_VERSION, settings as app_settings
-from app.services.review import get_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +54,10 @@ async def fetch_latest_release(repo: str) -> dict:
     }
 
 
-async def _effective_repo(db: AsyncSession) -> str:
-    prefs = await get_preferences(db)
-    repo = (prefs.get("github_repo") or "").strip()
-    if repo:
-        return repo.strip("/")
-    cfg_repo = (app_settings.github_repo or "").strip()
-    return cfg_repo.strip("/")
+def _effective_repo() -> str:
+    """仓库来源：环境变量 APP_GITHUB_REPO → 内置默认 zxxhz/LearnFlow。
+    （用户偏好里的 github_repo 设置已移除：默认仓库即官方仓库，老库存量键忽略。）"""
+    return (app_settings.github_repo or "").strip().strip("/")
 
 
 async def check_update(db: AsyncSession, force: bool = False) -> dict:
@@ -75,7 +71,7 @@ async def check_update(db: AsyncSession, force: bool = False) -> dict:
         return _cache["result"]
 
     result: dict = {"has_update": False, "current": APP_VERSION}
-    repo = await _effective_repo(db)
+    repo = _effective_repo()
     if not repo:
         result["error"] = "未配置仓库（设置页填 GitHub 仓库，或设置 APP_GITHUB_REPO）"
         _cache.update(checked_at=now, result=result)

@@ -124,7 +124,6 @@ export interface Preferences {
   reminder_enabled: boolean;
   reminder_time: string;
   highlight_colors: Partial<Record<AnnotationColor, string>>;
-  github_repo: string;
 }
 
 export interface SceneLLMConfig {

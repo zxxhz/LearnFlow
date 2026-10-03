@@ -28,7 +28,7 @@ const ROWS: { key: RuntimeComponentName; title: string; desc: string; installLab
   },
 ];
 
-function Row({ name, state }: { name: RuntimeComponentName; state?: InstallState }) {
+function Row({ name, state, installable }: { name: RuntimeComponentName; state?: InstallState; installable: boolean }) {
   const qc = useQueryClient();
   const start = useMutation({
     mutationFn: (c: RuntimeComponentName) => api.runtime.install(c),
@@ -41,6 +41,14 @@ function Row({ name, state }: { name: RuntimeComponentName; state?: InstallState
   });
   const meta = status?.installed && status.source !== "none" ? SOURCE_META[status.source] : null;
   const busy = state?.state === "downloading" || state?.state === "extracting";
+  const row = ROWS.find((r) => r.key === name)!;
+
+  const startInstall = () => {
+    if (status?.installed && !confirm(`已检测到可用的 ${row.title}（${meta?.label ?? "已安装"}），重新下载会清空并覆盖 ${row.key === "cpp" ? "toolchains/mingw64" : "toolchains/python"} 目录，继续？`)) {
+      return;
+    }
+    start.mutate(name);
+  };
 
   return (
     <div className="rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60 p-3">
@@ -60,24 +68,27 @@ function Row({ name, state }: { name: RuntimeComponentName; state?: InstallState
         )}
         {status?.version && <span className="text-xs text-gray-500 dark:text-gray-400 dark:text-gray-400 dark:text-gray-400">{status.version}</span>}
         <span className="flex-1" />
-        {status && !status.installed && (
+        {status && installable && (
           <Button
-            variant="secondary"
+            variant={status.installed ? "ghost" : "secondary"}
             disabled={start.isPending || busy}
-            onClick={() => start.mutate(name)}
+            onClick={startInstall}
             className="!px-2.5 !py-1 text-xs"
+            title={status.installed ? "重新下载并覆盖现有版本" : undefined}
           >
             {start.isPending || busy ? (
               <>
                 <Spinner /> 下载中…
               </>
+            ) : status.installed ? (
+              "⬇ 重新下载覆盖"
             ) : (
-              ROWS.find((r) => r.key === name)!.installLabel
+              row.installLabel
             )}
           </Button>
         )}
       </div>
-      <div className="mt-0.5 text-xs text-gray-400 dark:text-gray-500 dark:text-gray-400">{ROWS.find((r) => r.key === name)!.desc}</div>
+      <div className="mt-0.5 text-xs text-gray-400 dark:text-gray-500 dark:text-gray-400">{row.desc}</div>
       {status?.path && <div className="mt-0.5 truncate text-xs text-gray-400 dark:text-gray-500 dark:text-gray-400" title={status.path}>{status.path}</div>}
       {state && busy && (
         <div className="mt-2">
@@ -127,8 +138,8 @@ export default function RuntimeEnvSection() {
         <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">当前平台（{status.platform}）不支持一键安装，请用系统包管理器安装。</p>
       )}
       <div className="mt-3 space-y-3">
-        <Row name="python" state={inst?.components.python} />
-        <Row name="cpp" state={inst?.components.cpp} />
+        <Row name="python" state={inst?.components.python} installable={status?.installable ?? true} />
+        <Row name="cpp" state={inst?.components.cpp} installable={status?.installable ?? true} />
       </div>
     </section>
   );

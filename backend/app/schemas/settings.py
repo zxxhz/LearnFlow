@@ -36,8 +36,6 @@ class Preferences(BaseModel):
     reminder_time: str = "20:00"
     # 划线高亮四色（hex），缺失/非法项回落默认
     highlight_colors: dict[str, str] = dict(DEFAULT_HL_COLORS)
-    # GitHub 仓库 owner/repo；留空回落环境变量 APP_GITHUB_REPO（PRD 实现备注 15）
-    github_repo: str = ""
 
     @field_validator("reminder_time")
     @classmethod
