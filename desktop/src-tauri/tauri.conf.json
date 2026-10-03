@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "LearnFlow",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "identifier": "com.learnflow.desktop",
   "build": {
     "frontendDist": "../dist"
@@ -42,7 +42,8 @@
         "languages": [
           "SimpChinese"
         ],
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "installerHooks": "./installer-hooks.nsh"
       }
     }
   },
