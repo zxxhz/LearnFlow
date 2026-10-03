@@ -36,7 +36,15 @@
     "resources": {
       "../../backend/dist/learnflow-backend": "backend"
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "languages": [
+          "SimpChinese"
+        ],
+        "displayLanguageSelector": false
+      }
+    }
   },
   "plugins": {
     "updater": {
