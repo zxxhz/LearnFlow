@@ -12,6 +12,9 @@ from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = [
     "aiosqlite",
+    # 题库导入（services/bank.py 函数内 import）：显式声明防漏收
+    "xlrd",
+    "openpyxl",
     "anyio._backends._asyncio",
     # matplotlib 后端运行时才选定（math.py 里 matplotlib.use("Agg")），钩子收集不到：
     # 渲染走 Agg，savefig(format="svg") 走 backend_svg

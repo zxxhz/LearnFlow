@@ -23,9 +23,9 @@ export function Button({
   const styles: Record<ButtonVariant, string> = {
     primary: "bg-brand-600 text-white hover:bg-brand-700 disabled:bg-brand-200",
     secondary:
-      "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:opacity-50",
+      "border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50 disabled:opacity-50",
     danger: "bg-red-600 text-white hover:bg-red-700 disabled:opacity-50",
-    ghost: "text-gray-600 hover:bg-gray-100 disabled:opacity-50",
+    ghost: "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50",
   };
   return (
     <button
@@ -45,7 +45,7 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...rest}
-      className={`w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 ${className}`}
+      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-brand-400 focus:ring-1 focus:ring-brand-500 ${className}`}
     />
   );
 }
@@ -57,7 +57,7 @@ export function Textarea(
   return (
     <textarea
       {...rest}
-      className={`w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 ${className}`}
+      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-brand-400 focus:ring-1 focus:ring-brand-500 ${className}`}
     />
   );
 }
@@ -67,7 +67,7 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
       {...rest}
-      className={`w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm outline-none focus:border-brand-500 ${className}`}
+      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-brand-400 ${className}`}
     />
   );
 }
@@ -80,11 +80,11 @@ export function Badge({
   color?: "gray" | "green" | "blue" | "red" | "amber";
 }) {
   const styles = {
-    gray: "bg-gray-100 text-gray-600",
-    green: "bg-green-100 text-green-700",
+    gray: "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400",
+    green: "bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400",
     blue: "bg-blue-100 text-blue-700",
-    red: "bg-red-100 text-red-700",
-    amber: "bg-amber-100 text-amber-700",
+    red: "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400",
+    amber: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400",
   };
   return (
     <span
@@ -98,7 +98,7 @@ export function Badge({
 export function Spinner({ className = "" }: { className?: string }) {
   return (
     <span
-      className={`inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-300 border-t-brand-600 ${className}`}
+      className={`inline-block h-4 w-4 animate-spin rounded-full border-2 border-gray-300 dark:border-gray-600 border-t-brand-600 ${className}`}
     />
   );
 }
@@ -124,12 +124,12 @@ export function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className={`w-full ${width} rounded-xl bg-white p-5 shadow-xl`}>
+      <div className={`w-full ${width} rounded-xl bg-white dark:bg-gray-900 p-5 shadow-xl`}>
         <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-base font-semibold text-gray-900">{title}</h3>
+          <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600"
+            className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
           >
             ✕
           </button>
@@ -155,7 +155,7 @@ export function ConfirmDialog({
 }) {
   return (
     <Modal open={open} onClose={onCancel} title={title} width="max-w-sm">
-      <p className="text-sm text-gray-600">{message}</p>
+      <p className="text-sm text-gray-600 dark:text-gray-400">{message}</p>
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="secondary" onClick={onCancel}>
           取消
@@ -182,8 +182,8 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
       <div className="text-4xl">{icon}</div>
-      <div className="text-sm font-medium text-gray-700">{title}</div>
-      {hint && <div className="max-w-sm text-xs text-gray-400">{hint}</div>}
+      <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{title}</div>
+      {hint && <div className="max-w-sm text-xs text-gray-400 dark:text-gray-500">{hint}</div>}
       {action}
     </div>
   );
@@ -191,5 +191,5 @@ export function EmptyState({
 
 export function ErrorText({ children }: { children?: ReactNode }) {
   if (!children) return null;
-  return <p className="mt-1 text-xs text-red-600">{children}</p>;
+  return <p className="mt-1 text-xs text-red-600 dark:text-red-400">{children}</p>;
 }

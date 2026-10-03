@@ -24,18 +24,18 @@ export default function NewCoursePage() {
 
   return (
     <div className="mx-auto max-w-2xl p-8">
-      <Link to="/" className="text-sm text-gray-500 hover:text-brand-600">
+      <Link to="/" className="text-sm text-gray-500 dark:text-gray-400 hover:text-brand-600">
         ← 返回首页
       </Link>
-      <h1 className="mt-4 text-2xl font-bold text-gray-900">新建课程</h1>
-      <p className="mt-1 text-sm text-gray-500">
+      <h1 className="mt-4 text-2xl font-bold text-gray-900 dark:text-gray-100">新建课程</h1>
+      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
         描述你想学的内容，AI 会先生成课程大纲供你确认，再逐章生成文档（约需几分钟）。
       </p>
 
-      <div className="mt-6 space-y-4 rounded-xl border border-gray-200 bg-white p-6">
+      <div className="mt-6 space-y-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6">
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">
-            学习主题 <span className="text-red-500">*</span>
+          <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+            学习主题 <span className="text-red-500 dark:text-red-400">*</span>
           </label>
           <Input
             value={topic}
@@ -44,7 +44,7 @@ export default function NewCoursePage() {
           />
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">当前基础</label>
+          <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">当前基础</label>
           <Select value={level} onChange={(e) => setLevel(e.target.value)}>
             <option value="">不填写</option>
             <option value="零基础">零基础</option>
@@ -54,7 +54,7 @@ export default function NewCoursePage() {
           </Select>
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">范围与期望（可选）</label>
+          <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">范围与期望（可选）</label>
           <Textarea
             rows={4}
             value={scope}
@@ -63,7 +63,7 @@ export default function NewCoursePage() {
           />
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">期望章节数（可选）</label>
+          <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">期望章节数（可选）</label>
           <Input
             type="number"
             min={1}
@@ -75,7 +75,7 @@ export default function NewCoursePage() {
         </div>
 
         {create.isError && (
-          <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          <div className="rounded-lg bg-red-50 dark:bg-red-900/30 p-3 text-sm text-red-700 dark:text-red-400">
             {create.error.message}
             {String(create.error.message).includes("尚未配置") && (
               <>

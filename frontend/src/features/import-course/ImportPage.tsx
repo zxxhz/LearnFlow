@@ -68,17 +68,17 @@ export default function ImportPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-8">
-      <Link to="/" className="text-sm text-gray-500 hover:text-brand-600">
+      <Link to="/" className="text-sm text-gray-500 dark:text-gray-400 hover:text-brand-600">
         ← 返回首页
       </Link>
-      <h1 className="mt-4 text-2xl font-bold text-gray-900">导入 Markdown 课程</h1>
-      <p className="mt-1 text-sm text-gray-500">
+      <h1 className="mt-4 text-2xl font-bold text-gray-900 dark:text-gray-100">导入 Markdown 课程</h1>
+      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
         选择你自己的 .md 文件，系统按标题结构自动识别章节；原文保留、不做改写，并提取知识点进入复习循环。
       </p>
 
       {/* 文件选择 */}
       <div
-        className="mt-6 cursor-pointer rounded-xl border-2 border-dashed border-gray-300 bg-white p-8 text-center transition hover:border-brand-500"
+        className="mt-6 cursor-pointer rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 p-8 text-center transition hover:border-brand-500"
         onClick={() => fileRef.current?.click()}
         onDragOver={(e) => e.preventDefault()}
         onDrop={(e) => {
@@ -95,42 +95,42 @@ export default function ImportPage() {
           onChange={(e) => pick(e.target.files)}
         />
         <div className="text-3xl">📄</div>
-        <p className="mt-2 text-sm text-gray-600">
+        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
           点击选择或拖入 Markdown 文件（可多选，单文件 ≤ 5MB，最多 20 个）
         </p>
         {files && (
-          <p className="mt-1 text-xs text-gray-400">
+          <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
             已选择 {files.length} 个：{files.map((f) => f.name).join("、")}
           </p>
         )}
       </div>
 
       {analyze.isPending && (
-        <div className="mt-4 flex items-center gap-2 text-sm text-gray-600">
+        <div className="mt-4 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
           <Spinner /> 正在识别章节结构…
         </div>
       )}
-      {analyzeErr && <p className="mt-3 text-sm text-red-600">{analyzeErr}</p>}
+      {analyzeErr && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{analyzeErr}</p>}
 
       {/* 识别结果预览 */}
       {analysis && (
         <div className="mt-6 space-y-4">
-          <div className="rounded-xl border border-gray-200 bg-white p-4">
-            <label className="mb-1 block text-sm font-medium text-gray-700">课程标题</label>
+          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">课程标题</label>
             <Input value={title} onChange={(e) => setTitle(e.target.value)} />
             {analysis.title_from_llm && (
-              <p className="mt-1 text-xs text-gray-400">✨ 由 AI 根据章节内容拟定，可修改</p>
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">✨ 由 AI 根据章节内容拟定，可修改</p>
             )}
             {!analysis.llm_available && (
-              <p className="mt-1 text-amber-600">
+              <p className="mt-1 text-amber-600 dark:text-amber-400">
                 未配置 LLM：将跳过知识点提取（文档本身正常导入），可稍后在设置页配置后重新导入。
               </p>
             )}
           </div>
 
-          <div className="rounded-xl border border-gray-200 bg-white p-4">
+          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm font-semibold text-gray-900">
+              <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                 识别到 {chapters.length} 个章节（勾选要导入的部分，标题可改）
               </span>
               <Button variant="ghost" className="text-xs" onClick={() => fileRef.current?.click()}>
@@ -141,7 +141,7 @@ export default function ImportPage() {
               {chapters.map((c, i) => (
                 <div
                   key={`${c.file_index}-${c.start_line}`}
-                  className={`rounded-lg border p-3 ${c.include ? "border-gray-200" : "border-gray-100 opacity-50"}`}
+                  className={`rounded-lg border p-3 ${c.include ? "border-gray-200 dark:border-gray-700" : "border-gray-100 dark:border-gray-800 opacity-50"}`}
                 >
                   <div className="flex items-center gap-2">
                     <input
@@ -154,7 +154,7 @@ export default function ImportPage() {
                       onChange={(e) => updateChapter(i, { title: e.target.value })}
                     />
                   </div>
-                  <div className="mt-1 flex items-center gap-2 pl-6 text-xs text-gray-400">
+                  <div className="mt-1 flex items-center gap-2 pl-6 text-xs text-gray-400 dark:text-gray-500">
                     <Badge>{analysis.files[c.file_index]?.name}</Badge>
                     {c.points.length > 0 && <span>小节：{c.points.join(" / ")}</span>}
                   </div>
@@ -176,7 +176,7 @@ export default function ImportPage() {
               `导入 ${included} 个章节`
             )}
           </Button>
-          {confirm.isError && <p className="text-center text-sm text-red-600">{confirm.error.message}</p>}
+          {confirm.isError && <p className="text-center text-sm text-red-600 dark:text-red-400">{confirm.error.message}</p>}
         </div>
       )}
     </div>

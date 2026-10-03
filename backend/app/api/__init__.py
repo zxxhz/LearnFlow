@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api import (
     annotations,
+    bank,
     conversations,
     courses,
     dashboard,
@@ -11,9 +12,13 @@ from app.api import (
     feynman,
     imports,
     math,
+    quiz,
     review,
     runtime,
+    search,
     settings,
+    study,
+    system,
 )
 
 api_router = APIRouter(prefix="/api")
@@ -28,5 +33,10 @@ api_router.include_router(review.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(execution.router)
 api_router.include_router(exercise.router)
+api_router.include_router(quiz.router)
+api_router.include_router(bank.router)
 api_router.include_router(math.router)
 api_router.include_router(runtime.router)
+api_router.include_router(study.router)
+api_router.include_router(search.router)
+api_router.include_router(system.router)

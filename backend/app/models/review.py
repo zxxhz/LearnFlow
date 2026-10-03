@@ -8,7 +8,7 @@ from app.models.base import utcnow_iso
 class ReviewCard(UUIDPk, UserIdMixin, Timestamps, Base):
     __tablename__ = "review_cards"
 
-    # knowledge_point / annotation / feynman_gap / manual
+    # knowledge_point / annotation / feynman_gap / manual / exercise
     source_type: Mapped[str] = mapped_column(String(20), default="manual")
     knowledge_point_id: Mapped[str | None] = mapped_column(
         String(32), ForeignKey("knowledge_points.id"), nullable=True, index=True
@@ -16,6 +16,8 @@ class ReviewCard(UUIDPk, UserIdMixin, Timestamps, Base):
     annotation_id: Mapped[str | None] = mapped_column(
         String(32), ForeignKey("annotations.id"), nullable=True, index=True
     )
+    # 练习错题卡溯源：练习做错时自动成卡，练习做对时自动按「记得」过一遍
+    exercise_id: Mapped[str] = mapped_column(String(32), default="", index=True)
     front: Mapped[str] = mapped_column(Text)
     back: Mapped[str] = mapped_column(Text, default="")
 

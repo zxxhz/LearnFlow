@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# 运行时数据（自包含，复制即备份；不入库）
+backend/data/
+.env
+
+# Node
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# 前端构建产物 → 输出到 backend/app/static，同样不入库
+backend/app/static/
+
+# PyInstaller 打包产物与中间文件
+backend/dist/
+backend/build/
+
+# ZCode 本地会话产物
+.zcode/
+
+# 其他
+.DS_Store
+*.log
+
+# 一键安装的便携工具链（缓存性质，不入库）
+backend/toolchains/
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+bower_components/
+jspm_packages/
+site-packages/
+venv/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+cdk.out/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）

@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
@@ -93,3 +95,26 @@ async def stats(db: AsyncSession = Depends(get_db)):
     data = await review_service.review_stats(db)
     data.pop("_now", None)
     return ReviewStatsOut(**data)
+
+
+@router.get("/export.csv", response_class=Response)
+async def export_anki_csv(db: AsyncSession = Depends(get_db)):
+    """复习卡导出 Anki 兼容 CSV（front/back/tags，含未到期卡，不含挂起卡）。"""
+    import csv
+    import io
+
+    cards = (
+        await db.scalars(
+            select(ReviewCard).where(ReviewCard.suspended == False).order_by(ReviewCard.created_at)  # noqa: E712
+        )
+    ).all()
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["front", "back", "tags"])
+    for c in cards:
+        writer.writerow([c.front.replace("\n", "<br>"), c.back.replace("\n", "<br>"), c.source_type])
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="learnflow-review-cards.csv"'},
+    )

@@ -45,12 +45,21 @@ async def init_db() -> None:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # 轻量迁移：create_all 不给已存在的表加列（SQLite 无 ADD COLUMN IF NOT EXISTS）
+        # 轻量迁移：create_all 不给已存在的表加列（SQLite 无 ADD COLUMN IF NOT EXISTS）。
+        # 只追加、不改动历史条目；老库重放时列已存在会报错，按幂等忽略。
         from sqlalchemy import text
 
-        for ddl in (
+        migrations = [
+            # v0.1.6 文档来源
             "ALTER TABLE documents ADD COLUMN source VARCHAR(20) DEFAULT 'generated'",
-        ):
+            # v0.2.1 练习新题型与组卷归属
+            "ALTER TABLE exercises ADD COLUMN options TEXT DEFAULT ''",
+            "ALTER TABLE exercises ADD COLUMN answer TEXT DEFAULT ''",
+            "ALTER TABLE exercises ADD COLUMN quiz_id VARCHAR(32) DEFAULT ''",
+            # v0.2.1 练习错题自动成卡的溯源
+            "ALTER TABLE review_cards ADD COLUMN exercise_id VARCHAR(32) DEFAULT ''",
+        ]
+        for ddl in migrations:
             try:
                 await conn.execute(text(ddl))
             except Exception:  # 列已存在

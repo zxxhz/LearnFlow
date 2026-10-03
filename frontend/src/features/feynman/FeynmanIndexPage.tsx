@@ -31,19 +31,19 @@ function StartPanel({ kpId }: { kpId: string }) {
   });
 
   if (isLoading) return <Spinner className="h-5 w-5" />;
-  if (!ctx) return <p className="text-sm text-red-600">知识点不存在</p>;
+  if (!ctx) return <p className="text-sm text-red-600 dark:text-red-400">知识点不存在</p>;
 
   return (
-    <div className="rounded-xl border border-brand-200 bg-brand-50/40 p-5">
-      <h2 className="text-base font-semibold text-gray-900">费曼讲解：{ctx.knowledge_point.title}</h2>
-      <p className="mt-1 text-sm text-gray-600">{ctx.knowledge_point.summary}</p>
-      <p className="mt-1 text-xs text-gray-400">
+    <div className="rounded-xl border border-brand-200 dark:border-brand-700 bg-brand-50 dark:bg-brand-900/40 p-5">
+      <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">费曼讲解：{ctx.knowledge_point.title}</h2>
+      <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">{ctx.knowledge_point.summary}</p>
+      <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
         来自《{ctx.course_title}》·{" "}
         <Link to={`/read/${ctx.document_id}`} className="underline">
           {ctx.document_title}
         </Link>
       </p>
-      <p className="mt-3 text-sm font-medium text-gray-700">用自己的话讲解这个知识点，就像讲给完全不懂的人听：</p>
+      <p className="mt-3 text-sm font-medium text-gray-700 dark:text-gray-300">用自己的话讲解这个知识点，就像讲给完全不懂的人听：</p>
       <Textarea
         className="mt-2"
         rows={8}
@@ -51,7 +51,7 @@ function StartPanel({ kpId }: { kpId: string }) {
         onChange={(e) => setExplanation(e.target.value)}
         placeholder="写下你的讲解。可以用自己的话、举例子、写公式（$...$）和代码。AI 会扮演一个好奇的学生向你追问。"
       />
-      {start.isError && <p className="mt-2 text-sm text-red-600">{start.error.message}</p>}
+      {start.isError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{start.error.message}</p>}
       <Button
         className="mt-3"
         disabled={!explanation.trim() || start.isPending}
@@ -85,8 +85,8 @@ export default function FeynmanIndexPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-8">
-      <h1 className="text-2xl font-bold text-gray-900">费曼讲解</h1>
-      <p className="mt-1 text-sm text-gray-500">
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">费曼讲解</h1>
+      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
         用自己的话讲解知识点，AI 扮演学生追问，暴露理解漏洞。
         {kpId && " 在下方开始新讲解。"}
       </p>
@@ -97,7 +97,7 @@ export default function FeynmanIndexPage() {
         </div>
       )}
 
-      <h2 className="mt-8 mb-3 text-base font-semibold text-gray-900">历史会话</h2>
+      <h2 className="mt-8 mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">历史会话</h2>
       {isLoading ? (
         <Spinner className="h-5 w-5" />
       ) : !sessions || sessions.length === 0 ? (
@@ -114,16 +114,16 @@ export default function FeynmanIndexPage() {
               <Link
                 key={s.id}
                 to={`/feynman/${s.id}`}
-                className="flex items-center justify-between rounded-xl border border-gray-200 bg-white px-4 py-3 transition hover:border-brand-500"
+                className="flex items-center justify-between rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-3 transition hover:border-brand-500"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium text-gray-800">
+                    <span className="truncate text-sm font-medium text-gray-800 dark:text-gray-200">
                       {s.knowledge_point_title ?? s.knowledge_point_id.slice(0, 8)}
                     </span>
                     <Badge color={badge.color}>{badge.label}</Badge>
                   </div>
-                  <div className="mt-0.5 text-xs text-gray-400">
+                  <div className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">
                     {s.round_count} 轮追问 · {new Date(s.updated_at).toLocaleString("zh-CN")}
                     {s.evaluation && ` · 评分 ${s.evaluation.score}`}
                   </div>
@@ -132,10 +132,10 @@ export default function FeynmanIndexPage() {
                   <span
                     className={`text-lg font-bold ${
                       s.evaluation.score >= 85
-                        ? "text-green-600"
+                        ? "text-green-600 dark:text-green-400"
                         : s.evaluation.score >= 60
-                          ? "text-amber-600"
-                          : "text-red-600"
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-red-600 dark:text-red-400"
                     }`}
                   >
                     {s.evaluation.score}

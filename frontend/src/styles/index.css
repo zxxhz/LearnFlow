@@ -16,6 +16,12 @@ mark.hl-blue   { background-color: var(--hl-blue, rgba(191, 219, 254, 0.8)); }
 mark.hl-pink   { background-color: var(--hl-pink, rgba(251, 207, 232, 0.8)); }
 mark.hl-fuzzy  { box-shadow: inset 0 -2px 0 rgba(148, 163, 184, 0.8); }
 mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
+/* 深色下降低高亮饱和度、提高文字对比 */
+.dark mark.hl-yellow { background-color: rgba(250, 204, 21, 0.32); }
+.dark mark.hl-green  { background-color: rgba(74, 222, 128, 0.28); }
+.dark mark.hl-blue   { background-color: rgba(96, 165, 250, 0.3); }
+.dark mark.hl-pink   { background-color: rgba(244, 114, 182, 0.3); }
+.dark mark.hl-fuzzy  { box-shadow: inset 0 -2px 0 rgba(148, 163, 184, 0.7); }
 
 /* 代码块整块标注（PRD §5.2：代码块标注整块呈现） */
 .ann-code-flag {
@@ -25,30 +31,45 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
 }
 
 /* ===== 阅读器排版 ===== */
-.doc-content { @apply text-[15px] leading-7 text-gray-800; }
-.doc-content h1 { @apply mt-2 mb-5 text-3xl font-bold text-gray-900; }
-.doc-content h2 { @apply mt-8 mb-4 border-b border-gray-100 pb-1 text-2xl font-semibold text-gray-900; }
-.doc-content h3 { @apply mt-6 mb-3 text-xl font-semibold text-gray-900; }
-.doc-content h4 { @apply mt-4 mb-2 text-lg font-semibold text-gray-800; }
+.doc-content { @apply text-[15px] leading-7 text-gray-800 dark:text-gray-200; }
+.doc-content h1 { @apply mt-2 mb-5 text-3xl font-bold text-gray-900 dark:text-gray-100; }
+.doc-content h2 { @apply mt-8 mb-4 border-b border-gray-100 dark:border-gray-800 pb-1 text-2xl font-semibold text-gray-900 dark:text-gray-100; }
+.doc-content h3 { @apply mt-6 mb-3 text-xl font-semibold text-gray-900 dark:text-gray-100; }
+.doc-content h4 { @apply mt-4 mb-2 text-lg font-semibold text-gray-800 dark:text-gray-200; }
 .doc-content p { @apply my-3; }
 .doc-content ul { @apply my-3 list-disc pl-6; }
 .doc-content ol { @apply my-3 list-decimal pl-6; }
 .doc-content li { @apply my-1; }
-.doc-content blockquote { @apply my-4 border-l-4 border-brand-200 bg-brand-50/50 px-4 py-1 text-gray-600; }
+.doc-content blockquote { @apply my-4 border-l-4 border-brand-200 dark:border-brand-700 bg-brand-50 dark:bg-brand-900/50 px-4 py-1 text-gray-600 dark:text-gray-400; }
 .doc-content table { @apply my-4 w-full border-collapse text-sm; }
-.doc-content th, .doc-content td { @apply border border-gray-200 px-3 py-1.5 text-left; }
-.doc-content th { @apply bg-gray-50 font-medium; }
-.doc-content hr { @apply my-6 border-gray-100; }
-.doc-content a { @apply text-brand-600 underline; }
+.doc-content th, .doc-content td { @apply border border-gray-200 dark:border-gray-700 px-3 py-1.5 text-left; }
+.doc-content th { @apply bg-gray-50 dark:bg-gray-800/50 font-medium; }
+.doc-content hr { @apply my-6 border-gray-100 dark:border-gray-800; }
+.doc-content a { @apply text-brand-600 dark:text-brand-400 underline; }
 .doc-content .katex-display { @apply my-4 overflow-x-auto py-1; }
+/* KaTeX 深色下保持正文色（默认继承即可，这里显式声明防止外部样式覆盖） */
+.dark .doc-content .katex { color: #e5e7eb; }
 
 /* 代码块容器 */
 .code-block pre {
   @apply overflow-x-auto rounded-lg bg-[#f6f8fa] p-4 text-[13px] leading-6;
 }
+.dark .code-block pre { background-color: #0d1117; }
 .code-block pre code { @apply bg-transparent p-0; }
 /* 带头部栏（语言徽章/运行编辑按钮）时顶部直角，与头部贴合 */
 .code-block.with-header pre { @apply rounded-t-none; }
+
+/* Shiki 双主题：defaultColor 输出浅色令牌，深色模式切到 --shiki-dark 变量 */
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark) !important;
+  background-color: transparent !important;
+  font-style: var(--shiki-dark-font-style) !important;
+  font-weight: var(--shiki-dark-font-weight) !important;
+}
+.dark .shiki {
+  background-color: var(--shiki-dark-bg) !important;
+}
 
 /* Jupyter 式可编辑代码块：高亮层在下、透明输入层叠在上，两层排版必须逐像素一致 */
 .code-cell pre,
@@ -61,10 +82,12 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
 .code-cell pre {
   @apply overflow-x-hidden rounded-b-lg bg-[#f6f8fa];
 }
+.dark .code-cell pre { background-color: #0d1117; }
 .code-cell textarea {
   @apply absolute inset-0 h-full w-full resize-none overflow-hidden bg-transparent text-transparent outline-none;
   caret-color: #111827;
 }
+.dark .code-cell textarea { caret-color: #e5e7eb; }
 .code-cell textarea::selection { background-color: rgba(99, 102, 241, 0.22); }
 
 /* 对话消息里的轻量 markdown */
@@ -72,11 +95,14 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
 .msg-md ul { @apply my-1.5 list-disc pl-5; }
 .msg-md ol { @apply my-1.5 list-decimal pl-5; }
 .msg-md pre { @apply my-2 overflow-x-auto rounded-md bg-gray-900 p-3 text-xs text-gray-100; }
-.msg-md code { @apply rounded bg-gray-100 px-1 py-0.5 text-[13px]; }
+.msg-md code { @apply rounded bg-gray-100 dark:bg-gray-800 px-1 py-0.5 text-[13px]; }
 .msg-md pre code { @apply bg-transparent p-0 text-inherit; }
 .msg-md .katex-display { @apply overflow-x-auto; }
 
 /* 滚动条美化 */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb { @apply rounded-full bg-gray-300; }
+::-webkit-scrollbar-thumb { @apply rounded-full bg-gray-300 dark:bg-gray-600; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* 深色下的颜色输入框与选中态 */
+.dark ::selection { background-color: rgba(99, 102, 241, 0.4); }

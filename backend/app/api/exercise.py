@@ -34,6 +34,12 @@ async def list_exercises(document_id: str, db: AsyncSession = Depends(get_db)):
     return await exercise_service.list_for_document(db, document_id)
 
 
+@router.get("/wrongbook", response_model=list[ExerciseOut])
+async def wrongbook(db: AsyncSession = Depends(get_db)):
+    """错题本：最近一次作答未通过的题（跨课程，含小测题）。"""
+    return await exercise_service.wrongbook(db)
+
+
 @router.post("/{exercise_id}/submit", response_model=ExerciseAttemptOut)
 async def submit(exercise_id: str, body: ExerciseSubmitRequest, db: AsyncSession = Depends(get_db)):
     try:

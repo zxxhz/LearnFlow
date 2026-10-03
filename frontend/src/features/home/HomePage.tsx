@@ -18,8 +18,8 @@ export default function HomePage() {
     <div className="mx-auto max-w-5xl p-8">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">我的课程</h1>
-          <p className="mt-1 text-sm text-gray-500">学 · 问 · 讲 · 复习，一个闭环</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">我的课程</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">学 · 问 · 讲 · 复习，一个闭环</p>
         </div>
         <div className="flex items-center gap-3">
           {queue && queue.due_total + queue.new_quota_remaining > 0 && (
@@ -54,21 +54,21 @@ export default function HomePage() {
               <div
                 key={c.id}
                 onClick={() => navigate(`/courses/${c.id}`)}
-                className="cursor-pointer rounded-xl border border-gray-200 bg-white p-5 transition hover:border-brand-500 hover:shadow-md"
+                className="cursor-pointer rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 transition hover:border-brand-500 hover:shadow-md"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <h3 className="text-base font-semibold text-gray-900">{c.title}</h3>
+                  <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{c.title}</h3>
                   <Badge color={badge.color}>{badge.label}</Badge>
                 </div>
-                <p className="mt-1 line-clamp-2 text-sm text-gray-500">{c.topic}</p>
-                <div className="mt-4 flex items-center justify-between text-xs text-gray-400">
+                <p className="mt-1 line-clamp-2 text-sm text-gray-500 dark:text-gray-400">{c.topic}</p>
+                <div className="mt-4 flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
                   <span>
                     {c.total_chapters > 0 ? `进度 ${c.done_chapters}/${c.total_chapters} 章` : "尚未生成"}
                   </span>
                   <span>{new Date(c.updated_at).toLocaleDateString("zh-CN")}</span>
                 </div>
                 {c.total_chapters > 0 && (
-                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
                     <div
                       className="h-full rounded-full bg-brand-500"
                       style={{ width: `${Math.round((c.done_chapters / c.total_chapters) * 100)}%` }}

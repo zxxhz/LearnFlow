@@ -7,6 +7,7 @@ import { subscribeSSE } from "../../lib/sse";
 import type { ChapterProgress, ProgressSSEEvent } from "../../lib/types";
 import { Badge, Button, ConfirmDialog, EmptyState, Spinner } from "../../components/ui";
 import OutlineEditor from "./OutlineEditor";
+import CourseAskPanel from "./CourseAskPanel";
 
 const DOC_STATUS: Record<string, { label: string; color: "gray" | "green" | "blue" | "red" | "amber" }> = {
   pending: { label: "待生成", color: "gray" },
@@ -107,19 +108,31 @@ export default function CourseDetailPage() {
 
   return (
     <div className="mx-auto max-w-4xl p-8">
-      <Link to="/" className="text-sm text-gray-500 hover:text-brand-600">
+      <Link to="/" className="text-sm text-gray-500 dark:text-gray-400 hover:text-brand-600">
         ← 返回首页
       </Link>
       <div className="mt-3 flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold text-gray-900">{course.title}</h1>
-        <Button variant="secondary" onClick={() => setConfirmDel(true)}>
-          删除课程
-        </Button>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{course.title}</h1>
+        <div className="flex items-center gap-2">
+          {course.status !== "draft" && (
+            <>
+              <Button variant="ghost" className="text-xs" onClick={() => api.courses.exportMd(course.id).catch((e) => alert(e.message))}>
+                ⬇ 导出 MD
+              </Button>
+              <Button variant="ghost" className="text-xs" onClick={() => api.courses.exportHtml(course.id).catch((e) => alert(e.message))}>
+                ⬇ 导出 HTML
+              </Button>
+            </>
+          )}
+          <Button variant="secondary" onClick={() => setConfirmDel(true)}>
+            删除课程
+          </Button>
+        </div>
       </div>
-      <p className="mt-1 text-sm text-gray-500">{course.topic}</p>
+      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{course.topic}</p>
 
       {doneBanner && course.status !== "generating" && (
-        <div className="mt-4 rounded-lg bg-green-50 px-4 py-3 text-sm text-green-700">
+        <div className="mt-4 rounded-lg bg-green-50 dark:bg-green-900/30 px-4 py-3 text-sm text-green-700 dark:text-green-400">
           生成完成，可以开始学习了。
           {firstDone && (
             <Link to={`/read/${firstDone.document_id}`} className="ml-2 underline">
@@ -131,15 +144,15 @@ export default function CourseDetailPage() {
 
       {course.status === "draft" ? (
         <div className="mt-6">
-          <h2 className="mb-3 text-base font-semibold text-gray-900">课程大纲（可编辑）</h2>
+          <h2 className="mb-3 text-base font-semibold text-gray-900 dark:text-gray-100">课程大纲（可编辑）</h2>
           <OutlineEditor course={course} />
         </div>
       ) : (
         <div className="mt-6">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-gray-900">章节</h2>
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">章节</h2>
             <div className="flex items-center gap-4">
-              <label className="flex items-center gap-1.5 text-xs text-gray-600" title="关闭后，本章重新生成时不再自动创建知识点复习卡">
+              <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400" title="关闭后，本章重新生成时不再自动创建知识点复习卡">
                 <input
                   type="checkbox"
                   checked={course.course_settings?.auto_create_cards ?? true}
@@ -152,7 +165,7 @@ export default function CourseDetailPage() {
                 />
                 自动生成知识点复习卡
               </label>
-              <span className="text-sm text-gray-500">
+              <span className="text-sm text-gray-500 dark:text-gray-400">
                 {doneCount}/{docs.length} 章
                 {course.status === "generating" && (
                   <Badge color="blue">
@@ -163,7 +176,7 @@ export default function CourseDetailPage() {
             </div>
           </div>
           {docs.length > 0 && (
-            <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+            <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
               <div
                 className="h-full rounded-full bg-brand-500 transition-all"
                 style={{ width: `${docs.length ? Math.round((doneCount / docs.length) * 100) : 0}%` }}
@@ -177,13 +190,13 @@ export default function CourseDetailPage() {
               return (
                 <div
                   key={d.document_id}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3"
+                  className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-3"
                 >
                   <div className="flex min-w-0 items-center gap-3">
-                    <span className="w-6 text-center text-sm font-semibold text-gray-400">{d.chapter_index}</span>
-                    <span className="truncate text-sm font-medium text-gray-800">{d.title}</span>
+                    <span className="w-6 text-center text-sm font-semibold text-gray-400 dark:text-gray-500">{d.chapter_index}</span>
+                    <span className="truncate text-sm font-medium text-gray-800 dark:text-gray-200">{d.title}</span>
                     {d.status === "failed" && (
-                      <span className="truncate text-xs text-red-500">{d.error}</span>
+                      <span className="truncate text-xs text-red-500 dark:text-red-400">{d.error}</span>
                     )}
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
@@ -204,6 +217,11 @@ export default function CourseDetailPage() {
               );
             })}
           </div>
+          {doneCount > 0 && (
+            <div className="mt-4">
+              <CourseAskPanel courseId={course.id} />
+            </div>
+          )}
         </div>
       )}
       <ConfirmDialog

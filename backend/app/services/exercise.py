@@ -1,12 +1,23 @@
-"""练习服务（PRD §5.10）：按知识点出题 + 代码题自动判定 + 概念题 LLM 评分。"""
+"""练习服务（PRD §5.10）：按知识点出题 + 代码题自动判定 + 概念题 LLM 评分。
+
+闭环扩展：练习做错自动成 SM-2 复习卡（source=exercise），同一题做对时把
+这张卡自动按「记得」过一遍（仅当卡片未到期或还是新卡时才补一次）。
+"""
 import json
 import logging
+from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Course, Document, Exercise, ExerciseAttempt, KnowledgePoint
-from app.models.exercise import ATTEMPT_GRADED, EXERCISE_CODE, EXERCISE_CONCEPT
+from app.models import Course, Document, Exercise, ExerciseAttempt, KnowledgePoint, ReviewCard, ReviewLog
+from app.models.exercise import (
+    ATTEMPT_GRADED,
+    EXERCISE_CHOICE,
+    EXERCISE_CODE,
+    EXERCISE_CONCEPT,
+    EXERCISE_FILL,
+)
 from app.schemas.exercise import (
     ConceptGrade,
     ExerciseAttemptOut,
@@ -16,12 +27,13 @@ from app.schemas.exercise import (
 from app.services.execution.runner import run_code
 from app.services.llm import create_adapter_from_settings, get_llm_temperature
 from app.services.prompt import render_prompt
-from app.services.review import get_preferences
+from app.services.review import apply_sm2, get_preferences, parse_dt
 from app.services.sections_text import get_section_text
 
 logger = logging.getLogger(__name__)
 
 EXERCISE_TITLE_MAX = 200
+CHOICE_LETTERS = "ABCDEFG"
 
 
 def normalize_output(s: str) -> str:
@@ -32,6 +44,26 @@ def normalize_output(s: str) -> str:
     while lines and not lines[-1]:
         lines.pop()
     return "\n".join(lines)
+
+
+def _norm_fill(s: str) -> str:
+    """填空判定用归一化：在 stdout 归一化基础上再去掉全部空白并忽略大小写。"""
+    return "".join(normalize_output(s).split()).lower()
+
+
+def _norm_choice(s: str) -> str:
+    """选项作答归一化：只接受字母（大小写不限、容忍首尾噪音）。
+    不做数字→字母映射：选项文本本身可能是数字，"4" 无法区分是文本还是序号。"""
+    t = s.strip().upper()
+    return t[:1] if t and t[0] in CHOICE_LETTERS else t
+
+
+def _fill_answers(answer_json: str) -> list[str]:
+    try:
+        data = json.loads(answer_json)
+        return [str(x) for x in data] if isinstance(data, list) else [str(data)]
+    except (json.JSONDecodeError, TypeError):
+        return [answer_json] if answer_json else []
 
 
 async def _kp_context(db: AsyncSession, kp: KnowledgePoint) -> tuple[Document, list[str]]:
@@ -58,7 +90,75 @@ async def delete_kp_exercises(db: AsyncSession, kp_ids: list[str]) -> None:
         await db.execute(
             ExerciseAttempt.__table__.delete().where(ExerciseAttempt.exercise_id.in_(old_ids))
         )
+        # 错题卡随练习一并删除（卡片未复习过才删，已入调度的不动以免打断节奏）
+        await db.execute(
+            ReviewCard.__table__.delete().where(
+                ReviewCard.exercise_id.in_(old_ids), ReviewCard.state == "new"
+            )
+        )
         await db.execute(Exercise.__table__.delete().where(Exercise.id.in_(old_ids)))
+
+
+async def _exercise_card(db: AsyncSession, exercise: Exercise) -> ReviewCard | None:
+    return (
+        await db.scalars(
+            select(ReviewCard).where(
+                ReviewCard.exercise_id == exercise.id, ReviewCard.source_type == "exercise"
+            )
+        )
+    ).first()
+
+
+async def _ensure_wrong_card(db: AsyncSession, exercise: Exercise) -> ReviewCard:
+    """练习做错 → 保证存在一张对应的复习卡（已有则不再重复建）。"""
+    card = await _exercise_card(db, exercise)
+    if card:
+        return card
+    if exercise.kind == EXERCISE_CODE:
+        back = exercise.expected_output
+    elif exercise.kind == EXERCISE_CHOICE:
+        idx = CHOICE_LETTERS.find(exercise.answer.strip().upper()[:1])
+        opts = json.loads(exercise.options) if exercise.options else []
+        back = f"{exercise.answer}（{opts[idx] if 0 <= idx < len(opts) else '?'}）"
+    elif exercise.kind == EXERCISE_FILL:
+        back = " / ".join(_fill_answers(exercise.answer))
+    else:
+        back = exercise.reference_answer
+    card = ReviewCard(
+        source_type="exercise",
+        knowledge_point_id=exercise.knowledge_point_id,
+        exercise_id=exercise.id,
+        front=exercise.title,
+        back=back,
+    )
+    db.add(card)
+    return card
+
+
+async def _auto_review_passed_card(db: AsyncSession, exercise: Exercise, now: datetime) -> None:
+    """同一题做对时，把对应的错题卡按「记得」(q=4) 过一遍；仅限新卡或已到期卡。"""
+    card = await _exercise_card(db, exercise)
+    if card is None or card.suspended:
+        return
+    due = parse_dt(card.due_at) or now
+    if card.state != "new" and due > now:
+        return
+    if card.introduced_at is None:
+        card.introduced_at = now.isoformat()
+    state_before = card.state
+    apply_sm2(card, 4, now)
+    db.add(
+        ReviewLog(
+            card_id=card.id,
+            reviewed_at=now.isoformat(),
+            quality=4,
+            interval_days=card.interval_days,
+            ease_factor=card.easiness_factor,
+            state_before=state_before,
+            state_after=card.state,
+        )
+    )
+    card.last_reviewed_at = now.isoformat()
 
 
 async def generate_for_kp(
@@ -107,6 +207,8 @@ async def generate_for_kp(
             skeleton_code=item.skeleton_code if item.kind == EXERCISE_CODE else "",
             expected_output=item.expected_output if item.kind == EXERCISE_CODE else "",
             reference_answer=item.reference_answer if item.kind == EXERCISE_CONCEPT else "",
+            options=json.dumps(item.options, ensure_ascii=False) if item.kind == EXERCISE_CHOICE else "",
+            answer=item.stored_answer(),
         )
         db.add(row)
         saved.append(row)
@@ -117,14 +219,19 @@ async def generate_for_kp(
 
 
 async def list_for_document(db: AsyncSession, document_id: str) -> list[ExerciseOut]:
-    """文档下全部练习，附知识点标题与最近一次作答。"""
+    """文档下全部练习（不含小测题），附知识点标题与最近一次作答。"""
     exercises = (
         await db.scalars(
             select(Exercise)
-            .where(Exercise.document_id == document_id)
+            .where(Exercise.document_id == document_id, Exercise.quiz_id == "")
             .order_by(Exercise.knowledge_point_id, Exercise.created_at)
         )
     ).all()
+    return await _attach_meta(db, exercises)
+
+
+async def _attach_meta(db: AsyncSession, exercises: list[Exercise]) -> list[ExerciseOut]:
+    """批量附知识点标题 + 每题最新一次作答（窗口函数每题只取一条）。"""
     ex_ids = [e.id for e in exercises]
     kp_ids = {e.knowledge_point_id for e in exercises}
     kp_titles: dict[str, str] = {}
@@ -135,14 +242,21 @@ async def list_for_document(db: AsyncSession, document_id: str) -> list[Exercise
             kp_titles[k.id] = k.title
     latest: dict[str, ExerciseAttempt] = {}
     if ex_ids:
-        for a in (
-            await db.scalars(
-                select(ExerciseAttempt)
-                .where(ExerciseAttempt.exercise_id.in_(ex_ids))
-                .order_by(ExerciseAttempt.created_at)
-            )
-        ).all():
-            latest[a.exercise_id] = a  # 后写覆盖 → 每题留最新一次
+        rn = func.row_number().over(
+            partition_by=ExerciseAttempt.exercise_id,
+            order_by=ExerciseAttempt.created_at.desc(),
+        ).label("rn")
+        sq = (
+            select(ExerciseAttempt.id.label("aid"), rn)
+            .where(ExerciseAttempt.exercise_id.in_(ex_ids))
+            .subquery()
+        )
+        latest_ids = (await db.scalars(select(sq.c.aid).where(sq.c.rn == 1))).all()
+        if latest_ids:
+            for a in (
+                await db.scalars(select(ExerciseAttempt).where(ExerciseAttempt.id.in_(latest_ids)))
+            ).all():
+                latest[a.exercise_id] = a
     out: list[ExerciseOut] = []
     for e in exercises:
         o = ExerciseOut.model_validate(e)
@@ -154,8 +268,29 @@ async def list_for_document(db: AsyncSession, document_id: str) -> list[Exercise
     return out
 
 
+async def wrongbook(db: AsyncSession) -> list[ExerciseOut]:
+    """错题本：最近一次作答未通过的题（含小测题），按作答时间倒序。"""
+    rn = func.row_number().over(
+        partition_by=ExerciseAttempt.exercise_id,
+        order_by=ExerciseAttempt.created_at.desc(),
+    ).label("rn")
+    sq = select(ExerciseAttempt.id.label("aid"), ExerciseAttempt.exercise_id.label("eid"), rn).subquery()
+    failed_ids = (
+        await db.scalars(
+            select(sq.c.eid).where(sq.c.rn == 1).order_by(sq.c.aid.desc()).limit(200)
+        )
+    ).all()
+    if not failed_ids:
+        return []
+    exercises = (
+        await db.scalars(select(Exercise).where(Exercise.id.in_(failed_ids)))
+    ).all()
+    exercises.sort(key=lambda e: failed_ids.index(e.id))
+    return await _attach_meta(db, exercises)
+
+
 async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAttempt:
-    """提交作答：代码题运行并对比 stdout 判定；概念题 LLM 评分。"""
+    """提交作答：代码题运行对比 stdout；单选/填空本地判定；概念题 LLM 评分。"""
     exercise = await db.get(Exercise, exercise_id)
     if exercise is None:
         raise LookupError("练习题不存在")
@@ -177,6 +312,32 @@ async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAt
             passed=passed,
             feedback="" if passed else _code_fail_hint(result["status"]),
         )
+    elif exercise.kind == EXERCISE_CHOICE:
+        passed = _norm_choice(content) == exercise.answer.strip().upper()[:1]
+        attempt = ExerciseAttempt(
+            exercise_id=exercise.id,
+            content=content,
+            status=ATTEMPT_GRADED,
+            exit_code=None,
+            stdout="",
+            stderr="",
+            duration_ms=None,
+            passed=passed,
+            feedback="" if passed else _choice_fail_hint(exercise),
+        )
+    elif exercise.kind == EXERCISE_FILL:
+        passed = _norm_fill(content) in (_norm_fill(a) for a in _fill_answers(exercise.answer))
+        attempt = ExerciseAttempt(
+            exercise_id=exercise.id,
+            content=content,
+            status=ATTEMPT_GRADED,
+            exit_code=None,
+            stdout="",
+            stderr="",
+            duration_ms=None,
+            passed=passed,
+            feedback="" if passed else f"参考答案：{' / '.join(_fill_answers(exercise.answer))}",
+        )
     else:
         grade = await _grade_concept(db, exercise, content)
         attempt = ExerciseAttempt(
@@ -191,9 +352,25 @@ async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAt
             feedback=f"（{grade.score} 分）{grade.feedback}".strip(),
         )
 
+    # 练习 ↔ 复习闭环：做错成卡，做对把已有卡按「记得」过一遍
+    if passed:
+        await _auto_review_passed_card(db, exercise, datetime.now(timezone.utc))
+    else:
+        await _ensure_wrong_card(db, exercise)
+
     db.add(attempt)
     await db.commit()
     return attempt
+
+
+def _choice_fail_hint(exercise: Exercise) -> str:
+    idx = CHOICE_LETTERS.find(exercise.answer.strip().upper()[:1])
+    try:
+        opts = json.loads(exercise.options)
+    except json.JSONDecodeError:
+        opts = []
+    correct = opts[idx] if 0 <= idx < len(opts) else exercise.answer
+    return f"正确答案：{exercise.answer}（{correct}）"
 
 
 def _code_fail_hint(status: str) -> str:
@@ -233,6 +410,11 @@ async def delete_exercise(db: AsyncSession, exercise_id: str) -> None:
     await db.execute(
         ExerciseAttempt.__table__.delete().where(ExerciseAttempt.exercise_id == exercise.id)
     )
+    await db.execute(
+        ReviewCard.__table__.delete().where(
+            ReviewCard.exercise_id == exercise.id, ReviewCard.state == "new"
+        )
+    )
     await db.execute(Exercise.__table__.delete().where(Exercise.id == exercise.id))
     await db.commit()
 
@@ -245,3 +427,6 @@ async def purge_document_exercises(db: AsyncSession, document_ids: list[str]) ->
         await db.scalars(select(Exercise).where(Exercise.document_id.in_(document_ids)))
     ).all()
     await delete_kp_exercises(db, list({e.knowledge_point_id for e in exercises}))
+    from app.models import Quiz
+
+    await db.execute(Quiz.__table__.delete().where(Quiz.document_id.in_(document_ids)))

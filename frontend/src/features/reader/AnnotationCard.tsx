@@ -118,17 +118,17 @@ export default function AnnotationCard({
   });
 
   return (
-    <div className="fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 bg-white shadow-xl sm:w-[420px]">
+    <div className="fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl sm:w-[420px]">
       {/* 头部：颜色切换 */}
-      <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3">
+      <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3">
         <div className="flex items-center gap-2">
           <span
             className="h-3.5 w-3.5 rounded-full"
             style={{ backgroundColor: hlColors[annotation.color] }}
           />
-          <span className="text-sm font-semibold text-gray-900">划线提问</span>
+          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">划线提问</span>
           {annotation.status === "orphan" && (
-            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] text-red-600">
+            <span className="rounded-full bg-red-100 dark:bg-red-900/40 px-2 py-0.5 text-[10px] text-red-600 dark:text-red-400">
               原文已变更
             </span>
           )}
@@ -147,7 +147,7 @@ export default function AnnotationCard({
           ))}
           <button
             onClick={onClose}
-            className="ml-2 text-gray-400 hover:text-gray-600"
+            className="ml-2 text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
             title="关闭"
           >
             ✕
@@ -156,13 +156,13 @@ export default function AnnotationCard({
       </div>
 
       {/* 划线原文 */}
-      <div className="border-b border-gray-100 px-4 py-3">
+      <div className="border-b border-gray-100 dark:border-gray-800 px-4 py-3">
         <div className="flex gap-2">
           <span
             className="w-1 shrink-0 rounded"
             style={{ backgroundColor: hlColors[annotation.color] }}
           />
-          <p className="line-clamp-6 flex-1 text-sm text-gray-600">{annotation.exact}</p>
+          <p className="line-clamp-6 flex-1 text-sm text-gray-600 dark:text-gray-400">{annotation.exact}</p>
         </div>
         <div className="mt-2 flex items-center gap-1 text-xs">
           <Button variant="ghost" className="text-xs" onClick={() => onJump(annotation)}>
@@ -181,7 +181,7 @@ export default function AnnotationCard({
           </Button>
           <Button
             variant="ghost"
-            className="ml-auto text-xs text-red-500"
+            className="ml-auto text-xs text-red-500 dark:text-red-400"
             onClick={() => setConfirmDel(true)}
           >
             删除
@@ -209,7 +209,7 @@ export default function AnnotationCard({
             </div>
           </div>
         )}
-        {makeCard.isSuccess && <p className="mt-1 text-xs text-green-600">已加入复习队列 ✓</p>}
+        {makeCard.isSuccess && <p className="mt-1 text-xs text-green-600 dark:text-green-400">已加入复习队列 ✓</p>}
       </div>
 
       {/* 对话区 */}
@@ -221,7 +221,7 @@ export default function AnnotationCard({
             <div key={m.id} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
               <div
                 className={`max-w-[90%] rounded-xl px-3.5 py-2 ${
-                  m.role === "user" ? "bg-brand-600 text-white" : "border border-gray-200 bg-gray-50"
+                  m.role === "user" ? "bg-brand-600 text-white" : "border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50"
                 }`}
               >
                 {m.role === "user" ? (
@@ -237,17 +237,17 @@ export default function AnnotationCard({
           <div className="flex justify-start">
             <div
               ref={streamRef}
-              className="msg-md max-w-[90%] rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2"
+              className="msg-md max-w-[90%] rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3.5 py-2"
               dangerouslySetInnerHTML={{ __html: md.render(streaming) }}
             />
           </div>
         )}
-        {streamErr && <p className="text-center text-xs text-red-600">{streamErr}</p>}
+        {streamErr && <p className="text-center text-xs text-red-600 dark:text-red-400">{streamErr}</p>}
         <div ref={bottomRef} />
       </div>
 
       {/* 输入区 */}
-      <div className="border-t border-gray-100 p-3">
+      <div className="border-t border-gray-100 dark:border-gray-800 p-3">
         <Textarea
           rows={2}
           value={input}

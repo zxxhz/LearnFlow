@@ -32,9 +32,44 @@ import type {
   RuntimeComponentName,
   RuntimeStatus,
   UpdateCheckResult,
+  BackupItem,
+  AccessInfo,
+  Quiz,
+  SearchHit,
+  Bank,
+  BankAnalysis,
+  BankAttemptResult,
+  BankRound,
+  BankStats,
+  BankWrongQuestion,
 } from "./types";
 
 const BASE = "/api";
+
+/** 触发浏览器下载后端导出的文件（Content-Disposition 命名）。 */
+export async function downloadFile(path: string): Promise<void> {
+  const res = await fetch(BASE + path);
+  if (!res.ok) {
+    let detail = `下载失败（HTTP ${res.status}）`;
+    try {
+      const j = await res.json();
+      if (j?.detail) detail = typeof j.detail === "string" ? j.detail : detail;
+    } catch {
+      /* 非 JSON 错误体 */
+    }
+    throw new Error(detail);
+  }
+  const dispo = res.headers.get("content-disposition") || "";
+  const m = dispo.match(/filename\*=UTF-8''([^;]+)/);
+  const name = m ? decodeURIComponent(m[1]) : "export";
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const isForm = typeof FormData !== "undefined" && opts.body instanceof FormData;
@@ -74,6 +109,7 @@ export const api = {
     testLlm: () => request<LLMTestResult>("/settings/llm/test", { method: "POST" }),
     openDataDir: () =>
       request<{ ok: boolean }>("/settings/open-data-dir", { method: "POST" }),
+    ollamaModels: () => request<{ models: string[] }>("/settings/llm/ollama/models"),
   },
   math: {
     render: (body: { expressions: string; x_min?: number; x_max?: number }) =>
@@ -114,6 +150,57 @@ export const api = {
       request<Course>(`/courses/${id}/generate`, { method: "POST" }),
     list: () => request<CourseListItem[]>("/courses"),
     get: (id: string) => request<CourseDetail>(`/courses/${id}`),
+    exportMd: (id: string) => downloadFile(`/courses/${id}/export.md`),
+    exportHtml: (id: string) => downloadFile(`/courses/${id}/export.html`),
+    ask: (id: string, question: string, onDelta: (text: string) => void, onDone: (err?: string) => void) => {
+      const ctrl = new AbortController();
+      fetch(`${BASE}/courses/${id}/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+        signal: ctrl.signal,
+      })
+        .then(async (res) => {
+          if (!res.ok || !res.body) {
+            let detail = `请求失败（HTTP ${res.status}）`;
+            try {
+              const j = await res.json();
+              if (j?.detail) detail = j.detail;
+            } catch {
+              /* ignore */
+            }
+            onDone(detail);
+            return;
+          }
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const parts = buf.split("\n\n");
+            buf = parts.pop() ?? "";
+            for (const p of parts) {
+              const line = p.trim();
+              if (!line.startsWith("data: ")) continue;
+              try {
+                const ev = JSON.parse(line.slice(6));
+                if (ev.type === "delta") onDelta(ev.text);
+                else if (ev.type === "error") onDone(ev.detail);
+                else if (ev.type === "done") onDone();
+              } catch {
+                /* 忽略坏帧 */
+              }
+            }
+          }
+          onDone();
+        })
+        .catch((e) => {
+          if ((e as Error).name !== "AbortError") onDone((e as Error).message);
+        });
+      return () => ctrl.abort();
+    },
     update: (id: string, body: { auto_create_cards?: boolean }) =>
       request<Course>(`/courses/${id}`, { method: "PATCH", ...jsonBody(body) }),
     importAnalyze: (files: File[]) => {
@@ -153,12 +240,59 @@ export const api = {
       request<Exercise[]>("/exercises/generate", { method: "POST", ...jsonBody(body) }),
     list: (documentId: string) =>
       request<Exercise[]>(`/exercises?document_id=${documentId}`),
+    wrongbook: () => request<Exercise[]>("/exercises/wrongbook"),
     submit: (id: string, content: string) =>
       request<ExerciseAttempt>(`/exercises/${id}/submit`, {
         method: "POST",
         ...jsonBody({ content }),
       }),
     remove: (id: string) => request<{ ok: boolean }>(`/exercises/${id}`, { method: "DELETE" }),
+  },
+  quizzes: {
+    generate: (body: { document_id: string; kp_ids: string[]; language: string; per_kp?: number }) =>
+      request<Quiz>("/quizzes/generate", { method: "POST", ...jsonBody(body) }),
+    list: (documentId: string) => request<Quiz[]>(`/quizzes?document_id=${documentId}`),
+    remove: (id: string) => request<{ ok: boolean }>(`/quizzes/${id}`, { method: "DELETE" }),
+  },
+  search: (q: string) => request<{ query: string; results: SearchHit[] }>(`/search?q=${encodeURIComponent(q)}`),
+  banks: {
+    analyze: (file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return request<BankAnalysis>("/banks/import/analyze", { method: "POST", body: fd });
+    },
+    import: (file: File, name?: string) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      if (name) fd.append("name", name);
+      return request<Bank>("/banks/import", { method: "POST", body: fd });
+    },
+    list: () => request<Bank[]>("/banks"),
+    stats: (id: string) => request<BankStats>(`/banks/${id}/stats`),
+    round: (id: string, mode: "random" | "wrong", size: number) =>
+      request<BankRound>(`/banks/${id}/round`, {
+        method: "POST",
+        ...jsonBody({ mode, size }),
+      }),
+    attempt: (questionId: string, content: string[]) =>
+      request<BankAttemptResult>("/banks/attempts", {
+        method: "POST",
+        ...jsonBody({ question_id: questionId, content }),
+      }),
+    wrong: (id: string) => request<BankWrongQuestion[]>(`/banks/${id}/wrong`),
+    remove: (id: string) => request<{ ok: boolean }>(`/banks/${id}`, { method: "DELETE" }),
+  },
+  study: {
+    ping: (seconds: number) => request<{ ok: boolean }>("/study/ping", { method: "POST", ...jsonBody({ seconds }) }),
+  },
+  system: {
+    accessInfo: () => request<AccessInfo>("/system/access-info"),
+    rotateToken: () => request<AccessInfo>("/system/access-token/rotate", { method: "POST" }),
+    backup: () => request<BackupItem>("/system/backup", { method: "POST" }),
+    backups: () => request<BackupItem[]>("/system/backups"),
+    restore: (name: string) =>
+      request<{ ok: boolean; message: string }>(`/system/backups/${name}/restore`, { method: "POST" }),
+    deleteBackup: (name: string) => request<{ ok: boolean }>(`/system/backups/${name}`, { method: "DELETE" }),
   },
   annotations: {
     listForDoc: (docId: string) =>
@@ -221,6 +355,7 @@ export const api = {
   },
   review: {
     queueToday: () => request<ReviewQueue>("/review/queue/today"),
+    exportCsv: () => downloadFile("/review/export.csv"),
     grade: (cardId: string, quality: 1 | 3 | 4 | 5) =>
       request<ReviewCard>(`/review/cards/${cardId}/grade`, {
         method: "POST",

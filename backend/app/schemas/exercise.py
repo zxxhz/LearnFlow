@@ -1,10 +1,17 @@
+import json
+
 from pydantic import BaseModel, field_validator
 
-from app.models.exercise import EXERCISE_CODE, EXERCISE_CONCEPT
+from app.models.exercise import EXERCISE_CODE, EXERCISE_CHOICE, EXERCISE_CONCEPT, EXERCISE_FILL
 from app.schemas.common import ORMModel
 from app.schemas.execution import LANG_ALIASES
 
 MAX_ATTEMPT_LENGTH = 64_000
+CHOICE_LETTERS = "ABCDEFG"
+
+
+def _normalize_lang_str(v: str) -> str:
+    return LANG_ALIASES.get(v.strip().lower(), "")
 
 
 class ExerciseGenerateRequest(BaseModel):
@@ -17,7 +24,7 @@ class ExerciseGenerateRequest(BaseModel):
     @field_validator("language")
     @classmethod
     def _normalize_lang(cls, v: str) -> str:
-        lang = LANG_ALIASES.get(v.strip().lower(), "")
+        lang = _normalize_lang_str(v)
         if not lang:
             raise ValueError(f"暂不支持 {v}，练习目前支持 Python 和 C++")
         return lang
@@ -26,6 +33,33 @@ class ExerciseGenerateRequest(BaseModel):
     @classmethod
     def _clamp_count(cls, v: int) -> int:
         return max(0, min(4, int(v)))
+
+
+class QuizGenerateRequest(BaseModel):
+    """随堂小测：跨知识点组卷（只出可自动判定的题型）。"""
+
+    document_id: str
+    kp_ids: list[str]
+    language: str = "python"
+    per_kp: int = 1
+
+    @field_validator("kp_ids")
+    @classmethod
+    def _require_kps(cls, v: list[str]) -> list[str]:
+        kps = [k for k in v if k.strip()]
+        if not kps:
+            raise ValueError("至少选择一个知识点")
+        return kps
+
+    @field_validator("language")
+    @classmethod
+    def _normalize_lang(cls, v: str) -> str:
+        return _normalize_lang_str(v) or "python"
+
+    @field_validator("per_kp")
+    @classmethod
+    def _clamp_per_kp(cls, v: int) -> int:
+        return max(1, min(3, int(v)))
 
 
 class ExerciseSubmitRequest(BaseModel):
@@ -66,14 +100,29 @@ class ExerciseOut(ORMModel):
     skeleton_code: str
     expected_output: str
     reference_answer: str
+    options: str = ""
+    answer: str = ""
+    quiz_id: str = ""
     created_at: str
     kp_title: str | None = None
     latest_attempt: ExerciseAttemptOut | None = None
 
 
+class QuizOut(BaseModel):
+    id: str
+    document_id: str
+    course_id: str
+    title: str
+    kp_ids: list[str]
+    created_at: str
+    items: list[ExerciseOut] = []
+    total: int = 0
+    correct: int = 0
+
+
 # ---- LLM 结构化输出目标 ----
 
-_KINDS = {EXERCISE_CODE, EXERCISE_CONCEPT}
+_KINDS = {EXERCISE_CODE, EXERCISE_CONCEPT, EXERCISE_CHOICE, EXERCISE_FILL}
 
 
 class ExerciseDraftItem(BaseModel):
@@ -86,6 +135,10 @@ class ExerciseDraftItem(BaseModel):
     skeleton_code: str = ""
     expected_output: str = ""
     reference_answer: str = ""
+    options: list[str] = []
+    answer: str | list[str] = ""
+    # 仅组卷出题用：题目归属的知识点序号（1-based，0/缺省 = 由服务端分配）
+    kp_index: int = 0
 
     @field_validator("kind")
     @classmethod
@@ -98,15 +151,44 @@ class ExerciseDraftItem(BaseModel):
     @field_validator("language")
     @classmethod
     def _normalize_lang(cls, v: str) -> str:
-        return LANG_ALIASES.get(v.strip().lower(), "")
+        return _normalize_lang_str(v)
 
     def resolved_language(self, fallback: str) -> str:
         """代码题语言缺失时回落出题请求里选的语言。"""
         return self.language or fallback
 
+    def _answer_list(self) -> list[str]:
+        if isinstance(self.answer, list):
+            return [str(x) for x in self.answer]
+        return [self.answer] if self.answer else []
+
+    def answer_letter(self) -> str:
+        """单选题答案归一成大写字母（接受 "A"/"a"/"2" 等形式）。"""
+        for raw in self._answer_list():
+            t = str(raw).strip().upper().rstrip(".")
+            if t in CHOICE_LETTERS:
+                return t
+            if t.isdigit():
+                i = int(t)
+                if 1 <= i <= len(CHOICE_LETTERS):
+                    return CHOICE_LETTERS[i - 1]
+        return ""
+
+    def stored_answer(self) -> str:
+        """落库形态：choice → 字母；fill → JSON 数组（可接受答案）；其余空串。"""
+        if self.kind == EXERCISE_CHOICE:
+            return self.answer_letter()
+        if self.kind == EXERCISE_FILL:
+            return json.dumps([a for a in self._answer_list() if str(a).strip()], ensure_ascii=False)
+        return ""
+
     def is_complete(self) -> bool:
         if self.kind == EXERCISE_CODE:
             return bool(self.task.strip() and self.skeleton_code.strip() and self.expected_output.strip())
+        if self.kind == EXERCISE_CHOICE:
+            return bool(self.task.strip() and len(self.options) >= 2 and self.answer_letter())
+        if self.kind == EXERCISE_FILL:
+            return bool(self.task.strip() and any(str(a).strip() for a in self._answer_list()))
         return bool(self.task.strip() and self.reference_answer.strip())
 
 

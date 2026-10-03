@@ -32,6 +32,8 @@ DEFAULT_PREFS = {
     "feynman_max_rounds": 4,
     "auto_create_cards": True,
     "exercises_per_kp": 2,
+    "reminder_enabled": True,
+    "reminder_time": "20:00",
 }
 
 
@@ -140,3 +142,18 @@ async def update_check(force: bool = False, db: AsyncSession = Depends(get_db)):
     from app.services.update import check_update
 
     return await check_update(db, force=force)
+
+
+@router.get("/llm/ollama/models")
+async def ollama_models():
+    """探测本机 Ollama 的已装模型（OpenAI 兼容端点，API Key 随便填非空即可）。"""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as client:
+            r = await client.get("http://localhost:11434/api/tags")
+            r.raise_for_status()
+            models = [m.get("name") for m in r.json().get("models", []) if m.get("name")]
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail="未检测到本机 Ollama（http://localhost:11434）。请确认已安装并运行 `ollama serve`。") from None
+    return {"models": models}

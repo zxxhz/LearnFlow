@@ -42,7 +42,7 @@ export default function SelectionToolbar({
   return (
     <div
       ref={ref}
-      className="fixed z-40 flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2 py-1.5 shadow-lg"
+      className="fixed z-40 flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5 shadow-lg"
     >
       <button
         disabled={busy}
@@ -54,11 +54,11 @@ export default function SelectionToolbar({
       <button
         disabled={busy}
         onClick={onHighlight}
-        className="rounded-md px-2 py-1 text-xs text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+        className="rounded-md px-2 py-1 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50"
       >
         高亮
       </button>
-      <span className="mx-1 h-4 w-px bg-gray-200" />
+      <span className="mx-1 h-4 w-px bg-gray-200 dark:bg-gray-700" />
       {COLORS.map((c) => (
         <button
           key={c}

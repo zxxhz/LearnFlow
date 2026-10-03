@@ -7,6 +7,8 @@ from app.models.base import Base, CreatedAt, UUIDPk, UserIdMixin
 # kind 取值
 EXERCISE_CODE = "code"  # 补全代码骨架，stdout 对比自动判定
 EXERCISE_CONCEPT = "concept"  # 概念简答题，LLM 按参考答案评分
+EXERCISE_CHOICE = "choice"  # 单选题，对比选项字母自动判定
+EXERCISE_FILL = "fill"  # 填空题，归一化后对比参考答案自动判定
 
 ATTEMPT_GRADED = "graded"  # 概念题作答完成评分
 
@@ -22,11 +24,17 @@ class Exercise(UUIDPk, UserIdMixin, CreatedAt, Base):
     kind: Mapped[str] = mapped_column(String(20), default=EXERCISE_CODE)
     title: Mapped[str] = mapped_column(String(200))
     task_md: Mapped[str] = mapped_column(Text, default="")
-    # python / cpp（仅代码题）；概念题为空
+    # python / cpp（仅代码题）；其他题型为空
     language: Mapped[str] = mapped_column(String(20), default="")
     skeleton_code: Mapped[str] = mapped_column(Text, default="")
     expected_output: Mapped[str] = mapped_column(Text, default="")
     reference_answer: Mapped[str] = mapped_column(Text, default="")
+    # 单选题：JSON 数组 ["选项A文本", ...]；其他题型为空
+    options: Mapped[str] = mapped_column(Text, default="")
+    # 单选题：正确项字母（"A"）；填空题：JSON 数组的可接受答案列表；其他题型为空
+    answer: Mapped[str] = mapped_column(Text, default="")
+    # 非空 = 属于某次随堂小测（组卷生成），与普通练习区分展示
+    quiz_id: Mapped[str] = mapped_column(String(32), default="", index=True)
 
 
 class ExerciseAttempt(UUIDPk, UserIdMixin, CreatedAt, Base):

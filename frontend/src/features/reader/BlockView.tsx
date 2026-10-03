@@ -20,12 +20,12 @@ const RUNNABLE_LANGS = new Set(["python", "py", "python3", "cpp", "c++", "cxx", 
 const PLOT_LANGS = new Set(["plot", "math-plot", "绘图"]);
 
 const EXEC_BADGE: Record<ExecStatus, { label: string; cls: string }> = {
-  success: { label: "✅ 运行成功", cls: "text-green-700" },
-  runtime_error: { label: "❌ 运行出错", cls: "text-red-700" },
-  timeout: { label: "⏱ 运行超时（10s 上限）", cls: "text-amber-700" },
-  compile_error: { label: "🔧 编译失败", cls: "text-red-700" },
-  compiler_missing: { label: "⚠️ 未安装编译器", cls: "text-amber-700" },
-  error: { label: "❌ 沙箱异常", cls: "text-red-700" },
+  success: { label: "✅ 运行成功", cls: "text-green-700 dark:text-green-400" },
+  runtime_error: { label: "❌ 运行出错", cls: "text-red-700 dark:text-red-400" },
+  timeout: { label: "⏱ 运行超时（10s 上限）", cls: "text-amber-700 dark:text-amber-400" },
+  compile_error: { label: "🔧 编译失败", cls: "text-red-700 dark:text-red-400" },
+  compiler_missing: { label: "⚠️ 未安装编译器", cls: "text-amber-700 dark:text-amber-400" },
+  error: { label: "❌ 沙箱异常", cls: "text-red-700 dark:text-red-400" },
 };
 
 // 语言徽章：视觉上区分代码块语言（也覆盖不可运行的普通代码块）
@@ -41,7 +41,7 @@ const LANG_BADGE: Record<string, { label: string; cls: string }> = {
   "math-plot": { label: "PLOT", cls: "border-violet-300 bg-violet-50 text-violet-700" },
   绘图: { label: "PLOT", cls: "border-violet-300 bg-violet-50 text-violet-700" },
 };
-const LANG_FALLBACK = { label: "", cls: "border-gray-200 bg-gray-50 text-gray-500" };
+const LANG_FALLBACK = { label: "", cls: "border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400" };
 
 interface Props {
   block: ParsedBlock;
@@ -94,10 +94,10 @@ function collectMarkRanges(root: HTMLElement): { id: string; start: number; end:
 function ExecResultPanel({ execution }: { execution: CodeExecution }) {
   const badge = EXEC_BADGE[execution.status] ?? EXEC_BADGE.error;
   return (
-    <div className="mt-2 rounded-lg border border-gray-200 bg-gray-900/95 p-3 text-xs">
+    <div className="mt-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-900/95 p-3 text-xs">
       <div className="mb-1.5 flex items-center gap-3">
         <span className={`font-medium ${badge.cls} text-gray-100`}>{badge.label}</span>
-        <span className="text-gray-400">
+        <span className="text-gray-400 dark:text-gray-500">
           退出码 {execution.exit_code ?? "-"} · {execution.duration_ms ?? 0}ms ·{" "}
           {new Date(execution.created_at).toLocaleTimeString("zh-CN")}
         </span>
@@ -157,29 +157,29 @@ function CompilerInstallCta() {
 
   if (phase === "done") {
     return (
-      <p className="mt-1.5 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700">
+      <p className="mt-1.5 rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/30 px-3 py-2 text-xs text-green-700 dark:text-green-400">
         ✅ {message}，重新点击上方「▶ 运行」即可。
       </p>
     );
   }
   if (phase === "installing") {
     return (
-      <div className="mt-1.5 rounded-lg border border-gray-200 bg-white px-3 py-2">
-        <div className="h-1.5 overflow-hidden rounded-full bg-gray-200">
+      <div className="mt-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2">
+        <div className="h-1.5 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
           <div className="h-full rounded-full bg-brand-500 transition-all" style={{ width: `${Math.max(2, percent)}%` }} />
         </div>
-        <p className="mt-1 text-xs text-gray-500">⬇ 正在安装便携版 g++（装在软件目录，不影响系统）：{message}</p>
+        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">⬇ 正在安装便携版 g++（装在软件目录，不影响系统）：{message}</p>
       </div>
     );
   }
   return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-      <span className="text-xs text-amber-700">
+    <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/30 px-3 py-2">
+      <span className="text-xs text-amber-700 dark:text-amber-400">
         {phase === "error" ? `❌ ${message}` : "缺少 C++ 编译器？可以一键安装便携版 g++（装在软件目录，不影响系统）。"}
       </span>
       <button
         onClick={start}
-        className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-700 transition hover:bg-amber-100"
+        className="rounded-md border border-amber-300 dark:border-amber-700 bg-white dark:bg-gray-900 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400 transition hover:bg-amber-100"
       >
         {phase === "error" ? "重试安装" : "⬇ 一键安装"}
       </button>
@@ -273,7 +273,12 @@ export default function BlockView({
       let inner: string;
       try {
         const { codeToHtml } = await import("shiki");
-        inner = await codeToHtml(displayCode + "\n", { lang: lang || "text", theme: "github-light" });
+        // 双主题输出（defaultColor 用浅色令牌，深色由 index.css 的 CSS 变量切换）
+        inner = await codeToHtml(displayCode + "\n", {
+          lang: lang || "text",
+          themes: { light: "github-light", dark: "github-dark" },
+          defaultColor: "light",
+        });
       } catch {
         inner = `<pre><code>${escapeHtml(displayCode)}\n</code></pre>`;
       }
@@ -334,7 +339,7 @@ export default function BlockView({
   if (isCode) {
     return (
       <div className="relative my-3">
-        <div className="flex items-center justify-between gap-2 rounded-t-lg border border-b-0 border-gray-200 bg-gray-50 px-3 py-1.5">
+        <div className="flex items-center justify-between gap-2 rounded-t-lg border border-b-0 border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-1.5">
           <span
             className={`rounded border px-1.5 py-0.5 text-[10px] font-bold tracking-widest ${badge.cls}`}
           >
@@ -343,10 +348,10 @@ export default function BlockView({
           <div className="flex items-center gap-1.5">
             {modified && (
               <>
-                <span className="text-[10px] text-amber-600">已修改</span>
+                <span className="text-[10px] text-amber-600 dark:text-amber-400">已修改</span>
                 <button
                   onClick={() => setDraft(null)}
-                  className="rounded-md border border-gray-200 bg-white px-2 py-0.5 text-xs text-gray-600 transition hover:bg-gray-100"
+                  className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-0.5 text-xs text-gray-600 dark:text-gray-400 transition hover:bg-gray-100 dark:hover:bg-gray-800"
                   title="放弃修改，恢复文档中的原始代码"
                 >
                   ↺ 重置
@@ -388,11 +393,11 @@ export default function BlockView({
             aria-label={`${lang} 代码（可直接编辑）`}
           />
         </div>
-        {runError && <p className="mt-1 text-xs text-red-600">{runError}</p>}
-        {plotErr && <p className="mt-1 text-xs text-red-600">{plotErr}</p>}
+        {runError && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{runError}</p>}
+        {plotErr && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{plotErr}</p>}
         {plotSvg && (
-          <div className="mt-2 rounded-lg border border-gray-200 bg-white p-3">
-            <div className="mb-1.5 text-xs text-gray-400">📐 函数图像（SymPy + Matplotlib）</div>
+          <div className="mt-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3">
+            <div className="mb-1.5 text-xs text-gray-400 dark:text-gray-500">📐 函数图像（SymPy + Matplotlib）</div>
             <div className="plot-svg [&_svg]:h-auto [&_svg]:max-w-full" dangerouslySetInnerHTML={{ __html: plotSvg }} />
           </div>
         )}

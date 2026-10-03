@@ -5,6 +5,10 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import "katex/dist/katex.min.css";
 import "./styles/index.css";
+import { applyTheme, getTheme } from "./lib/theme";
+
+// 主题在首帧前应用，避免闪白/闪黑
+applyTheme(getTheme());
 
 const queryClient = new QueryClient({
   defaultOptions: {

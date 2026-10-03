@@ -40,10 +40,11 @@ _exec_lock = asyncio.Lock()  # 全局串行：本地单用户，避免资源风�
 
 if _IS_WINDOWS:
     # 沙箱子进程继承此错误模式：缺 DLL 等加载失败不再弹「系统错误」模态框
-    # （曾致 cc1plus 找不到 libwinpthread-1.dll 时弹窗挂起），而是直接以退出码失败
+    # （曾致 cc1plus 找不到 libwinpthread-1.dll 时弹窗挂起），而是直接以退出码失败；
+    # NOGPFAULTERRORBOX 让用户代码段错误时的 WER 崩溃对话框一并静默
     import ctypes
 
-    ctypes.windll.kernel32.SetErrorMode(0x0001)  # SEM_FAILCRITICALERRORS
+    ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002)  # FAILCRITICALERRORS | NOGPFAULTERRORBOX
 
 
 def _tail(data: bytes) -> str:
@@ -233,9 +234,9 @@ def run_code_sync(language: str, code: str) -> dict:
                     "stderr": _tail(f"[编译失败]\n{cerr}".encode()),
                     "duration_ms": int((time.perf_counter() - t0) * 1000),
                 }
-            # 编译器 bin 目录前置到 PATH：托管安装的 exe 需要 libstdc++ 等运行时 DLL
+            # 运行步复用同一环境：编译产物需要 libstdc++-6.dll 等 DLL，与 g++.exe 同目录
             out, err, rc, timed_out = _run_process(
-                [exe], workdir, DEFAULT_TIMEOUT_SECONDS, env=toolchain.dll_run_env(compiler)
+                [exe], workdir, DEFAULT_TIMEOUT_SECONDS, env=compile_env
             )
             duration = int((time.perf_counter() - t0) * 1000)
             status = EXEC_TIMEOUT if timed_out else (EXEC_SUCCESS if rc == 0 else EXEC_RUNTIME_ERROR)

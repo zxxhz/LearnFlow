@@ -122,6 +122,8 @@ export interface Preferences {
   feynman_max_rounds: number;
   auto_create_cards: boolean;
   exercises_per_kp: number;
+  reminder_enabled: boolean;
+  reminder_time: string;
   highlight_colors: Partial<Record<AnnotationColor, string>>;
   github_repo: string;
 }
@@ -221,7 +223,7 @@ export interface ReviewQueue {
   due_total: number;
 }
 
-export type ExerciseKind = "code" | "concept";
+export type ExerciseKind = "code" | "concept" | "choice" | "fill";
 
 export interface ExerciseAttempt {
   id: string;
@@ -248,9 +250,24 @@ export interface Exercise {
   skeleton_code: string;
   expected_output: string;
   reference_answer: string;
+  options: string;
+  answer: string;
+  quiz_id: string;
   created_at: string;
   kp_title: string | null;
   latest_attempt: ExerciseAttempt | null;
+}
+
+export interface Quiz {
+  id: string;
+  document_id: string;
+  course_id: string;
+  title: string;
+  kp_ids: string[];
+  created_at: string;
+  items: Exercise[];
+  total: number;
+  correct: number;
 }
 
 export interface DayCount {
@@ -282,6 +299,32 @@ export interface WeakPoint {
   document_id: string;
   lapses: number;
   gap_count: number;
+  exercise_fail: number;
+  mastery: number;
+}
+
+export interface RetentionBucket {
+  label: string;
+  total: number;
+  passed: number;
+}
+
+export interface StudyDayOut {
+  date: string;
+  minutes: number;
+}
+
+export interface SceneUsage {
+  scene: string;
+  calls: number;
+  tokens: number;
+}
+
+export interface LLMUsageSummary {
+  calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  by_scene: SceneUsage[];
 }
 
 export interface DashboardSummary {
@@ -289,6 +332,35 @@ export interface DashboardSummary {
   today: { due_reviews: number; feynman_active: number };
   weak_points: WeakPoint[];
   heatmap: DayCount[];
+  retention: RetentionBucket[];
+  study_days: StudyDayOut[];
+  study_minutes_7d: number;
+  llm_usage: LLMUsageSummary | null;
+}
+
+export interface SearchHit {
+  course_id: string;
+  course_title: string;
+  document_id: string;
+  document_title: string;
+  section_id: string;
+  heading: string;
+  snippet: string;
+}
+
+export interface BackupItem {
+  name: string;
+  size: number;
+  mtime: number;
+}
+
+export interface AccessInfo {
+  host: string;
+  port: number;
+  lan_mode: boolean;
+  lan_urls: string[];
+  token: string;
+  lan_urls_with_token: string[];
 }
 
 export type ExecStatus =
@@ -410,4 +482,70 @@ export interface ProgressSSEEvent {
     version: number;
     source?: string;
   }[];
+}
+
+// ===== 题库刷题（独立模块） =====
+
+export type BankQuestionType = "single" | "multi" | "judge";
+
+export interface BankQuestion {
+  id: string;
+  seq: number;
+  qtype: BankQuestionType;
+  title: string;
+  /** 按列位的选项数组（含空串），字母 = A + 下标；判断题为 [] */
+  options: string[];
+  difficulty: string;
+}
+
+export interface BankWrongQuestion extends BankQuestion {
+  answer: string;
+  answer_raw: string;
+  explanation: string;
+}
+
+export interface BankAttemptResult {
+  attempt_id: string;
+  passed: boolean;
+  answer: string;
+  correct_answer: string;
+  answer_raw: string;
+  explanation: string;
+}
+
+export interface BankStats {
+  question_count: number;
+  answered: number;
+  attempts: number;
+  correct: number;
+  accuracy: number;
+  wrong_count: number;
+  by_type: Record<string, { total: number; wrong: number }>;
+}
+
+export interface Bank {
+  id: string;
+  name: string;
+  source_file: string;
+  question_count: number;
+  created_at: string;
+  stats: BankStats;
+}
+
+export interface BankAnalysis {
+  name: string;
+  source_file: string;
+  question_count: number;
+  skipped_total: number;
+  skipped: { row: number; reason: string }[];
+  by_type: Record<string, number>;
+  by_difficulty: Record<string, number>;
+  samples: BankQuestion[];
+}
+
+export interface BankRound {
+  bank_id: string;
+  mode: "random" | "wrong";
+  questions: BankQuestion[];
+  wrong_pool_size: number;
 }

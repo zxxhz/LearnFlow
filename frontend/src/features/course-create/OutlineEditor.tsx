@@ -91,13 +91,13 @@ export default function OutlineEditor({ course }: Props) {
           🔄 AI 重新生成大纲
         </Button>
       </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
       <div className="space-y-3">
         {items.map((it, i) => (
-          <div key={i} className="rounded-xl border border-gray-200 bg-white p-4">
+          <div key={i} className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
             <div className="flex items-center gap-2">
-              <span className="w-6 text-center text-sm font-semibold text-gray-400">{i + 1}</span>
+              <span className="w-6 text-center text-sm font-semibold text-gray-400 dark:text-gray-500">{i + 1}</span>
               <Input
                 value={it.title}
                 onChange={(e) => update(i, { title: e.target.value })}
@@ -132,7 +132,7 @@ export default function OutlineEditor({ course }: Props) {
       </Button>
 
       <Modal open={regenOpen} onClose={() => setRegenOpen(false)} title="AI 重新生成大纲">
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-600 dark:text-gray-400">
           将基于同一主题创建<strong>一个新的课程草稿</strong>（当前草稿保留）。可附加调整指令：
         </p>
         <Textarea
@@ -150,7 +150,7 @@ export default function OutlineEditor({ course }: Props) {
             {regenerate.isPending ? "生成中…" : "重新生成"}
           </Button>
         </div>
-        {regenerate.isError && <p className="mt-2 text-sm text-red-600">{regenerate.error.message}</p>}
+        {regenerate.isError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{regenerate.error.message}</p>}
       </Modal>
     </div>
   );

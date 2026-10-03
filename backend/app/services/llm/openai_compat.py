@@ -38,11 +38,26 @@ def translate_openai_error(e: Exception) -> Exception:
 
 
 class OpenAICompatAdapter(LLMAdapter):
-    def __init__(self, base_url: str, api_key: str, model: str):
+    def __init__(self, base_url: str, api_key: str, model: str, scene: str = "chat"):
         self.client = AsyncOpenAI(
             base_url=base_url or None, api_key=api_key or "EMPTY", timeout=180
         )
         self.model = model
+        self.scene = scene
+
+    def _record(self, usage, duration_ms: int) -> None:
+        """成功调用后记 Token 用量（无 usage 字段的端点静默跳过）。"""
+        if usage is None:
+            return
+        from app.services.llm.usage import record_usage
+
+        record_usage(
+            self.scene,
+            self.model,
+            int(getattr(usage, "prompt_tokens", 0) or 0),
+            int(getattr(usage, "completion_tokens", 0) or 0),
+            duration_ms,
+        )
 
     async def chat(
         self,
@@ -67,16 +82,25 @@ class OpenAICompatAdapter(LLMAdapter):
         try:
             if stream:
                 return self._stream(kwargs, allow_json_fallback=json_mode)
+            t0 = time.perf_counter()
             resp = await self.client.chat.completions.create(**kwargs)
+            self._record(resp, int((time.perf_counter() - t0) * 1000))
             return resp.choices[0].message.content or ""
         except (LLMServiceError, LLMConnectionError, LLMAuthError, LLMRateLimitError):
             raise
         except Exception as e:
-            # 不支持 response_format 的端点：去掉后重试一次
-            if json_mode and isinstance(e, BadRequestError):
+            # 不支持 response_format / stream_options 的端点：去掉后重试一次
+            if isinstance(e, BadRequestError) and (
+                json_mode or "stream_options" in kwargs
+            ):
                 kwargs.pop("response_format", None)
+                kwargs.pop("stream_options", None)
                 try:
+                    if stream:
+                        return self._stream(kwargs, allow_json_fallback=False)
+                    t0 = time.perf_counter()
                     resp = await self.client.chat.completions.create(**kwargs)
+                    self._record(resp, int((time.perf_counter() - t0) * 1000))
                     return resp.choices[0].message.content or ""
                 except Exception as e2:
                     raise translate_openai_error(e2) from e2
@@ -85,18 +109,37 @@ class OpenAICompatAdapter(LLMAdapter):
     async def _stream(
         self, kwargs: dict, *, allow_json_fallback: bool = False
     ) -> AsyncIterator[str]:
+        # 尽力请求用量：兼容端点会在末块带 usage；拒绝该参数的由 chat 层降级重试
+        t0 = time.perf_counter()
         try:
-            stream = await self.client.chat.completions.create(**kwargs, stream=True)
+            stream = await self.client.chat.completions.create(
+                **kwargs, stream=True, stream_options={"include_usage": True}
+            )
         except Exception as e:
-            if allow_json_fallback and isinstance(e, BadRequestError):
+            if isinstance(e, BadRequestError):
+                try:
+                    stream = await self.client.chat.completions.create(**kwargs, stream=True)
+                except Exception as e2:
+                    raise translate_openai_error(e2) from e2
+            elif allow_json_fallback:
                 kwargs.pop("response_format", None)
-                stream = await self.client.chat.completions.create(
-                    **kwargs, stream=True
-                )
+                try:
+                    stream = await self.client.chat.completions.create(
+                        **kwargs, stream=True, stream_options={"include_usage": True}
+                    )
+                except Exception:
+                    try:
+                        stream = await self.client.chat.completions.create(
+                            **kwargs, stream=True
+                        )
+                    except Exception as e2:
+                        raise translate_openai_error(e2) from e2
             else:
                 raise translate_openai_error(e) from e
         try:
             async for chunk in stream:
+                if getattr(chunk, "usage", None) is not None:
+                    self._record(chunk.usage, int((time.perf_counter() - t0) * 1000))
                 if chunk.choices:
                     delta = chunk.choices[0].delta.content
                     if delta:
@@ -139,6 +182,7 @@ async def create_adapter_from_settings(
         base_url=merged["base_url"],
         api_key=merged["api_key"],
         model=merged["model"],
+        scene=scene or "chat",
     )
 
 

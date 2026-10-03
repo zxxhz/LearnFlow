@@ -55,6 +55,17 @@ export default function ReaderPage() {
     enabled: !!documentId,
   });
 
+  // 阅读时长心跳：页面可见时每 30s 上报一次（后端按本地日聚合，PRD §5.6 延伸）
+  useEffect(() => {
+    if (!documentId) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") {
+        api.study.ping(30).catch(() => {});
+      }
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [documentId]);
+
   const content = contentQuery.data;
   const annotations = annsQuery.data ?? [];
 
@@ -295,7 +306,7 @@ export default function ReaderPage() {
   }
   if (contentQuery.error || !content) {
     return (
-      <div className="p-10 text-center text-sm text-gray-500">
+      <div className="p-10 text-center text-sm text-gray-500 dark:text-gray-400">
         {contentQuery.error ? contentQuery.error.message : "文档不存在"}
         <div className="mt-3">
           <Link to="/" className="text-brand-600 underline">
@@ -315,14 +326,14 @@ export default function ReaderPage() {
   const orphanCount = annotations.filter((a) => a.status === "orphan").length;
 
   return (
-    <div className="flex min-h-screen bg-white">
+    <div className="flex min-h-screen bg-white dark:bg-gray-900">
       {/* 目录：桌面常驻侧栏；小屏收起，用浮动按钮打开 */}
-      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 overflow-auto border-r border-gray-100 bg-gray-50/50 py-5 lg:block">
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 overflow-auto border-r border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 py-5 lg:block">
         <div className="px-4 pb-3">
-          <Link to={`/courses/${courseId}`} className="text-xs text-gray-400 hover:text-brand-600">
+          <Link to={`/courses/${courseId}`} className="text-xs text-gray-400 dark:text-gray-500 hover:text-brand-600">
             ← {courseQuery.data?.title ?? "课程"}
           </Link>
-          <div className="mt-1 truncate text-sm font-semibold text-gray-800">{doc.title}</div>
+          <div className="mt-1 truncate text-sm font-semibold text-gray-800 dark:text-gray-200">{doc.title}</div>
         </div>
         <TocSidebar items={tocItems} onJump={(sid) => jumpTo(sid)} />
       </aside>
@@ -330,7 +341,7 @@ export default function ReaderPage() {
       {/* 正文列 */}
       <div className="relative mx-auto w-full max-w-3xl px-4 py-8 md:px-10">
         {/* 页头 */}
-        <div className="sticky top-0 z-20 -mx-4 mb-6 flex items-center justify-between gap-2 border-b border-gray-100 bg-white/90 px-4 py-3 backdrop-blur md:-mx-10 md:px-10">
+        <div className="sticky top-0 z-20 -mx-4 mb-6 flex items-center justify-between gap-2 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900/90 px-4 py-3 backdrop-blur md:-mx-10 md:px-10">
           <div className="flex items-center gap-1">
             <Button
               variant="ghost"
@@ -393,7 +404,7 @@ export default function ReaderPage() {
 
         {/* 重新挂载模式提示条 */}
         {reAnchoring && (
-          <div className="sticky top-14 z-20 mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          <div className="sticky top-14 z-20 mb-4 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-900/30 px-4 py-2 text-sm text-amber-800 dark:text-amber-300">
             正在重新挂载标注「{reAnchoring.exact.slice(0, 24)}…」，请在正文中重新划选该内容，
             <button className="ml-1 underline" onClick={() => setReAnchoring(null)}>
               取消（Esc）
@@ -429,12 +440,12 @@ export default function ReaderPage() {
         <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setTocOpen(false)}>
           <div className="absolute inset-0 bg-black/40" />
           <div
-            className="absolute inset-y-0 left-0 w-72 overflow-auto bg-white p-4 shadow-xl"
+            className="absolute inset-y-0 left-0 w-72 overflow-auto bg-white dark:bg-gray-900 p-4 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-2 flex items-center justify-between">
-              <span className="truncate text-sm font-semibold text-gray-800">{doc.title}</span>
-              <button className="text-gray-400" onClick={() => setTocOpen(false)}>
+              <span className="truncate text-sm font-semibold text-gray-800 dark:text-gray-200">{doc.title}</span>
+              <button className="text-gray-400 dark:text-gray-500" onClick={() => setTocOpen(false)}>
                 ✕
               </button>
             </div>
@@ -451,21 +462,21 @@ export default function ReaderPage() {
 
       {/* 知识点浮层 */}
       {kpOpen && (
-        <div className="fixed right-6 top-14 z-30 w-80 rounded-xl border border-gray-200 bg-white p-3 shadow-xl">
+        <div className="fixed right-6 top-14 z-30 w-80 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 shadow-xl">
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-sm font-semibold text-gray-900">本章知识点</span>
-            <button className="text-gray-400 hover:text-gray-600" onClick={() => setKpOpen(false)}>
+            <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">本章知识点</span>
+            <button className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300" onClick={() => setKpOpen(false)}>
               ✕
             </button>
           </div>
           {activeKps.length === 0 ? (
-            <p className="py-4 text-center text-xs text-gray-400">（暂无知识点）</p>
+            <p className="py-4 text-center text-xs text-gray-400 dark:text-gray-500">（暂无知识点）</p>
           ) : (
             <div className="max-h-[60vh] space-y-2 overflow-auto">
               {activeKps.map((kp) => (
-                <div key={kp.id} className="rounded-lg border border-gray-100 p-2.5">
-                  <div className="text-sm font-medium text-gray-800">{kp.title}</div>
-                  <p className="mt-0.5 line-clamp-2 text-xs text-gray-500">{kp.summary}</p>
+                <div key={kp.id} className="rounded-lg border border-gray-100 dark:border-gray-800 p-2.5">
+                  <div className="text-sm font-medium text-gray-800 dark:text-gray-200">{kp.title}</div>
+                  <p className="mt-0.5 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">{kp.summary}</p>
                   <div className="mt-1.5 flex items-center gap-2">
                     <Link
                       to={`/feynman?kp=${kp.id}`}
@@ -559,7 +570,7 @@ export default function ReaderPage() {
 
       {/* 重新生成对话框 */}
       <Modal open={regenOpen} onClose={() => setRegenOpen(false)} title="重新生成本章">
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-gray-600 dark:text-gray-400">
           将重新生成本章内容（当前版本会保留为历史快照，标注会尽力保留锚定）。
         </p>
         <Textarea
@@ -570,7 +581,7 @@ export default function ReaderPage() {
           placeholder="可选：对重新生成的调整要求，如「推导再详细一点」「多举一个例子」"
         />
         {orphanCount > 0 && (
-          <p className="mt-2 text-xs text-amber-600">
+          <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
             注意：本章有 {orphanCount} 条 orphan 标注，重新生成后可在标注抽屉中重新挂载。
           </p>
         )}

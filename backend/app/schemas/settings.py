@@ -32,10 +32,22 @@ class Preferences(BaseModel):
     auto_create_cards: bool = True
     # 每个知识点生成的练习题数量（1-4，PRD §5.10）
     exercises_per_kp: int = 2
+    # 每日复习提醒（桌面通知）：开关 + HH:MM 时间
+    reminder_enabled: bool = True
+    reminder_time: str = "20:00"
     # 划线高亮四色（hex），缺失/非法项回落默认
     highlight_colors: dict[str, str] = dict(DEFAULT_HL_COLORS)
     # GitHub 仓库 owner/repo；留空回落环境变量 APP_GITHUB_REPO（PRD 实现备注 15）
     github_repo: str = ""
+
+    @field_validator("reminder_time")
+    @classmethod
+    def _valid_reminder_time(cls, v: str) -> str:
+        import re
+
+        if not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v):
+            raise ValueError("提醒时间格式须为 HH:MM")
+        return v
 
     @field_validator("highlight_colors", mode="before")
     @classmethod

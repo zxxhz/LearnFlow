@@ -87,6 +87,23 @@ async def seed() -> tuple[str, str]:
                 task_md="用自己的话解释：指针是什么？它存放什么？",
                 reference_answer="指针是一个变量，其值为内存地址。【评分要点】提到指针存放地址",
             ),
+            Exercise(
+                knowledge_point_id=kp.id,
+                document_id=doc.id,
+                kind="choice",
+                title="解引用输出",
+                task_md="`int x = 7; int* p = &x;`，`std::cout << *p` 输出什么？",
+                options='["x 的地址","7","7 的地址","未定义"]',
+                answer="B",
+            ),
+            Exercise(
+                knowledge_point_id=kp.id,
+                document_id=doc.id,
+                kind="fill",
+                title="取地址运算",
+                task_md="对变量 x 取地址的表达式是 ______。",
+                answer=json.dumps(["&x", "& x"], ensure_ascii=False),
+            ),
         ])
         await db.commit()
         return course.id, doc.id, kp.id
@@ -107,6 +124,16 @@ def call(base: str, path: str, method: str = "GET", body=None):
             return e.code, json.loads(e.read())
         except Exception:
             return e.code, {}
+
+
+def call_raw(base: str, path: str):
+    """非 JSON 响应（导出文件等）：返回 (status, bytes, headers)。headers 键统一小写。"""
+    req = urllib.request.Request(base + path)
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status, r.read(), {k.lower(): v for k, v in r.headers.items()}
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), {k.lower(): v for k, v in e.headers.items()}
 
 
 def multipart_body(fields: dict, files: list[tuple[str, str, bytes]]) -> tuple[bytes, str]:
@@ -274,12 +301,14 @@ def main() -> None:
     s, body = call(base, f"/api/exercises?document_id={document_id}")
     check(
         "练习列表（含知识点标题）",
-        s == 200 and len(body) == 2 and all(e["kp_title"] == "指针概念" for e in body),
+        s == 200 and len(body) == 4 and all(e["kp_title"] == "指针概念" for e in body),
         json.dumps(body, ensure_ascii=False)[:200],
     )
     if s == 200:
         ex_code = next(e for e in body if e["kind"] == "code")
         ex_concept = next(e for e in body if e["kind"] == "concept")
+        ex_choice = next(e for e in body if e["kind"] == "choice")
+        ex_fill = next(e for e in body if e["kind"] == "fill")
         check("未作答时 latest_attempt 为空", ex_code["latest_attempt"] is None)
         s, body = call(base, f"/api/exercises/{ex_code['id']}/submit", "POST", {"content": "print('2 + 3 =', 2 + 3)"})
         check("代码题正确解 → passed", s == 200 and body["passed"] is True and body["status"] == "success", json.dumps(body, ensure_ascii=False)[:200])
@@ -287,13 +316,44 @@ def main() -> None:
         check("代码题输出不符 → 未通过", s == 200 and body["passed"] is False, json.dumps(body, ensure_ascii=False)[:200])
         s, body = call(base, f"/api/exercises/{ex_code['id']}/submit", "POST", {"content": "  "})
         check("空提交 → 400 校验", s == 400, str(body)[:120])
+        s, body = call(base, f"/api/exercises/{ex_choice['id']}/submit", "POST", {"content": "B"})
+        check("单选正确 → passed", s == 200 and body["passed"] is True, json.dumps(body, ensure_ascii=False)[:120])
+        s, body = call(base, f"/api/exercises/{ex_choice['id']}/submit", "POST", {"content": "A"})
+        check("单选错误 → 未通过+正确答案", s == 200 and body["passed"] is False and "B" in body["feedback"], json.dumps(body, ensure_ascii=False)[:120])
+        s, body = call(base, f"/api/exercises/{ex_fill['id']}/submit", "POST", {"content": "  &X "})
+        check("填空归一化 → passed", s == 200 and body["passed"] is True, json.dumps(body, ensure_ascii=False)[:120])
         s, body = call(base, f"/api/exercises?document_id={document_id}")
         latest = next(e for e in body if e["id"] == ex_code["id"])["latest_attempt"]
         check("提交后最新作答回显", latest is not None and latest["passed"] is False)
+        s, body = call(base, f"/api/exercises/wrongbook")
+        wb = {e["id"] for e in body}
+        check("错题本含做错的题", s == 200 and ex_code["id"] in wb and ex_choice["id"] in wb, f"n={len(body)}")
         s, body = call(base, f"/api/exercises/{ex_concept['id']}", "DELETE")
         check("删除练习题", s == 200)
         s, body = call(base, f"/api/exercises?document_id={document_id}")
-        check("删除后列表剩 1 题", s == 200 and len(body) == 1)
+        check("删除后列表剩 3 题", s == 200 and len(body) == 3)
+
+    # 6.7 搜索 / 学习时长 / 仪表盘扩展 / 导出 / 备份
+    s, body = call(base, "/api/search", )
+    check("空搜索词 → 400", s == 400, str(body)[:80])
+    s, body = call(base, "/api/search?q=" + urllib.parse.quote("指针"))
+    check("全局搜索命中教材原文", s == 200 and len(body["results"]) >= 1 and "指针" in body["results"][0]["snippet"], str(body)[:150])
+    s, body = call(base, "/api/study/ping", "POST", {"seconds": 30})
+    check("学习时长打点", s == 200 and body["ok"] is True)
+    s, body = call(base, "/api/study/ping", "POST", {"seconds": 999})
+    check("打点超限 → 400", s == 400)
+    s, body = call(base, "/api/dashboard/summary")
+    check(
+        "仪表盘扩展（掌握度/遗忘曲线/时长）",
+        s == 200 and all("mastery" in w for w in body["weak_points"]) and "retention" in body and "study_days" in body and "study_minutes_7d" in body,
+        str(body)[:150],
+    )
+    s, raw, headers = call_raw(base, f"/api/courses/{course_id}/export.md")
+    check("课程导出 MD", s == 200 and "指针" in raw.decode("utf-8", "replace") and "attachment" in headers.get("content-disposition", ""), s and len(raw))
+    s, raw, headers = call_raw(base, "/api/review/export.csv")
+    check("复习卡导出 CSV", s == 200 and raw.startswith(b"front,back,tags"), len(raw))
+    s, raw, headers = call_raw(base, f"/api/courses/{course_id}/export.html")
+    check("课程导出 HTML", s == 200 and b"katex" in raw and b"markdown-body" in raw, len(raw))
 
     # 7. 导入自有 Markdown（PRD 实现备注 12）：analyze → confirm → 原文保留
     s, body = call_multipart(base, "/api/courses/import/analyze", {}, [("files", "notes.md", IMPORT_MD.encode("utf-8"))])
@@ -355,6 +415,10 @@ def main() -> None:
     check("出题(LLM未配置) → 400", s == 400, str(body)[:150])
     s, body = call(base, "/api/exercises/generate", "POST", {"knowledge_point_id": kp_id, "language": "ruby"})
     check("出题语言校验 → 400", s in (400, 422), str(body)[:120])
+    s, body = call(base, "/api/quizzes/generate", "POST", {"document_id": document_id, "kp_ids": [kp_id]})
+    check("组卷(LLM未配置) → 400", s == 400, str(body)[:120])
+    s, body = call(base, f"/api/courses/{course_id}/ask", "POST", {"question": "指针是什么"})
+    check("全课问答(LLM未配置) → 400", s == 400, str(body)[:120])
 
     call(base, "/api/settings", "PUT", {"llm": {"base_url": orig["llm"]["base_url"], "api_key": orig["llm"]["api_key"], "model": orig["llm"]["model"], "temperature": orig["llm"]["temperature"]}, "scenes": {"generation": {}, "chat": {}, "feynman": {}}})
 
@@ -385,6 +449,108 @@ def main() -> None:
     # 11. 仪表盘
     s, body = call(base, "/api/dashboard/summary")
     check("仪表盘包含测试课程", s == 200 and any(c["id"] == course_id for c in body["courses"]))
+
+    # 12. 题库刷题（独立模块）：analyze → import → round 不泄答案 → 判分 → 错题池 → 删除级联
+    def make_bank_xlsx() -> bytes:
+        from io import BytesIO
+
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sheet1"
+        ws.append(["题型", "题干", "A", "B", "C", "D", "E", "F", "G", "H", "正确答案", "", "解析", "难易程度"])
+        rows = [
+            ["单选题", "单选1", "a1", "a2", "a3", "a4", "", "", "", "", "B", "", "解析1", "一般"],
+            ["单选题", "单选2", "b1", "b2", "b3", "b4", "", "", "", "", "A", "", "解析2", "较易"],
+            ["单选题", "单选3", "c1", "c2", "c3", "c4", "", "", "", "", "C", "", "", "较难"],
+            ["单选题", "单选4", "d1", "d2", "d3", "d4", "", "", "", "", "D", "", "解析4", "难"],
+            ["单选题", "单选5", "e1", "e2", "e3", "e4", "", "", "", "", "A", "", "解析5", "易"],
+            ["多选题", "多选1", "m1", "m2", "m3", "m4", "", "", "", "", "A,C", "", "解析m1", "一般"],
+            ["多选题", "多选2", "n1", "n2", "n3", "n4", "", "", "", "", "B,C,D", "", "解析m2", "一般"],
+            ["多选题", "多选3", "o1", "o2", "o3", "o4", "", "", "", "", "A,B,C,D", "", "", "一般"],
+            ["判断题", "判断1", "", "", "", "", "", "", "", "", "正确", "", "解析j1", "一般"],
+            ["判断题", "判断2", "", "", "", "", "", "", "", "", "错误", "", "解析j2", "较易"],
+            ["判断题", "判断3", "", "", "", "", "", "", "", "", "对", "", "解析j3", "一般"],
+            ["单选题", "", "坏行：缺题干", "", "", "", "", "", "", "", "A", "", "", "一般"],
+            ["填空题", "未知题型行", "", "", "", "", "", "", "", "", "A", "", "", ""],
+        ]
+        for r in rows:
+            ws.append(r)
+        buf = BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    bank_bytes = make_bank_xlsx()
+    s, body = call_multipart(base, "/api/banks/import/analyze", {}, [("file", "test_bank.xlsx", bank_bytes)])
+    check(
+        "题库 analyze：11 题 + 2 坏行",
+        s == 200 and body["question_count"] == 11 and body["skipped_total"] == 2,
+        json.dumps(body, ensure_ascii=False)[:200],
+    )
+    if s == 200:
+        check("analyze 样题不含答案", all("answer" not in q and "explanation" not in q for q in body["samples"]))
+    s, body = call_multipart(base, "/api/banks/import/analyze", {}, [("file", "notes.md", b"# not a bank")])
+    check("题库 analyze 非 xls/xlsx → 400", s == 400, str(body)[:120])
+
+    s, body = call_multipart(base, "/api/banks/import", {}, [("file", "test_bank.xlsx", bank_bytes)])
+    check("题库 import 成功", s == 200 and body["question_count"] == 11 and body["stats"]["answered"] == 0, json.dumps(body, ensure_ascii=False)[:200])
+    bank_id = body.get("id", "")
+
+    s, body = call(base, f"/api/banks/{bank_id}/round", "POST", {"mode": "random", "size": 10})
+    check("抽轮 10 题", s == 200 and len(body["questions"]) == 10, str(body)[:150])
+    if s == 200:
+        check("抽轮题目不泄答案", all("answer" not in q and "explanation" not in q and "answer_raw" not in q for q in body["questions"]))
+        qs = {q["seq"]: q for q in body["questions"]}
+        single_q = qs[1]  # 单选1 → B
+        multi_q = qs[6]   # 多选1 → A,C
+        judge_q = qs[9]   # 判断1 → 正确(A)
+    s, body = call(base, "/api/banks/attempts", "POST", {"question_id": single_q["id"], "content": ["B"]})
+    check("单选答对 → passed + 解析", s == 200 and body["passed"] is True and body["explanation"] == "解析1", str(body)[:150])
+    s, body = call(base, "/api/banks/attempts", "POST", {"question_id": multi_q["id"], "content": ["A"]})
+    check("多选少选 → 未通过", s == 200 and body["passed"] is False and body["correct_answer"] == "A、C", str(body)[:150])
+    s, body = call(base, "/api/banks/attempts", "POST", {"question_id": judge_q["id"], "content": ["A"]})
+    check("判断答对 → passed", s == 200 and body["passed"] is True and body["correct_answer"] == "正确", str(body)[:150])
+
+    s, body = call(base, f"/api/banks/{bank_id}/wrong")
+    check("错题池只含答错的题", s == 200 and len(body) == 1 and body[0]["seq"] == 6, str(body)[:150])
+    if s == 200:
+        check("错题池含答案与解析", body[0]["answer"] == "A,C" and body[0]["explanation"] == "解析m1")
+    s, body = call(base, f"/api/banks/{bank_id}/round", "POST", {"mode": "wrong", "size": 20})
+    check("错题重刷抽到错题", s == 200 and len(body["questions"]) == 1 and body["questions"][0]["seq"] == 6, str(body)[:150])
+    s, body = call(base, "/api/banks/attempts", "POST", {"question_id": multi_q["id"], "content": ["C", "A"]})
+    check("错题重刷答对(乱序多选) → 出池", s == 200 and body["passed"] is True, str(body)[:120])
+    s, body = call(base, f"/api/banks/{bank_id}/wrong")
+    check("答对后错题池为空", s == 200 and body == [])
+
+    s, body = call(base, f"/api/banks/{bank_id}/stats")
+    check(
+        "统计：answered=3 / attempts=4 / accuracy=75%",
+        s == 200 and body["answered"] == 3 and body["attempts"] == 4 and body["accuracy"] == 75.0,
+        str(body)[:150],
+    )
+
+    s, body = call(base, f"/api/banks/{bank_id}", "DELETE")
+    check("删除题库", s == 200)
+
+    async def _bank_left():
+        from sqlalchemy import func, select
+
+        from app.models import BankAttempt, BankQuestion
+
+        async with async_session_factory() as sdb:
+            n_q = (
+                await sdb.scalars(select(func.count()).select_from(BankQuestion).where(BankQuestion.bank_id == bank_id))
+            ).one()
+            n_a = (
+                await sdb.scalars(select(func.count()).select_from(BankAttempt).where(BankAttempt.bank_id == bank_id))
+            ).one()
+            return n_q, n_a
+
+    n_q, n_a = asyncio.run(_bank_left())
+    check("题库删除后题目/作答级联清零", (n_q, n_a) == (0, 0), f"{n_q}/{n_a}")
+    s, body = call(base, f"/api/banks/{bank_id}/stats")
+    check("删除后 stats 404", s == 404)
 
     # 9. 级联删除课程（同时验证全部关联数据清理）
     s, body = call(base, f"/api/courses/{course_id}", "DELETE")

@@ -50,16 +50,16 @@ export default function TocSidebar({
 
   return (
     <nav className="space-y-0.5 text-sm">
-      <div className="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-gray-400">目录</div>
-      {items.length === 0 && <p className="px-3 text-xs text-gray-400">（无标题）</p>}
+      <div className="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">目录</div>
+      {items.length === 0 && <p className="px-3 text-xs text-gray-400 dark:text-gray-500">（无标题）</p>}
       {items.map((it) => (
         <button
           key={it.sectionId}
           onClick={() => onJump(it.sectionId)}
           className={`block w-full truncate rounded-md px-3 py-1.5 text-left transition ${
             activeId === it.sectionId
-              ? "bg-brand-50 font-medium text-brand-700"
-              : "text-gray-600 hover:bg-gray-100"
+              ? "bg-brand-50 dark:bg-brand-900/40 font-medium text-brand-700"
+              : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
           }`}
           style={{ paddingLeft: `${12 + (it.level - 1) * 12}px` }}
           title={it.text}

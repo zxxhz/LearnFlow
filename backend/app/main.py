@@ -37,7 +37,17 @@ STATIC_DIR = _static_dir()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    from app.services.system import apply_pending_restore
+
+    apply_pending_restore()  # 待恢复备份在连接数据库前生效
     await init_db()
+
+    from app.sample_course import seed_sample_course
+    from app.services.search import backfill_fts
+
+    async with _db_session() as db:
+        await backfill_fts(db)  # 老库升级回填全文索引
+        await seed_sample_course(db)  # 首跑示例课程（无 LLM 也能体验）
     # 恢复上次中断的生成任务（PRD FR-1.3 断点续生成）
     with contextlib.suppress(ImportError):
         from app.services.generation.pipeline import resume_pending_generations
@@ -46,8 +56,52 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
+def _db_session():
+    from app.core.db import async_session_factory
+
+    return async_session_factory()
+
+
+class _AccessGuard:
+    """纯 ASGI 中间件：非回环来源（局域网/平板）必须携带访问令牌；本机与桌面壳直通。
+
+    不用 BaseHTTPMiddleware：避免对流式响应（SSE）引入缓冲层。
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            client = scope.get("client")
+            host = client[0] if client else ""
+            if host not in ("127.0.0.1", "::1"):
+                import urllib.parse
+
+                token = ""
+                for chunk in scope.get("query_string", b"").decode().split("&"):
+                    if chunk.startswith("token="):
+                        token = urllib.parse.unquote(chunk[6:])
+                        break
+                for k, v in scope.get("headers", []):
+                    if k == b"x-access-token":
+                        token = v.decode("latin-1")
+                        break
+                from app.services.system import get_access_token
+
+                if not token or token != get_access_token():
+                    resp = JSONResponse(
+                        status_code=401,
+                        content={"detail": "需要访问令牌：请用设置页「局域网访问」里带 token 的完整地址打开。"},
+                    )
+                    await resp(scope, receive, send)
+                    return
+        await self.app(scope, receive, send)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="LearnFlow", lifespan=lifespan)
+    app.add_middleware(_AccessGuard)
     app.include_router(api_router)
 
     @app.exception_handler(LLMError)
@@ -90,33 +144,20 @@ app = create_app()
 
 
 def main() -> None:
-    import socket
     import threading
     import webbrowser
 
     import uvicorn
 
     if settings.host == "0.0.0.0":
-        # 平板/局域网访问（PRD §5.9）：打印本机局域网地址
-        ips: set[str] = set()
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ips.add(s.getsockname()[0])
-            s.close()
-        except OSError:
-            pass
-        try:
-            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-                ip = info[4][0]
-                if not ip.startswith("127."):
-                    ips.add(ip)
-        except OSError:
-            pass
-        print(f"\n>>> 局域网访问地址（平板需与电脑同一网络，或走内网穿透）：" )
-        for ip in sorted(ips):
-            print(f">>>   http://{ip}:{settings.port}")
-        print(">>> 安全提示：0.0.0.0 会将服务暴露给局域网，建议仅配 Tailscale 等私网使用。\n")
+        # 平板/局域网访问（PRD §5.9）：打印本机局域网地址（带访问令牌）
+        from app.services.system import get_access_token, lan_urls
+
+        print("\n>>> 局域网访问地址（平板需与电脑同一网络，或走内网穿透）：")
+        token = get_access_token()
+        for url in lan_urls():
+            print(f">>>   {url}/?token={token}")
+        print(">>> 安全提示：已启用访问令牌保护，完整地址（含 token）可在设置页查看。\n")
 
     if settings.open_browser:
         url = f"http://{'127.0.0.1' if settings.host == '0.0.0.0' else settings.host}:{settings.port}"

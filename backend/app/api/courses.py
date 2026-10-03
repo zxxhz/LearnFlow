@@ -1,6 +1,7 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,9 +18,10 @@ from app.schemas.course import (
     CourseSettingsUpdate,
     OutlineUpdate,
 )
+from app.services.exports import course_html, course_markdown
 from app.services.generation import pipeline
 from app.services.generation.outline import generate_outline
-from app.services.llm import create_adapter_from_settings
+from app.services.llm import create_adapter_from_settings, get_llm_temperature
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 
@@ -193,6 +195,88 @@ async def delete_course(course_id: str, db: AsyncSession = Depends(get_db)):
     await db.delete(course)
     await db.commit()
     return {"ok": True}
+
+
+def _cd(name: str) -> str:
+    """Content-Disposition：中文文件名走 RFC 5987 filename*，ASCII 回退名兜底。"""
+    from urllib.parse import quote
+
+    return f"attachment; filename=\"course-export\"; filename*=UTF-8''{quote(name)}"
+
+
+@router.get("/{course_id}/export.md", response_class=Response)
+async def export_md(course_id: str, db: AsyncSession = Depends(get_db)):
+    course = await _get_course(db, course_id)
+    md = await course_markdown(db, course)
+    safe = "".join(ch for ch in course.title if ch.isalnum() or ch in "-_ ") or "course"
+    return Response(
+        content=md,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": _cd(f"{safe}.md")},
+    )
+
+
+@router.get("/{course_id}/export.html", response_class=Response)
+async def export_html(course_id: str, db: AsyncSession = Depends(get_db)):
+    course = await _get_course(db, course_id)
+    page = await course_html(db, course)
+    safe = "".join(ch for ch in course.title if ch.isalnum() or ch in "-_ ") or "course"
+    return Response(
+        content=page,
+        media_type="text/html; charset=utf-8",
+        headers={"Content-Disposition": _cd(f"{safe}.html")},
+    )
+
+
+@router.post("/{course_id}/ask")
+async def ask_course(course_id: str, body: dict, db: AsyncSession = Depends(get_db)):
+    """全课程问答：章节摘要 + FTS 命中原文拼接上下文，SSE 流式回答（不落对话记录）。"""
+    course = await _get_course(db, course_id)
+    question = str(body.get("question") or "").strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="问题不能为空")
+
+    from app.services.search import search as fts_search
+
+    hits = [h for h in await fts_search(db, question, limit=12) if h["course_id"] == course_id]
+    docs = (
+        await db.scalars(
+            select(Document)
+            .where(Document.course_id == course_id, Document.status == "done")
+            .order_by(Document.chapter_index)
+        )
+    ).all()
+    context_parts = [f"第 {d.chapter_index} 章 {d.title}：{(d.summary or '').strip()}" for d in docs]
+    if hits:
+        context_parts.append("\n\n与问题最相关的原文片段：\n" + "\n\n".join(
+            f"【{h['document_title']}｜{h['heading']}】{h['snippet']}" for h in hits[:6]
+        ))
+    system = (
+        f"你是课程《{course.title}》（主题：{course.topic}）的助教，仅依据课程内容回答学习者问题。"
+        f"课程结构与相关原文如下：\n\n" + "\n".join(context_parts) +
+        "\n\n要求：中文回答，紧扣课程内容；课程里没有依据的，明确说明课程未覆盖。"
+    )
+    adapter = await create_adapter_from_settings(db, scene="chat")
+    temperature = await get_llm_temperature(db)
+    deltas = adapter.chat(
+        [{"role": "system", "content": system}, {"role": "user", "content": question}],
+        stream=True,
+        temperature=temperature,
+    )
+
+    async def gen():
+        try:
+            async for delta in deltas:
+                yield f"data: {json.dumps({'type': 'delta', 'text': delta}, ensure_ascii=False)}\n\n"
+        except Exception as e:  # noqa: BLE001
+            from app.services.llm.errors import LLMError
+
+            detail = e.message if isinstance(e, LLMError) else "服务异常，请重试。"
+            yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+            return
+        yield "data: {\"type\": \"done\"}\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @router.get("/{course_id}/progress")

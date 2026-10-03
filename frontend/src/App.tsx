@@ -10,6 +10,10 @@ import FeynmanIndexPage from "./features/feynman/FeynmanIndexPage";
 import FeynmanSessionPage from "./features/feynman/FeynmanSessionPage";
 import DashboardPage from "./features/dashboard/DashboardPage";
 import SettingsPage from "./features/settings/SettingsPage";
+import WrongBookPage from "./features/wrongbook/WrongBookPage";
+import SearchPage from "./features/wrongbook/SearchPage";
+import BankListPage from "./features/bank/BankListPage";
+import BankDrillPage from "./features/bank/BankDrillPage";
 
 export default function App() {
   return (
@@ -24,8 +28,12 @@ export default function App() {
         <Route path="/feynman" element={<FeynmanIndexPage />} />
         <Route path="/feynman/:sessionId" element={<FeynmanSessionPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/wrongbook" element={<WrongBookPage />} />
+        <Route path="/search" element={<SearchPage />} />
+        <Route path="/bank" element={<BankListPage />} />
+        <Route path="/bank/:bankId" element={<BankDrillPage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<div className="p-10 text-gray-500">页面不存在</div>} />
+        <Route path="*" element={<div className="p-10 text-gray-500 dark:text-gray-400">页面不存在</div>} />
       </Route>
     </Routes>
   );

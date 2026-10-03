@@ -76,15 +76,18 @@ export default function ReviewPage() {
   return (
     <div className="mx-auto max-w-3xl p-8">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">复习</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">复习</h1>
         <div className="flex items-center gap-3">
           {stats && (
-            <span className="text-sm text-gray-500">
+            <span className="text-sm text-gray-500 dark:text-gray-400">
               今日已复习 {stats.today_reviewed} · 剩余{" "}
               {queue ? queue.due_total + queue.new_quota_remaining : stats.due_remaining} · 连续{" "}
               {stats.streak_days} 天
             </span>
           )}
+          <Button variant="secondary" className="text-xs" onClick={() => api.review.exportCsv().catch((e) => alert(e.message))}>
+            ⬇ Anki CSV
+          </Button>
           <Button variant="secondary" className="text-xs" onClick={() => setCreating(true)}>
             ＋ 新建卡片
           </Button>
@@ -112,23 +115,23 @@ export default function ReviewPage() {
             }
           />
           {stats && (
-            <div className="mt-6 rounded-xl border border-gray-200 bg-white p-5">
-              <h2 className="text-sm font-semibold text-gray-900">统计</h2>
+            <div className="mt-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">统计</h2>
               <div className="mt-3 grid grid-cols-3 gap-4 text-center">
                 <div>
-                  <div className="text-2xl font-bold text-gray-900">{stats.total_reviews}</div>
-                  <div className="text-xs text-gray-500">累计复习</div>
+                  <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.total_reviews}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">累计复习</div>
                 </div>
                 <div>
-                  <div className="text-2xl font-bold text-gray-900">{stats.total_cards}</div>
-                  <div className="text-xs text-gray-500">复习卡总数</div>
+                  <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.total_cards}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">复习卡总数</div>
                 </div>
                 <div>
-                  <div className="text-2xl font-bold text-gray-900">{stats.streak_days}</div>
-                  <div className="text-xs text-gray-500">连续打卡</div>
+                  <div className="text-2xl font-bold text-gray-900 dark:text-gray-100">{stats.streak_days}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">连续打卡</div>
                 </div>
               </div>
-              <h3 className="mt-4 text-xs font-medium text-gray-500">未来 7 天到期</h3>
+              <h3 className="mt-4 text-xs font-medium text-gray-500 dark:text-gray-400">未来 7 天到期</h3>
               <div className="mt-2 flex h-20 items-end gap-2">
                 {stats.due_next_7_days.map((d) => (
                   <div key={d.date} className="flex flex-1 flex-col items-center gap-1">
@@ -137,7 +140,7 @@ export default function ReviewPage() {
                       style={{ height: `${(d.count / maxBars) * 60}px` }}
                       title={`${d.date}：${d.count} 张`}
                     />
-                    <span className="text-[10px] text-gray-400">{d.date.slice(5)}</span>
+                    <span className="text-[10px] text-gray-400 dark:text-gray-500">{d.date.slice(5)}</span>
                   </div>
                 ))}
               </div>
@@ -147,7 +150,7 @@ export default function ReviewPage() {
       ) : (
         current && (
           <div className="mt-6">
-            <div className="mb-2 flex items-center justify-between text-xs text-gray-400">
+            <div className="mb-2 flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
               <span>
                 {idx + 1} / {cards!.length}
               </span>
@@ -156,25 +159,25 @@ export default function ReviewPage() {
                 <Badge color={STATE_LABEL[current.state]?.color ?? "gray"}>
                   {STATE_LABEL[current.state]?.label ?? current.state}
                 </Badge>
-                <button className="underline hover:text-gray-600" onClick={() => setEditing(current)}>
+                <button className="underline hover:text-gray-600 dark:hover:text-gray-300" onClick={() => setEditing(current)}>
                   编辑
                 </button>
-                <button className="underline hover:text-gray-600" onClick={() => setConfirmDelete(current)}>
+                <button className="underline hover:text-gray-600 dark:hover:text-gray-300" onClick={() => setConfirmDelete(current)}>
                   删除
                 </button>
               </div>
             </div>
 
-            <div className="min-h-[240px] rounded-2xl border border-gray-200 bg-white p-8">
-              <div className="text-lg font-medium text-gray-900">
+            <div className="min-h-[240px] rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-8">
+              <div className="text-lg font-medium text-gray-900 dark:text-gray-100">
                 <MarkdownLite text={current.front} />
               </div>
               {revealed ? (
-                <div className="mt-6 border-t border-gray-100 pt-6">
+                <div className="mt-6 border-t border-gray-100 dark:border-gray-800 pt-6">
                   {current.back ? (
                     <MarkdownLite text={current.back} />
                   ) : (
-                    <p className="text-sm text-gray-400">（无背面内容）</p>
+                    <p className="text-sm text-gray-400 dark:text-gray-500">（无背面内容）</p>
                   )}
                 </div>
               ) : (
@@ -199,7 +202,7 @@ export default function ReviewPage() {
                 ))}
               </div>
             )}
-            {grade.isError && <p className="mt-2 text-sm text-red-600">{grade.error.message}</p>}
+            {grade.isError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{grade.error.message}</p>}
           </div>
         )
       )}
@@ -243,8 +246,8 @@ function CreateCardModal({ onClose }: { onClose: () => void }) {
   });
   return (
     <Modal open onClose={onClose} title="新建复习卡">
-      <label className="mb-1 block text-xs font-medium text-gray-500">
-        正面（问题）<span className="text-red-500">*</span>
+      <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">
+        正面（问题）<span className="text-red-500 dark:text-red-400">*</span>
       </label>
       <Textarea
         rows={2}
@@ -253,7 +256,7 @@ function CreateCardModal({ onClose }: { onClose: () => void }) {
         placeholder="如：std::vector 扩容时会发生什么？"
         autoFocus
       />
-      <label className="mb-1 mt-3 block text-xs font-medium text-gray-500">背面（答案）</label>
+      <label className="mb-1 mt-3 block text-xs font-medium text-gray-500 dark:text-gray-400">背面（答案）</label>
       <Textarea
         rows={4}
         value={back}
@@ -268,7 +271,7 @@ function CreateCardModal({ onClose }: { onClose: () => void }) {
           创建
         </Button>
       </div>
-      {create.isError && <p className="mt-2 text-sm text-red-600">{create.error.message}</p>}
+      {create.isError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{create.error.message}</p>}
     </Modal>
   );
 }
@@ -287,9 +290,9 @@ function EditCardModal({ card, onClose }: { card: ReviewCard; onClose: () => voi
   });
   return (
     <Modal open onClose={onClose} title="编辑复习卡">
-      <label className="mb-1 block text-xs font-medium text-gray-500">正面（问题）</label>
+      <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">正面（问题）</label>
       <Textarea rows={2} value={front} onChange={(e) => setFront(e.target.value)} />
-      <label className="mb-1 mt-3 block text-xs font-medium text-gray-500">背面（答案）</label>
+      <label className="mb-1 mt-3 block text-xs font-medium text-gray-500 dark:text-gray-400">背面（答案）</label>
       <Textarea rows={4} value={back} onChange={(e) => setBack(e.target.value)} />
       <div className="mt-4 flex items-center justify-between">
         <Button
@@ -308,7 +311,7 @@ function EditCardModal({ card, onClose }: { card: ReviewCard; onClose: () => voi
           </Button>
         </div>
       </div>
-      {save.isError && <p className="mt-2 text-sm text-red-600">{save.error.message}</p>}
+      {save.isError && <p className="mt-2 text-sm text-red-600 dark:text-red-400">{save.error.message}</p>}
     </Modal>
   );
 }

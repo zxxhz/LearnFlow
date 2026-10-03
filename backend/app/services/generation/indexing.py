@@ -86,6 +86,23 @@ async def rebuild_sections(
         else:
             a.status = "orphan"
     await db.flush()
+
+    # 全文搜索索引同步（FTS5，幂等替换该文档的全部行）
+    from app.services.search import ensure_fts, sync_document_fts
+
+    await ensure_fts(db)
+    try:
+        await sync_document_fts(
+            db,
+            document.id,
+            [
+                (r.id, " > ".join(json.loads(r.heading_path)[-3:]), nb.text[:5000])
+                for r, nb in zip(rows, new_blocks)
+            ],
+        )
+    except Exception:  # noqa: BLE001  搜索索引失败不影响主流程
+        logger.warning("FTS 同步失败（跳过）：%s", document.id, exc_info=True)
+
     logger.info(
         "rebuilt sections for %s: %d blocks (v%d)", document.id, len(rows), new_version
     )

@@ -120,6 +120,8 @@ fn main() {
             MacosLauncher::LaunchAgent,
             Some(vec![]),
         ))
+        // 每日复习提醒的系统通知（前端经 @tauri-apps/plugin-notification 调用）
+        .plugin(tauri_plugin_notification::init())
         .manage(Backend(Mutex::new(None)))
         .setup(move |app| {
             let handle = app.handle().clone();
