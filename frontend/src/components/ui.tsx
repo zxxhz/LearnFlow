@@ -45,7 +45,7 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...rest}
-      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-brand-400 focus:ring-1 focus:ring-brand-500 ${className}`}
+      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-brand-400 focus:ring-1 focus:ring-brand-500 ${className}`}
     />
   );
 }
@@ -57,7 +57,7 @@ export function Textarea(
   return (
     <textarea
       {...rest}
-      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-brand-400 focus:ring-1 focus:ring-brand-500 ${className}`}
+      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-brand-400 focus:ring-1 focus:ring-brand-500 ${className}`}
     />
   );
 }

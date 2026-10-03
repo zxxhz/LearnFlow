@@ -138,7 +138,7 @@ export default function Layout() {
   };
 
   return (
-    <div className="flex h-screen bg-gray-50 dark:bg-gray-800/50">
+    <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
       {/* 桌面侧栏 */}
       <aside className="hidden w-56 shrink-0 flex-col border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 md:flex">
         <div className="flex items-center gap-2 px-5 py-5">

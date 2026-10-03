@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ===== 画布底色与原生控件配色 ===== */
+/* html 必须有不透明背景：否则深色模式下 UA 画布是白的，
+   半透明的页面底（dark:bg-gray-800/50）叠上去会发灰（WebView2 实测）。
+   color-scheme 让原生控件（input/scrollbar 等）跟随主题。 */
+:root { color-scheme: light; }
+html { @apply bg-gray-50; }
+html.dark { color-scheme: dark; @apply bg-gray-900; }
+
 /* ===== 划线高亮配色（PRD FR-3.1 四色） ===== */
 mark.hl {
   background: transparent;
