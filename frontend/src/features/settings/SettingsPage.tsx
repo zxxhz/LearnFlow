@@ -386,12 +386,12 @@ export default function SettingsPage() {
         </div>
         <div className="mt-3">
           <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-            GitHub 仓库（更新检查用，格式 owner/repo；留空禁用）
+            GitHub 仓库（更新检查用，格式 owner/repo；留空用内置默认）
           </label>
           <Input
             value={prefs.github_repo}
             onChange={(e) => setPrefs({ ...prefs, github_repo: e.target.value })}
-            placeholder="如 your-name/learnflow"
+            placeholder="zxxhz/LearnFlow（默认，留空即用）"
           />
         </div>
         <div className="mt-3">
