@@ -15,6 +15,9 @@ serde_json = "1"
 tauri-plugin-single-instance = "2.5.2"
 # 每日复习提醒的系统通知
 tauri-plugin-notification = "2"
+# 应用内自动更新（前端经 @tauri-apps/plugin-updater 检查/下载/静默安装，plugin-process 重启）
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [profile.release]
 strip = true

@@ -1,6 +1,9 @@
 {
   "identifier": "default",
-  "description": "LearnFlow 主窗口默认能力（本地服务页面 + 复习提醒通知）",
+  "description": "LearnFlow 主窗口能力：本地壳启动页 + :8420 服务页面的通知与自动更新（远端页面须显式 remote 授权）",
   "windows": ["main"],
-  "permissions": ["core:default", "notification:default"]
+  "permissions": ["core:default", "notification:default", "updater:default", "process:default"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*", "http://localhost:*"]
+  }
 }

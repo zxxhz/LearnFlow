@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { UpdateCheckResult } from "../lib/types";
 import { notify } from "../lib/notify";
+import { isTauri, tauriSelfUpdate, relaunchApp } from "../lib/updater";
 import { getTheme, applyTheme, type Theme } from "../lib/theme";
 
 const NAV_ITEMS = [
@@ -101,6 +102,42 @@ function NavActions({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
+// 应用内自动更新：桌面壳内下载新安装包（带进度）→ 静默安装 → 自动重启；
+// 浏览器/局域网模式不渲染（isTauri 为 false），横幅回退「查看发布页」链接（PRD 实现备注 19）
+function AutoUpdateButton() {
+  const [phase, setPhase] = useState<"idle" | "downloading" | "installing">("idle");
+  const [pct, setPct] = useState<number | null>(null);
+
+  if (!isTauri()) return null;
+
+  const run = async () => {
+    setPhase("downloading");
+    setPct(null);
+    try {
+      await tauriSelfUpdate((done, total) => {
+        setPct(total ? Math.min(100, Math.round((done / total) * 100)) : null);
+      });
+      setPhase("installing");
+      await relaunchApp();
+    } catch {
+      setPhase("idle");
+      notify("更新失败", "自动更新出错，请到发布页手动下载安装包。");
+    }
+  };
+
+  return (
+    <button
+      disabled={phase !== "idle"}
+      onClick={run}
+      className="rounded-md bg-green-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-800 disabled:opacity-70"
+    >
+      {phase === "idle" && "⬇ 一键更新"}
+      {phase === "downloading" && (pct !== null ? `下载中 ${pct}%` : "下载中…")}
+      {phase === "installing" && "安装中，即将重启…"}
+    </button>
+  );
+}
+
 export default function Layout() {
   const [navOpen, setNavOpen] = useState(false);
   const [theme, setThemeState] = useState<Theme>(() => getTheme());
@@ -186,12 +223,13 @@ export default function Layout() {
               {update!.current}）
             </span>
             <div className="flex items-center gap-2">
+              <AutoUpdateButton />
               {update!.url && (
                 <a
                   href={update!.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="rounded-md bg-green-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-800"
+                  className="text-xs text-green-700 dark:text-green-400 underline"
                 >
                   查看发布页
                 </a>

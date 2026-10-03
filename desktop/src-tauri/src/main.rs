@@ -122,6 +122,10 @@ fn main() {
         ))
         // 每日复习提醒的系统通知（前端经 @tauri-apps/plugin-notification 调用）
         .plugin(tauri_plugin_notification::init())
+        // 应用内自动更新（前端经 @tauri-apps/plugin-updater 检查/下载/安装，
+        // 端点指向 GitHub Releases 的 latest.json，签名见 tauri.conf.json plugins.updater）
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(Backend(Mutex::new(None)))
         .setup(move |app| {
             let handle = app.handle().clone();

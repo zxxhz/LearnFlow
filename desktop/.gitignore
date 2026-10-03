@@ -1,4 +1,5 @@
 # 桌面壳（路径相对 desktop/）
-src-tauri/target/
-src-tauri/gen/
 node_modules/
+src-tauri/gen/
+src-tauri/keys/
+src-tauri/target/

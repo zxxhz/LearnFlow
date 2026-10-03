@@ -140,6 +140,21 @@ npx tauri build   # 产出 NSIS 安装包，位于 src-tauri/target/release/bund
 
 > 国内网络提示：`tauri build` 首次会从 GitHub 下载 NSIS 工具链到 `%LOCALAPPDATA%/tauri/`，超时的话用镜像（如 `https://ghproxy.net/https://github.com/<原路径>`）手动下载 `nsis-3.11.zip` 解压成 `tauri/NSIS/`，`nsis_tauri_utils.dll` 放进 `tauri/NSIS/Plugins/x86-unicode/`（sha1 应为 75197FEE…，与 cli 二进制内嵌哈希一致）后重试。
 
+### 应用内自动更新
+
+桌面版内置更新器（`tauri-plugin-updater`）：打开应用时静默检查新版本，横幅上「⬇ 一键更新」下载安装包（带进度）→ 校验 minisign 签名 → 静默安装 → 自动重启；浏览器 / 局域网模式回退「查看发布页」链接。
+
+发版时的额外步骤（在 `npx tauri build` 之前）：
+
+```bash
+# 签名私钥不入库（desktop/src-tauri/keys/），丢失将无法签名更新，需换公钥重发一版手动安装
+export TAURI_SIGNING_PRIVATE_KEY="$(pwd)/src-tauri/keys/learnflow.key"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+npx tauri build   # 产出 exe 与同名 .sig
+```
+
+构建后按 `.sig` 内容手工生成 `latest.json`（`version` / `pub_date` / `platforms.windows-x86_64.{signature, url}`），与安装包一同上传 GitHub Release——更新器端点固定读 `releases/latest/download/latest.json`，少了它自动更新会静默回退到发布页链接。
+
 ## 路线图
 
 - [ ] 语音讲解费曼

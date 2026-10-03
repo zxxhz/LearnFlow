@@ -12,6 +12,8 @@
     "@microsoft/fetch-event-source": "^2.0.1",
     "@tanstack/react-query": "^5.51.0",
     "@tauri-apps/plugin-notification": "^2.5.1",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-updater": "^2.13.1",
     "diff-match-patch": "^1.0.5",
     "katex": "^0.16.11",
     "markdown-it": "^14.1.0",
