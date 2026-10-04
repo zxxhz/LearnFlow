@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { UpdateCheckResult } from "../lib/types";
@@ -17,26 +17,37 @@ const NAV_ITEMS = [
 ];
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+  const { pathname } = useLocation();
+
   return (
     <nav className="flex-1 space-y-1 px-3">
-      {NAV_ITEMS.map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.to === "/"}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            `flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${
+      {NAV_ITEMS.map((item) => {
+        // 首页统辖课程树（课程详情 / 章节阅读 / 新建课程 / 导入课程）均视为首页处于激活态
+        const isActive =
+          item.to === "/"
+            ? pathname === "/" ||
+              pathname.startsWith("/courses") ||
+              pathname.startsWith("/read") ||
+              pathname.startsWith("/import")
+            : pathname === item.to || pathname.startsWith(item.to + "/");
+
+        return (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            onClick={onNavigate}
+            aria-current={isActive ? "page" : undefined}
+            className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm ${
               isActive
-                ? "bg-brand-50 dark:bg-brand-900/40 font-medium text-brand-700"
+                ? "bg-brand-50 dark:bg-brand-900/40 font-medium text-brand-700 dark:text-brand-300"
                 : "text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-            }`
-          }
-        >
-          <span>{item.icon}</span>
-          {item.label}
-        </NavLink>
-      ))}
+            }`}
+          >
+            <span>{item.icon}</span>
+            {item.label}
+          </NavLink>
+        );
+      })}
     </nav>
   );
 }

@@ -21,8 +21,9 @@ backend/app/static/
 backend/dist/
 backend/build/
 
-# ZCode 本地会话产物
+# ZCode 本地会话产物与 Agent 技能
 .zcode/
+.agents/
 
 # 其他
 .DS_Store

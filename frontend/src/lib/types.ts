@@ -157,7 +157,7 @@ export interface KnowledgePoint {
   created_at: string;
 }
 
-export type ExerciseKind = "code" | "concept" | "choice" | "fill";
+export type ExerciseKind = "code" | "concept" | "choice" | "fill" | "math";
 
 export interface ExerciseAttempt {
   id: string;
