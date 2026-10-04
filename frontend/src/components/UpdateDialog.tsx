@@ -66,6 +66,7 @@ export default function UpdateDialog({
                 rel="noreferrer"
                 onClick={(e) => {
                   e.preventDefault();
+                  e.stopPropagation();
                   openExternalUrl(update.url!);
                 }}
                 className="rounded-md border border-gray-300 dark:border-gray-600 px-2.5 py-1 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"

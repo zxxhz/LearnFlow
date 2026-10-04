@@ -105,6 +105,7 @@ export default function Layout() {
   useEffect(() => {
     if (!isTauri()) return;
     const onDocClick = (e: MouseEvent) => {
+      if (e.defaultPrevented) return;
       const anchor = (e.target as HTMLElement | null)?.closest?.("a");
       if (!anchor) return;
       const href = anchor.getAttribute("href");

@@ -7,8 +7,18 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+let lastOpenUrl = "";
+let lastOpenTime = 0;
+
 /** 打开外部链接：在 Tauri 桌面壳内委托后端通过系统默认浏览器打开；在普通浏览器中直接 window.open */
 export async function openExternalUrl(url: string): Promise<void> {
+  const now = Date.now();
+  if (url === lastOpenUrl && now - lastOpenTime < 1000) {
+    return;
+  }
+  lastOpenUrl = url;
+  lastOpenTime = now;
+
   if (isTauri()) {
     try {
       await api.system.openUrl(url);
