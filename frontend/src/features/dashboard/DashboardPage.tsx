@@ -74,8 +74,10 @@ export default function DashboardPage() {
                 to={`/courses/${c.id}`}
                 className="block rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-3 transition hover:border-brand-500"
               >
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-gray-800 dark:text-gray-200">{c.title}</span>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-800 dark:text-gray-200">
+                    {c.title}
+                  </span>
                   <Badge color={badge.color}>{badge.label}</Badge>
                 </div>
                 <div className="mt-2 flex items-center gap-3">

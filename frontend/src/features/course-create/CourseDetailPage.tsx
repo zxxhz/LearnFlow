@@ -230,7 +230,7 @@ export default function CourseDetailPage() {
                   key={d.document_id}
                   className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-3"
                 >
-                  <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
                     <span className="w-6 text-center text-sm font-semibold text-gray-400 dark:text-gray-500">{d.chapter_index}</span>
                     <span className="truncate text-sm font-medium text-gray-800 dark:text-gray-200">{d.title}</span>
                     {d.status === "failed" && (

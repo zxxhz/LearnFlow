@@ -50,8 +50,10 @@ export default function HomePage() {
                 onClick={() => navigate(`/courses/${c.id}`)}
                 className="cursor-pointer rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 transition hover:border-brand-500 hover:shadow-md"
               >
-                <div className="flex items-start justify-between gap-2">
-                  <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{c.title}</h3>
+                <div className="flex items-start justify-between gap-3">
+                  <h3 className="min-w-0 flex-1 break-words text-base font-semibold text-gray-900 dark:text-gray-100">
+                    {c.title}
+                  </h3>
                   <Badge color={badge.color}>{badge.label}</Badge>
                 </div>
                 <p className="mt-1 line-clamp-2 text-sm text-gray-500 dark:text-gray-400">{c.topic}</p>
