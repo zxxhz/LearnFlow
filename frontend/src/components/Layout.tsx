@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { UpdateCheckResult } from "../lib/types";
 import { getTheme, applyTheme, type Theme } from "../lib/theme";
+import { isTauri, openExternalUrl } from "../lib/updater";
 import UpdateDialog from "./UpdateDialog";
 
 const NAV_ITEMS = [
@@ -98,6 +99,22 @@ export default function Layout() {
     const onFound = (e: Event) => setDialogUpdate((e as CustomEvent<UpdateCheckResult>).detail);
     window.addEventListener("learnflow:update-found", onFound);
     return () => window.removeEventListener("learnflow:update-found", onFound);
+  }, []);
+
+  // 桌面壳模式下全局拦截 target="_blank" 外部链接，唤起系统默认浏览器
+  useEffect(() => {
+    if (!isTauri()) return;
+    const onDocClick = (e: MouseEvent) => {
+      const anchor = (e.target as HTMLElement | null)?.closest?.("a");
+      if (!anchor) return;
+      const href = anchor.getAttribute("href");
+      if (href && (href.startsWith("http://") || href.startsWith("https://")) && anchor.target === "_blank") {
+        e.preventDefault();
+        openExternalUrl(href);
+      }
+    };
+    document.addEventListener("click", onDocClick);
+    return () => document.removeEventListener("click", onDocClick);
   }, []);
 
   const closeUpdateDialog = () => {

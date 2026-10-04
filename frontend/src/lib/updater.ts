@@ -1,8 +1,23 @@
 // 应用内自动更新：tauri-plugin-updater 封装（PRD 实现备注 19）。
 // 桌面壳内（__TAURI_INTERNALS__ 存在）走插件检查/下载/静默安装；浏览器与局域网模式返回 null，
 // 调用方回退「查看发布页」链接。latest.json 随 GitHub Release 发布（见 README 发布流程）。
+import { api } from "./api";
+
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+/** 打开外部链接：在 Tauri 桌面壳内委托后端通过系统默认浏览器打开；在普通浏览器中直接 window.open */
+export async function openExternalUrl(url: string): Promise<void> {
+  if (isTauri()) {
+    try {
+      await api.system.openUrl(url);
+      return;
+    } catch {
+      /* 兜底 */
+    }
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 export async function tauriSelfUpdate(

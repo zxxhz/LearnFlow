@@ -8,6 +8,8 @@ import json
 import sys
 import threading
 import time
+
+sys.stdout.reconfigure(encoding="utf-8")
 import urllib.error
 import urllib.request
 
@@ -236,6 +238,14 @@ def main() -> None:
     with urllib.request.urlopen(base + "/") as r:
         html = r.read().decode()
     check("GET / 返回前端 index.html", "LearnFlow" in html and r.status == 200)
+
+    # 1.1 系统 open-url 接口校验（打开默认浏览器）
+    s, body = call(base, "/api/system/open-url", "POST", {"url": "file:///etc/passwd"})
+    check("open-url 拦截非 http/https 协议", s == 400)
+    from unittest.mock import patch
+    with patch("webbrowser.open") as mock_open:
+        s, body = call(base, "/api/system/open-url", "POST", {"url": "https://github.com/zxxhz/LearnFlow/releases"})
+        check("open-url 正常触发默认浏览器", s == 200 and body.get("ok") is True and mock_open.called)
 
     # 2. 文档内容 + 块对齐
     s, body = call(base, f"/api/documents/{document_id}/content")

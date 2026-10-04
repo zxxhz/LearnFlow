@@ -298,6 +298,8 @@ export const api = {
     restore: (name: string) =>
       request<{ ok: boolean; message: string }>(`/system/backups/${name}/restore`, { method: "POST" }),
     deleteBackup: (name: string) => request<{ ok: boolean }>(`/system/backups/${name}`, { method: "DELETE" }),
+    openUrl: (url: string) =>
+      request<{ ok: boolean }>("/system/open-url", { method: "POST", ...jsonBody({ url }) }),
   },
   annotations: {
     listForDoc: (docId: string) =>

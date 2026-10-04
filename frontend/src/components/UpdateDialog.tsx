@@ -2,7 +2,7 @@
 import { useState } from "react";
 import type { UpdateCheckResult } from "../lib/types";
 import { Button, Modal, Spinner } from "./ui";
-import { isTauri, tauriSelfUpdate, relaunchApp } from "../lib/updater";
+import { isTauri, tauriSelfUpdate, relaunchApp, openExternalUrl } from "../lib/updater";
 import { notify } from "../lib/notify";
 
 // 应用内自动更新：桌面壳内下载新安装包（带进度）→ 静默安装 → 自动重启；
@@ -64,6 +64,10 @@ export default function UpdateDialog({
                 href={update.url}
                 target="_blank"
                 rel="noreferrer"
+                onClick={(e) => {
+                  e.preventDefault();
+                  openExternalUrl(update.url!);
+                }}
                 className="rounded-md border border-gray-300 dark:border-gray-600 px-2.5 py-1 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
               >
                 查看发布页

@@ -69,3 +69,23 @@ async def restore(name: str):
 async def remove_backup(name: str):
     system_service.delete_backup(name)
     return {"ok": True}
+
+
+class OpenUrlIn(BaseModel):
+    url: str
+
+
+@router.post("/open-url")
+async def open_url(payload: OpenUrlIn):
+    """在操作系统默认浏览器中打开指定链接（仅允许 http/https 协议）。"""
+    url = payload.url.strip()
+    if not (url.startswith("http://") or url.startswith("https://")):
+        raise HTTPException(status_code=400, detail="仅允许打开 http/https 链接")
+    import webbrowser
+
+    try:
+        webbrowser.open(url)
+        return {"ok": True}
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"打开浏览器失败：{e}") from e
+
