@@ -58,6 +58,23 @@ def stage_python_runtime() -> None:
     print(f">>> python-runtime 就绪（{size_mb:.0f} MB）：{RUNTIME_STAGE}")
 
 
+def prune_matplotlib_sample_images(dist_backend_dir: Path) -> None:
+    """清理 matplotlib 打包产物中的 sample_data 示例文件与 GUI 工具栏图片。
+
+    原因：Windows 照片应用会扫描包含在用户目录/安装目录下的图片文件，
+    matplotlib 自带的 grace_hopper.jpg 等示例图片会出现在用户的 Windows 照片流中。
+    LearnFlow 仅用 Agg 后端生成 SVG，完全不需要 sample_data 与 images。
+    """
+    mpl_data = dist_backend_dir / "_internal" / "matplotlib" / "mpl-data"
+    if not mpl_data.exists():
+        return
+    for sub in ("sample_data", "images"):
+        target = mpl_data / sub
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+            print(f">>> 已清理 matplotlib 无用资源：{target}")
+
+
 def main() -> None:
     if not STATIC_INDEX.exists():
         build_frontend()
@@ -69,6 +86,7 @@ def main() -> None:
         check=True,
     )
     out = BACKEND_ROOT / "dist" / "learnflow-backend"
+    prune_matplotlib_sample_images(out)
     size_mb = sum(f.stat().st_size for f in out.rglob("*") if f.is_file()) / 1e6
     print(f">>> 打包完成（{size_mb:.0f} MB）：{out / 'learnflow-backend.exe'}")
 

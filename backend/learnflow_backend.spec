@@ -46,6 +46,23 @@ a = Analysis(
     noarchive=False,
 )
 
+# 过滤掉 matplotlib 自带的 sample_data 示例数据（如 grace_hopper.jpg 等图片）以及 GUI 工具栏 images 图标：
+# 1. LearnFlow 高数绘图走 Agg + backend_svg 无头渲染，完全不需要 sample_data 和 GUI 工具栏图片。
+# 2. 如果打包进去，Windows 照片/图片应用（Photos）会递归扫描索引该目录，导致用户的系统照片中莫名出现 Grace Hopper 等示例图片。
+a.datas = [
+    d
+    for d in a.datas
+    if not (
+        ("matplotlib" in d[0].lower() or "matplotlib" in str(d[1]).lower())
+        and (
+            "sample_data" in d[0].replace("\\", "/").lower()
+            or "mpl-data/images" in d[0].replace("\\", "/").lower()
+            or "sample_data" in str(d[1]).replace("\\", "/").lower()
+            or "mpl-data/images" in str(d[1]).replace("\\", "/").lower()
+        )
+    )
+]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
