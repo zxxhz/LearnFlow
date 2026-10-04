@@ -89,11 +89,19 @@ class _AccessGuard:
                     return
 
                 path = scope.get("path", "")
-                # 静态打包资产（JS/CSS/图标等）无敏感数据，豁免 token 校验，防止未就绪的浏览器白屏
-                if path.startswith("/assets/") or path in (
-                    "/favicon.ico",
-                    "/favicon.svg",
-                    "/apple-touch-icon.png",
+                # 静态打包资产（JS/CSS/图标/PWA 清单/Service Worker 等）无敏感数据，豁免 token 校验，防止未就绪的浏览器白屏
+                if (
+                    path.startswith("/assets/")
+                    or path.startswith("/icons/")
+                    or path
+                    in (
+                        "/favicon.ico",
+                        "/favicon.svg",
+                        "/apple-touch-icon.png",
+                        "/manifest.webmanifest",
+                        "/manifest.json",
+                        "/sw.js",
+                    )
                 ):
                     await self.app(scope, receive, send)
                     return
@@ -192,6 +200,21 @@ def create_app() -> FastAPI:
         async def spa_fallback(full_path: str):
             candidate = STATIC_DIR / full_path
             if full_path and candidate.is_file() and candidate.resolve().is_relative_to(STATIC_DIR.resolve()):
+                if full_path == "sw.js":
+                    return FileResponse(
+                        candidate,
+                        media_type="application/javascript",
+                        headers={
+                            "Cache-Control": "no-cache, no-store, must-revalidate",
+                            "Service-Worker-Allowed": "/",
+                        },
+                    )
+                if full_path == "manifest.webmanifest":
+                    return FileResponse(
+                        candidate,
+                        media_type="application/manifest+json",
+                        headers={"Cache-Control": "no-cache"},
+                    )
                 return FileResponse(candidate)
             return FileResponse(
                 STATIC_DIR / "index.html",

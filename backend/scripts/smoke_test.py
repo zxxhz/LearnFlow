@@ -247,6 +247,17 @@ def main() -> None:
         html = r.read().decode()
     check("GET / 返回前端 index.html", "LearnFlow" in html and r.status == 200)
 
+    # 1.0 PWA 规范资产校验（manifest / sw.js / 图标）
+    with urllib.request.urlopen(base + "/manifest.webmanifest") as r:
+        manifest_data = json.loads(r.read().decode())
+    check("PWA manifest.webmanifest 正常返回", r.status == 200 and manifest_data.get("short_name") == "LearnFlow" and len(manifest_data.get("icons", [])) >= 2)
+
+    s, sw_bytes, sw_hdrs = call_raw(base, "/sw.js")
+    check("PWA sw.js 正常返回且携带 Service-Worker-Allowed 响应头", s == 200 and b"learnflow" in sw_bytes.lower() and sw_hdrs.get("service-worker-allowed") == "/")
+
+    s, icon_bytes, _ = call_raw(base, "/icons/icon-192.png")
+    check("PWA 192 图标正常返回", s == 200 and len(icon_bytes) > 100)
+
     # 1.1 系统 open-url 接口校验（打开默认浏览器）
     s, body = call(base, "/api/system/open-url", "POST", {"url": "file:///etc/passwd"})
     check("open-url 拦截非 http/https 协议", s == 400)

@@ -21,6 +21,36 @@ if (typeof window !== "undefined") {
   }
 }
 
+// PWA Service Worker 注册（非桌面壳环境下生效）
+if (
+  typeof window !== "undefined" &&
+  "serviceWorker" in navigator &&
+  !("__TAURI_INTERNALS__" in window)
+) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("/sw.js", { scope: "/" })
+      .then((reg) => {
+        reg.onupdatefound = () => {
+          const installingWorker = reg.installing;
+          if (installingWorker) {
+            installingWorker.onstatechange = () => {
+              if (
+                installingWorker.state === "installed" &&
+                navigator.serviceWorker.controller
+              ) {
+                console.log("[PWA] 新版本资源已准备就绪");
+              }
+            };
+          }
+        };
+      })
+      .catch((err) => {
+        console.warn("[PWA] Service Worker 注册失败:", err);
+      });
+  });
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 15_000 },
