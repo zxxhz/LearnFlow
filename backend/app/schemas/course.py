@@ -42,7 +42,19 @@ class CourseOut(ORMModel):
 
 
 class CourseSettingsUpdate(BaseModel):
+    # 传入即改名（去空格后须非空）；不传则只更新 course_settings
+    title: str | None = None
     auto_create_cards: bool | None = None
+
+    @field_validator("title")
+    @classmethod
+    def _clean_title(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            raise ValueError("课程名称不能为空")
+        return v[:200]
 
 
 class ChapterProgress(BaseModel):

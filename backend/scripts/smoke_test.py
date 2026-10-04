@@ -368,6 +368,15 @@ def main() -> None:
         s, body = call(base, f"/api/exercises?document_id={document_id}")
         check("删除后列表剩 4 题", s == 200 and len(body) == 4)
 
+    # 6.65 课程改名（PATCH title）
+    s, orig_course = call(base, f"/api/courses/{course_id}")
+    s, body = call(base, f"/api/courses/{course_id}", "PATCH", {"title": "指针入门（已改名）"})
+    check("课程改名", s == 200 and body["title"] == "指针入门（已改名）", json.dumps(body, ensure_ascii=False)[:150])
+    s, body = call(base, f"/api/courses/{course_id}", "PATCH", {"title": "   "})
+    check("课程改名为空 → 4xx", s in (400, 422), str(body)[:120])
+    s, body = call(base, f"/api/courses/{course_id}", "PATCH", {"title": orig_course["title"]})
+    check("课程改名还原", s == 200 and body["title"] == orig_course["title"])
+
     # 6.7 搜索 / 学习时长 / 仪表盘扩展 / 导出 / 备份
     s, body = call(base, "/api/search", )
     check("空搜索词 → 400", s == 400, str(body)[:80])
@@ -529,6 +538,13 @@ def main() -> None:
     s, body = call_multipart(base, "/api/banks/import", {}, [("file", "test_bank.xlsx", bank_bytes)])
     check("题库 import 成功", s == 200 and body["question_count"] == 11 and body["stats"]["answered"] == 0, json.dumps(body, ensure_ascii=False)[:200])
     bank_id = body.get("id", "")
+
+    s, body = call(base, f"/api/banks/{bank_id}", "PATCH", {"name": "网安题库（改名）"})
+    check("题库改名", s == 200 and body.get("ok") is True, str(body)[:120])
+    s, body = call(base, "/api/banks")
+    check("题库改名生效", s == 200 and any(b["name"] == "网安题库（改名）" for b in body), str(body)[:150])
+    s, body = call(base, f"/api/banks/{bank_id}", "PATCH", {"name": "  "})
+    check("题库改名为空 → 4xx", s in (400, 422), str(body)[:120])
 
     s, body = call(base, f"/api/banks/{bank_id}/round", "POST", {"mode": "random", "size": 10})
     check("抽轮 10 题", s == 200 and len(body["questions"]) == 10, str(body)[:150])

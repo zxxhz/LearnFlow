@@ -4,7 +4,7 @@
 - 作答中（BankQuestionOut）：永不下发答案与解析
 - 错题复习（BankWrongQuestionOut）：含答案原文与解析
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class BankSkippedRow(BaseModel):
@@ -59,6 +59,18 @@ class BankStatsOut(BaseModel):
     accuracy: float  # 全部流水的累计正确率（%）
     wrong_count: int  # 错题池大小
     by_type: dict[str, dict]
+
+
+class BankRenameIn(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("题库名称不能为空")
+        return v[:200]
 
 
 class BankOut(BaseModel):

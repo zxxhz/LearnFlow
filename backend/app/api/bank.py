@@ -16,6 +16,7 @@ from app.schemas.bank import (
     BankAttemptResult,
     BankOut,
     BankQuestionOut,
+    BankRenameIn,
     BankRoundOut,
     BankRoundRequest,
     BankSkippedRow,
@@ -220,6 +221,15 @@ async def wrong_book(bank_id: str, db: AsyncSession = Depends(get_db)):
             )
         )
     return out
+
+
+@router.patch("/{bank_id}")
+async def rename_bank(bank_id: str, body: BankRenameIn, db: AsyncSession = Depends(get_db)):
+    """题库改名（错题池/作答记录不动，仅更新名称）。"""
+    bank = await _bank_or_404(db, bank_id)
+    bank.name = body.name
+    await db.commit()
+    return {"ok": True}
 
 
 @router.delete("/{bank_id}")

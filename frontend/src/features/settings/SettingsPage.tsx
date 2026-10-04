@@ -40,6 +40,7 @@ export default function SettingsPage() {
   });
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
+  const [sceneOpen, setSceneOpen] = useState(false); // 场景模型默认折叠
 
   useEffect(() => {
     if (settings) {
@@ -241,9 +242,17 @@ export default function SettingsPage() {
           )}
           {saveLlm.isError && <p className="text-sm text-red-600 dark:text-red-400">{saveLlm.error.message}</p>}
 
-          {/* 场景化模型（PRD §5.7：便宜模型做生成） */}
+          {/* 场景化模型（PRD §5.7：便宜模型做生成）——默认折叠，点开展开 */}
           <div className="border-t border-gray-100 dark:border-gray-800 pt-4">
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">场景模型（留空 = 使用主配置）</h3>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between text-left"
+              onClick={() => setSceneOpen((v) => !v)}
+            >
+              <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">场景模型（留空 = 使用主配置）</span>
+              <span className="text-xs text-gray-400 dark:text-gray-500">{sceneOpen ? "收起 ▾" : "展开 ▸"}</span>
+            </button>
+            {sceneOpen && (
             <div className="mt-3 space-y-4">
               {SCENE_META.map((s) => (
                 <div key={s.name} className="rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60 p-3">
@@ -289,6 +298,7 @@ export default function SettingsPage() {
                 </div>
               ))}
             </div>
+            )}
           </div>
         </div>
       </section>

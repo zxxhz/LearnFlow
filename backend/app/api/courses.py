@@ -165,6 +165,8 @@ async def list_courses(db: AsyncSession = Depends(get_db)):
 async def update_course(course_id: str, body: CourseSettingsUpdate, db: AsyncSession = Depends(get_db)):
     """课程级覆盖项（PRD FR-5.1：可在课程设置中关闭自动出卡）。"""
     course = await _get_course(db, course_id)
+    if body.title is not None:
+        course.title = body.title
     merged = json.loads(course.course_settings or "{}")
     if body.auto_create_cards is not None:
         merged["auto_create_cards"] = body.auto_create_cards

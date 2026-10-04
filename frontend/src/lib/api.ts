@@ -141,6 +141,11 @@ export const api = {
         method: "PUT",
         ...jsonBody({ outline }),
       }),
+    rename: (id: string, title: string) =>
+      request<Course>(`/courses/${id}`, {
+        method: "PATCH",
+        ...jsonBody({ title }),
+      }),
     generate: (id: string) =>
       request<Course>(`/courses/${id}/generate`, { method: "POST" }),
     list: () => request<CourseListItem[]>("/courses"),
@@ -275,6 +280,11 @@ export const api = {
         ...jsonBody({ question_id: questionId, content }),
       }),
     wrong: (id: string) => request<BankWrongQuestion[]>(`/banks/${id}/wrong`),
+    rename: (id: string, name: string) =>
+      request<{ ok: boolean }>(`/banks/${id}`, {
+        method: "PATCH",
+        ...jsonBody({ name }),
+      }),
     remove: (id: string) => request<{ ok: boolean }>(`/banks/${id}`, { method: "DELETE" }),
   },
   study: {

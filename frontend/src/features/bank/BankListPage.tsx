@@ -9,6 +9,7 @@ import {
   ConfirmDialog,
   EmptyState,
   ErrorText,
+  Input,
   Modal,
   Spinner,
 } from "../../components/ui";
@@ -21,6 +22,17 @@ export default function BankListPage() {
   const { data, isLoading, error } = useQuery({ queryKey: ["banks"], queryFn: api.banks.list });
   const [importOpen, setImportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Bank | null>(null);
+  const [renameTarget, setRenameTarget] = useState<Bank | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  const rename = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => api.banks.rename(id, name),
+    onSuccess: () => {
+      setRenameTarget(null);
+      qc.invalidateQueries({ queryKey: ["banks"] });
+    },
+    onError: (e) => alert((e as Error).message),
+  });
 
   const remove = useMutation({
     mutationFn: (id: string) => api.banks.remove(id),
@@ -76,6 +88,16 @@ export default function BankListPage() {
                     {b.source_file} · 导入于 {b.created_at.slice(0, 10)}
                   </p>
                 </div>
+                <Button
+                  variant="ghost"
+                  className="shrink-0 text-xs"
+                  onClick={() => {
+                    setRenameTarget(b);
+                    setRenameValue(b.name);
+                  }}
+                >
+                  ✏️ 重命名
+                </Button>
                 <Button variant="ghost" className="shrink-0 text-xs" onClick={() => setDeleteTarget(b)}>
                   删除
                 </Button>
@@ -107,6 +129,29 @@ export default function BankListPage() {
         onConfirm={() => deleteTarget && remove.mutate(deleteTarget.id)}
         onCancel={() => setDeleteTarget(null)}
       />
+      <Modal open={!!renameTarget} onClose={() => setRenameTarget(null)} title="✏️ 重命名题库" width="max-w-sm">
+        <Input
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && renameValue.trim()) rename.mutate({ id: renameTarget!.id, name: renameValue.trim() });
+            if (e.key === "Escape") setRenameTarget(null);
+          }}
+          autoFocus
+          aria-label="题库名称"
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setRenameTarget(null)}>
+            取消
+          </Button>
+          <Button
+            disabled={!renameValue.trim() || rename.isPending}
+            onClick={() => renameTarget && rename.mutate({ id: renameTarget.id, name: renameValue.trim() })}
+          >
+            {rename.isPending ? <Spinner className="h-3.5 w-3.5" /> : "保存"}
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

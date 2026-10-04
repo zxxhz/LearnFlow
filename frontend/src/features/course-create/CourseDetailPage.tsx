@@ -1,11 +1,11 @@
 // 课程详情：草稿态=大纲编辑器；生成态=章节进度（SSE 实时刷新）（PRD FR-1.3）
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { subscribeSSE } from "../../lib/sse";
 import type { ChapterProgress, ProgressSSEEvent } from "../../lib/types";
-import { Badge, Button, ConfirmDialog, EmptyState, Spinner } from "../../components/ui";
+import { Badge, Button, ConfirmDialog, EmptyState, Input, Spinner } from "../../components/ui";
 import OutlineEditor from "./OutlineEditor";
 import CourseAskPanel from "./CourseAskPanel";
 
@@ -29,6 +29,18 @@ export default function CourseDetailPage() {
   const [liveDocs, setLiveDocs] = useState<ChapterProgress[] | null>(null);
   const [doneBanner, setDoneBanner] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+
+  const rename = useMutation({
+    mutationFn: (title: string) => api.courses.rename(courseId!, title),
+    onSuccess: () => {
+      setRenaming(false);
+      queryClient.invalidateQueries({ queryKey: ["course", courseId] });
+      queryClient.invalidateQueries({ queryKey: ["courses"] });
+    },
+    onError: (e) => alert((e as Error).message),
+  });
   const abortRef = useRef<AbortController | null>(null);
 
   // 生成中订阅进度 SSE（snapshot + 实时事件）
@@ -112,7 +124,46 @@ export default function CourseDetailPage() {
         ← 返回首页
       </Link>
       <div className="mt-3 flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{course.title}</h1>
+        {renaming ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <Input
+              value={titleDraft}
+              onChange={(e) => setTitleDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && titleDraft.trim()) rename.mutate(titleDraft.trim());
+                if (e.key === "Escape") setRenaming(false);
+              }}
+              autoFocus
+              aria-label="课程名称"
+            />
+            <Button
+              variant="secondary"
+              className="shrink-0 text-xs"
+              disabled={!titleDraft.trim() || rename.isPending}
+              onClick={() => rename.mutate(titleDraft.trim())}
+            >
+              {rename.isPending ? <Spinner className="h-3.5 w-3.5" /> : "保存"}
+            </Button>
+            <Button variant="ghost" className="shrink-0 text-xs" onClick={() => setRenaming(false)}>
+              取消
+            </Button>
+          </div>
+        ) : (
+          <>
+            <h1 className="min-w-0 flex-1 truncate text-2xl font-bold text-gray-900 dark:text-gray-100">{course.title}</h1>
+            <Button
+              variant="ghost"
+              className="shrink-0 text-xs"
+              title="重命名课程"
+              onClick={() => {
+                setTitleDraft(course.title);
+                setRenaming(true);
+              }}
+            >
+              ✏️ 重命名
+            </Button>
+          </>
+        )}
         <div className="flex items-center gap-2">
           {course.status !== "draft" && (
             <>
