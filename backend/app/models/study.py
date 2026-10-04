@@ -37,3 +37,27 @@ class Quiz(UUIDPk, UserIdMixin, CreatedAt, Base):
     # 出题时选择的知识点 id 列表（JSON 数组）
     kp_ids: Mapped[str] = mapped_column(Text, default="[]")
     title: Mapped[str] = mapped_column(String(200), default="随堂小测")
+
+
+class LearnerProfile(Base):
+    """学习者认知画像与导学偏好。单用户模式下固定 id='local'。"""
+
+    __tablename__ = "learner_profiles"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default="local")
+    background_summary: Mapped[str] = mapped_column(Text, default="")
+    socratic_mode: Mapped[bool] = mapped_column(default=True)
+    updated_at: Mapped[str] = mapped_column(String(40), default=utcnow_iso, onupdate=utcnow_iso)
+
+
+class LearnerMisconception(UUIDPk, CreatedAt, Base):
+    """学习者认知漏洞与高频易错标签（用于伴学出题与针对性导学）。"""
+
+    __tablename__ = "learner_misconceptions"
+
+    topic: Mapped[str] = mapped_column(String(100), default="", index=True)
+    tag: Mapped[str] = mapped_column(String(100), default="")
+    evidence: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    resolved_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+

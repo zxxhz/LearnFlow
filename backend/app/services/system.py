@@ -51,6 +51,30 @@ def rotate_access_token() -> str:
     return token
 
 
+def lan_access_path() -> Path:
+    return settings.data_dir / "lan_access_enabled.txt"
+
+
+def is_lan_access_enabled() -> bool:
+    """是否允许局域网设备访问，默认开启（True）。"""
+    p = lan_access_path()
+    if p.exists():
+        try:
+            return p.read_text(encoding="utf-8").strip() != "0"
+        except OSError:
+            return True
+    return True
+
+
+def set_lan_access_enabled(enabled: bool) -> bool:
+    try:
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+        lan_access_path().write_text("1" if enabled else "0", encoding="utf-8")
+    except OSError:
+        logger.warning("局域网开关写入失败")
+    return enabled
+
+
 def lan_urls() -> list[str]:
     """本机局域网地址（供平板访问提示）。"""
     ips: set[str] = set()

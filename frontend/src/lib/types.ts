@@ -280,6 +280,7 @@ export interface AccessInfo {
   host: string;
   port: number;
   lan_mode: boolean;
+  lan_enabled?: boolean;
   lan_urls: string[];
   token: string;
   lan_urls_with_token: string[];

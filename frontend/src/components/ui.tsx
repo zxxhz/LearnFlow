@@ -77,7 +77,7 @@ export function Badge({
   color = "gray",
 }: {
   children: ReactNode;
-  color?: "gray" | "green" | "blue" | "red" | "amber";
+  color?: "gray" | "green" | "blue" | "red" | "amber" | "purple";
 }) {
   const styles = {
     gray: "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400",
@@ -85,7 +85,9 @@ export function Badge({
     blue: "bg-blue-100 text-blue-700",
     red: "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400",
     amber: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400",
+    purple: "bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-400",
   };
+
   return (
     <span
       className={`inline-block rounded-full px-2 py-0.5 text-xs ${styles[color]}`}

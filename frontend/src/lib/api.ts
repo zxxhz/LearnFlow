@@ -38,6 +38,7 @@ import type {
   BankStats,
   BankWrongQuestion,
 } from "./types";
+import { streamSSE } from "./sse";
 
 const BASE = "/api";
 
@@ -292,6 +293,8 @@ export const api = {
   },
   system: {
     accessInfo: () => request<AccessInfo>("/system/access-info"),
+    setLanAccess: (enabled: boolean) =>
+      request<AccessInfo>(`/system/lan-access?enabled=${enabled}`, { method: "POST" }),
     rotateToken: () => request<AccessInfo>("/system/access-token/rotate", { method: "POST" }),
     backup: () => request<BackupItem>("/system/backup", { method: "POST" }),
     backups: () => request<BackupItem[]>("/system/backups"),
@@ -337,4 +340,13 @@ export const api = {
   dashboard: {
     summary: () => request<DashboardSummary>("/dashboard/summary"),
   },
+  tutor: {
+    diagnoseSSE: (
+      body: { exercise_id: string; content: string; question?: string; mode?: "socratic" | "direct" },
+      onEvent: (payload: any) => void,
+      signal?: AbortSignal
+    ) => streamSSE("/tutor/diagnose", body, onEvent, signal),
+  },
 };
+
+

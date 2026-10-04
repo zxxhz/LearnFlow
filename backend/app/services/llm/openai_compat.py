@@ -103,6 +103,41 @@ class OpenAICompatAdapter(LLMAdapter):
                     raise translate_openai_error(e2) from e2
             raise translate_openai_error(e) from e
 
+    async def chat_raw(
+        self,
+        messages: list[dict],
+        *,
+        tools: list[dict] | None = None,
+        max_tokens: int | None = None,
+    ):
+        """返回完整的 ChatCompletionMessage 对象，包含 tool_calls 等元数据。"""
+        kwargs: dict = {
+            "model": self.model,
+            "messages": messages,
+        }
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        if tools:
+            kwargs["tools"] = tools
+
+        try:
+            t0 = time.perf_counter()
+            resp = await self.client.chat.completions.create(**kwargs)
+            self._record(resp, int((time.perf_counter() - t0) * 1000))
+            return resp.choices[0].message
+        except Exception as e:
+            if isinstance(e, BadRequestError) and "tools" in kwargs:
+                kwargs.pop("tools", None)
+                try:
+                    t0 = time.perf_counter()
+                    resp = await self.client.chat.completions.create(**kwargs)
+                    self._record(resp, int((time.perf_counter() - t0) * 1000))
+                    return resp.choices[0].message
+                except Exception as e2:
+                    raise translate_openai_error(e2) from e2
+            raise translate_openai_error(e) from e
+
+
     async def _stream(
         self, kwargs: dict, *, allow_json_fallback: bool = False
     ) -> AsyncIterator[str]:

@@ -8,7 +8,13 @@ from app.models.execution import CodeExecution
 from app.models.exercise import Exercise, ExerciseAttempt
 from app.models.knowledge_point import KnowledgePoint
 from app.models.settings import AppSetting
-from app.models.study import LLMUsage, Quiz, StudyDay
+from app.models.study import (
+    LearnerMisconception,
+    LearnerProfile,
+    LLMUsage,
+    Quiz,
+    StudyDay,
+)
 
 __all__ = [
     "Base",
@@ -26,7 +32,10 @@ __all__ = [
     "ExerciseAttempt",
     "KnowledgePoint",
     "AppSetting",
+    "LearnerProfile",
+    "LearnerMisconception",
     "LLMUsage",
     "Quiz",
     "StudyDay",
 ]
+

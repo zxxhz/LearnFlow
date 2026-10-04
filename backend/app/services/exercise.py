@@ -16,8 +16,10 @@ from app.models.exercise import (
     EXERCISE_CODE,
     EXERCISE_CONCEPT,
     EXERCISE_FILL,
+    EXERCISE_MATH,
 )
 from app.schemas.exercise import (
+
     ConceptGrade,
     ExerciseAttemptOut,
     ExerciseDraftSet,
@@ -65,7 +67,28 @@ def _fill_answers(answer_json: str) -> list[str]:
         return [answer_json] if answer_json else []
 
 
+def check_math_equality(user_expr_str: str, expected_expr_str: str) -> bool:
+    """使用 SymPy 校验数学表达式的代数等价性（支持多项式、三角函数等化简）。"""
+    import sympy as sp
+
+    u_str = user_expr_str.strip()
+    e_str = expected_expr_str.strip()
+    if not u_str or not e_str:
+        return False
+    if u_str == e_str:
+        return True
+    try:
+        symbols_dict = {name: sp.Symbol(name) for name in "xyztabcn"}
+        u = sp.sympify(u_str, locals=symbols_dict)
+        e = sp.sympify(e_str, locals=symbols_dict)
+        diff = sp.simplify(u - e)
+        return bool(diff == 0)
+    except Exception:
+        return "".join(u_str.split()).lower() == "".join(e_str.split()).lower()
+
+
 async def _kp_context(db: AsyncSession, kp: KnowledgePoint) -> tuple[Document, list[str]]:
+
     document = await db.get(Document, kp.document_id)
     if document is None:
         raise LookupError("知识点所属章节不存在")
@@ -310,8 +333,23 @@ async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAt
             passed=passed,
             feedback="" if passed else f"参考答案：{' / '.join(_fill_answers(exercise.answer))}",
         )
+    elif exercise.kind == EXERCISE_MATH:
+        ref = exercise.expected_output or exercise.answer or exercise.reference_answer
+        passed = check_math_equality(content, ref)
+        attempt = ExerciseAttempt(
+            exercise_id=exercise.id,
+            content=content,
+            status=ATTEMPT_GRADED,
+            exit_code=None,
+            stdout="",
+            stderr="",
+            duration_ms=None,
+            passed=passed,
+            feedback="" if passed else f"结果与参考目标（{ref}）代数不等价，请检查推导。",
+        )
     else:
         grade = await _grade_concept(db, exercise, content)
+
         attempt = ExerciseAttempt(
             exercise_id=exercise.id,
             content=content,

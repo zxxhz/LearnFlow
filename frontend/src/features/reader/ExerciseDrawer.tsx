@@ -125,6 +125,9 @@ export default function ExerciseDrawer({ documentId, kps, exercises, focusKpId, 
       <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">🎮 闯关练习{total > 0 && `（${total}）`}</span>
+          <span className="text-[11px] rounded bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 px-1.5 py-0.5 text-amber-700 dark:text-amber-300 font-medium">
+            💡 助教伴学
+          </span>
           {ladder.length > 0 && (
             <span className={`text-xs font-medium ${cleared === ladder.length ? "text-green-600 dark:text-green-400" : "text-gray-400 dark:text-gray-500"}`}>
               已通关 {cleared}/{ladder.length} 关

@@ -78,6 +78,16 @@ class _AccessGuard:
             if host.startswith("::ffff:"):  # IPv4-mapped IPv6 归一化（双栈绑定下的本机回环）
                 host = host[7:]
             if host not in ("127.0.0.1", "::1"):
+                from app.services.system import get_access_token, is_lan_access_enabled
+
+                if not is_lan_access_enabled():
+                    resp = JSONResponse(
+                        status_code=403,
+                        content={"detail": "局域网访问已在设置中关闭。如需从其他设备访问，请在设置中开启「局域网访问」。"},
+                    )
+                    await resp(scope, receive, send)
+                    return
+
                 import secrets
                 import urllib.parse
 
@@ -90,7 +100,6 @@ class _AccessGuard:
                     if k == b"x-access-token":
                         token = v.decode("latin-1")
                         break
-                from app.services.system import get_access_token
 
                 if not token or not secrets.compare_digest(token, get_access_token()):
                     resp = JSONResponse(
@@ -138,7 +147,10 @@ def create_app() -> FastAPI:
             candidate = STATIC_DIR / full_path
             if full_path and candidate.is_file() and candidate.resolve().is_relative_to(STATIC_DIR.resolve()):
                 return FileResponse(candidate)
-            return FileResponse(STATIC_DIR / "index.html")
+            return FileResponse(
+                STATIC_DIR / "index.html",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
 
     return app
 
@@ -153,10 +165,10 @@ def main() -> None:
     import uvicorn
 
     if settings.host == "0.0.0.0":
-        # 平板/局域网访问（PRD §5.9）：打印本机局域网地址（带访问令牌）
+        # 局域网访问（PRD §5.9）：打印本机局域网地址（带访问令牌）
         from app.services.system import get_access_token, lan_urls
 
-        print("\n>>> 局域网访问地址（平板需与电脑同一网络，或走内网穿透）：")
+        print("\n>>> 局域网访问地址（需与电脑同一网络，或走内网穿透）：")
         token = get_access_token()
         for url in lan_urls():
             print(f">>>   {url}/?token={token}")

@@ -2,8 +2,15 @@ import json
 
 from pydantic import BaseModel, field_validator
 
-from app.models.exercise import EXERCISE_CODE, EXERCISE_CHOICE, EXERCISE_CONCEPT, EXERCISE_FILL
+from app.models.exercise import (
+    EXERCISE_CHOICE,
+    EXERCISE_CODE,
+    EXERCISE_CONCEPT,
+    EXERCISE_FILL,
+    EXERCISE_MATH,
+)
 from app.schemas.common import ORMModel
+
 from app.schemas.execution import LANG_ALIASES
 
 MAX_ATTEMPT_LENGTH = 64_000
@@ -140,7 +147,7 @@ class QuizOut(BaseModel):
 
 # ---- LLM 结构化输出目标 ----
 
-_KINDS = {EXERCISE_CODE, EXERCISE_CONCEPT, EXERCISE_CHOICE, EXERCISE_FILL}
+_KINDS = {EXERCISE_CODE, EXERCISE_CONCEPT, EXERCISE_CHOICE, EXERCISE_FILL, EXERCISE_MATH}
 
 
 class ExerciseDraftItem(BaseModel):
@@ -215,7 +222,13 @@ class ExerciseDraftItem(BaseModel):
             return bool(self.task.strip() and len(self.options) >= 2 and self.answer_letter())
         if self.kind == EXERCISE_FILL:
             return bool(self.task.strip() and any(str(a).strip() for a in self._answer_list()))
+        if self.kind == EXERCISE_MATH:
+            return bool(
+                self.task.strip()
+                and (self.expected_output.strip() or self.reference_answer.strip())
+            )
         return bool(self.task.strip() and self.reference_answer.strip())
+
 
 
 class ExerciseDraftSet(BaseModel):

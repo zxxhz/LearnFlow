@@ -9,8 +9,10 @@ EXERCISE_CODE = "code"  # 从零手写代码的闯关关卡，stdout 对比自�
 EXERCISE_CONCEPT = "concept"  # 概念简答题，LLM 按参考答案评分
 EXERCISE_CHOICE = "choice"  # 单选题，对比选项字母自动判定
 EXERCISE_FILL = "fill"  # 填空题，归一化后对比参考答案自动判定
+EXERCISE_MATH = "math"  # 数学代数计算关，SymPy 等价性自动判定
 
 ATTEMPT_GRADED = "graded"  # 概念题作答完成评分
+
 
 
 class Exercise(UUIDPk, UserIdMixin, CreatedAt, Base):

@@ -14,6 +14,7 @@ class AccessInfoOut(BaseModel):
     host: str
     port: int
     lan_mode: bool
+    lan_enabled: bool
     lan_urls: list[str]
     token: str
     lan_urls_with_token: list[str]
@@ -21,23 +22,31 @@ class AccessInfoOut(BaseModel):
 
 @router.get("/access-info", response_model=AccessInfoOut)
 async def access_info():
-    lan_mode = settings.host == "0.0.0.0"
+    lan_enabled = system_service.is_lan_access_enabled()
+    lan_mode = (settings.host == "0.0.0.0") and lan_enabled
     token = system_service.get_access_token() if lan_mode else ""
     urls = system_service.lan_urls() if lan_mode else []
     return AccessInfoOut(
         host=settings.host,
         port=settings.port,
         lan_mode=lan_mode,
+        lan_enabled=lan_enabled,
         lan_urls=urls,
         token=token,
         lan_urls_with_token=[f"{u}/?token={token}" for u in urls],
     )
 
 
+@router.post("/lan-access", response_model=AccessInfoOut)
+async def set_lan_access(enabled: bool):
+    system_service.set_lan_access_enabled(enabled)
+    return await access_info()
+
+
 @router.post("/access-token/rotate", response_model=AccessInfoOut)
 async def rotate_token():
-    if settings.host != "0.0.0.0":
-        raise HTTPException(status_code=400, detail="当前未开启局域网模式（APP_HOST=0.0.0.0）")
+    if not system_service.is_lan_access_enabled():
+        raise HTTPException(status_code=400, detail="当前未开启局域网模式")
     system_service.rotate_access_token()
     return await access_info()
 

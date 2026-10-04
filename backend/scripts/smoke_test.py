@@ -125,6 +125,14 @@ async def seed() -> tuple[str, str]:
                 task_md="对变量 x 取地址的表达式是 ______。",
                 answer=json.dumps(["&x", "& x"], ensure_ascii=False),
             ),
+            Exercise(
+                knowledge_point_id=kp.id,
+                document_id=doc.id,
+                kind="math",
+                title="导数计算",
+                task_md="计算 $f(x) = \\sin(x^2)$ 的导数 $f'(x)$。",
+                expected_output="2*x*cos(x**2)",
+            ),
         ])
         await db.commit()
         return course.id, doc.id, kp.id
@@ -247,6 +255,17 @@ def main() -> None:
         s, body = call(base, "/api/system/open-url", "POST", {"url": "https://github.com/zxxhz/LearnFlow/releases"})
         check("open-url 正常触发默认浏览器", s == 200 and body.get("ok") is True and mock_open.called)
 
+    # 1.2 局域网访问配置与令牌管理
+    s, body = call(base, "/api/system/access-info")
+    check("局域网访问默认开启", s == 200 and body.get("lan_mode") is True and body.get("lan_enabled") is True and bool(body.get("token")))
+    old_token = body.get("token")
+    s, body = call(base, "/api/system/access-token/rotate", "POST")
+    check("重新生成访问令牌", s == 200 and body.get("token") != old_token)
+    s, body = call(base, "/api/system/lan-access?enabled=false", "POST")
+    check("设置中关闭局域网访问", s == 200 and body.get("lan_mode") is False and body.get("lan_enabled") is False)
+    s, body = call(base, "/api/system/lan-access?enabled=true", "POST")
+    check("设置中开启局域网访问", s == 200 and body.get("lan_mode") is True and body.get("lan_enabled") is True)
+
     # 2. 文档内容 + 块对齐
     s, body = call(base, f"/api/documents/{document_id}/content")
     check("文档 content 接口", s == 200)
@@ -317,7 +336,7 @@ def main() -> None:
     s, body = call(base, f"/api/exercises?document_id={document_id}")
     check(
         "练习列表（含知识点标题）",
-        s == 200 and len(body) == 5 and all(e["kp_title"] == "指针概念" for e in body),
+        s == 200 and len(body) == 6 and all(e["kp_title"] == "指针概念" for e in body),
         json.dumps(body, ensure_ascii=False)[:200],
     )
     if s == 200:
@@ -326,6 +345,7 @@ def main() -> None:
         ex_concept = next(e for e in body if e["kind"] == "concept")
         ex_choice = next(e for e in body if e["kind"] == "choice")
         ex_fill = next(e for e in body if e["kind"] == "fill")
+        ex_math = next(e for e in body if e["kind"] == "math")
         check("未作答时 latest_attempt 为空", ex_code["latest_attempt"] is None)
         check(
             "闯关字段回显（提示列表/首关解锁/次关锁定）",
@@ -352,6 +372,10 @@ def main() -> None:
         check("单选错误 → 未通过+正确答案", s == 200 and body["passed"] is False and "B" in body["feedback"], json.dumps(body, ensure_ascii=False)[:120])
         s, body = call(base, f"/api/exercises/{ex_fill['id']}/submit", "POST", {"content": "  &X "})
         check("填空归一化 → passed", s == 200 and body["passed"] is True, json.dumps(body, ensure_ascii=False)[:120])
+        s, body = call(base, f"/api/exercises/{ex_math['id']}/submit", "POST", {"content": "cos(x**2)*2*x"})
+        check("数学题代数等价表达式 → passed", s == 200 and body["passed"] is True, json.dumps(body, ensure_ascii=False)[:120])
+        s, body = call(base, f"/api/exercises/{ex_math['id']}/submit", "POST", {"content": "2*x"})
+        check("数学题非等价表达式 → 未通过", s == 200 and body["passed"] is False, json.dumps(body, ensure_ascii=False)[:120])
         s, body = call(base, f"/api/exercises?document_id={document_id}")
         latest = next(e for e in body if e["id"] == ex_code["id"])["latest_attempt"]
         check("提交后最新作答回显", latest is not None and latest["passed"] is False)
@@ -363,11 +387,11 @@ def main() -> None:
         )
         s, body = call(base, f"/api/exercises/wrongbook")
         wb = {e["id"] for e in body}
-        wb_ok = ex_code["id"] in wb and ex_choice["id"] in wb and ex_fill["id"] not in wb
+        wb_ok = ex_code["id"] in wb and ex_choice["id"] in wb and ex_fill["id"] not in wb and ex_math["id"] in wb
         check(
             "错题本：做错的在、做对的不在",
             s == 200 and wb_ok,
-            f"n={len(body)} code_in={ex_code['id'] in wb} choice_in={ex_choice['id'] in wb} fill_out={ex_fill['id'] not in wb}",
+            f"n={len(body)} code_in={ex_code['id'] in wb} choice_in={ex_choice['id'] in wb} fill_out={ex_fill['id'] not in wb} math_in={ex_math['id'] in wb}",
         )
         if s == 200 and not wb_ok:
             # 取证模式：错题本断言失败时立刻中止（跳过末尾的删除清理），保留 DB 现场
@@ -376,7 +400,45 @@ def main() -> None:
         s, body = call(base, f"/api/exercises/{ex_concept['id']}", "DELETE")
         check("删除练习题", s == 200)
         s, body = call(base, f"/api/exercises?document_id={document_id}")
-        check("删除后列表剩 4 题", s == 200 and len(body) == 4)
+        check("删除后列表剩 5 题", s == 200 and len(body) == 5)
+        s, body = call(base, "/api/tutor/diagnose", "POST", {"exercise_id": ex_code["id"], "content": "   "})
+        check("助教诊断空内容 → 400", s == 400, str(body)[:120])
+        s, body = call(base, "/api/tutor/diagnose", "POST", {"exercise_id": "nonexistent", "content": "print(1)"})
+        check("助教诊断不存在题目 → 404", s == 404, str(body)[:120])
+
+        # 6.61 学习者画像与认知诊断模型验证
+        async def _test_learner_models():
+            from app.core.db import async_session_factory
+            from app.models.base import new_id
+            from app.models.study import LearnerProfile, LearnerMisconception
+            uid = new_id()
+            async with async_session_factory() as db_session:
+                lp = LearnerProfile(id=uid, background_summary="C++初学者，掌握基础语法", socratic_mode=True)
+                db_session.add(lp)
+                lm = LearnerMisconception(topic="C++ 指针", tag="precedence_error", evidence="混淆 *p++ 运算顺序", status="active")
+                db_session.add(lm)
+                await db_session.commit()
+                queried_lp = await db_session.get(LearnerProfile, lp.id)
+                queried_lm = await db_session.get(LearnerMisconception, lm.id)
+                return queried_lp is not None and queried_lm is not None
+
+        check("认知画像与迷思模型读写正常", asyncio.run(_test_learner_models()))
+
+        # 6.62 Agent 工具集独立执行验证 (run_sandbox_code, render_math_plot, inspect_exercise)
+        async def _test_agent_tools():
+            from app.core.db import async_session_factory
+            from app.services.agent_tools import execute_agent_tool
+            t_code = await execute_agent_tool("run_sandbox_code", {"language": "python", "code": "print(21 * 2)"})
+            code_ok = t_code.get("status") == "success" and "42" in t_code.get("stdout", "")
+            t_plot = await execute_agent_tool("render_math_plot", {"expressions": "x**2"})
+            plot_ok = t_plot.get("status") == "success" and t_plot.get("svg_length", 0) > 0
+            async with async_session_factory() as db_session:
+                t_inspect = await execute_agent_tool("inspect_exercise", {"exercise_id": ex_code["id"]}, db=db_session)
+                inspect_ok = t_inspect.get("title") == "第 1 关：打印两数之和"
+            return code_ok and plot_ok and inspect_ok
+
+        check("Agent 工具集（沙箱/绘图/查题）独立调用正常", asyncio.run(_test_agent_tools()))
+
 
     # 6.65 课程改名（PATCH title）
     s, orig_course = call(base, f"/api/courses/{course_id}")
@@ -471,6 +533,9 @@ def main() -> None:
     check("组卷(LLM未配置) → 400", s == 400, str(body)[:120])
     s, body = call(base, f"/api/courses/{course_id}/ask", "POST", {"question": "指针是什么"})
     check("全课问答(LLM未配置) → 400", s == 400, str(body)[:120])
+    s, body = call(base, "/api/tutor/diagnose", "POST", {"exercise_id": ex_code["id"], "content": "print(1)"})
+    check("助教诊断(LLM未配置) → 400", s == 400, str(body)[:120])
+
 
     call(base, "/api/settings", "PUT", {"llm": {"base_url": orig["llm"]["base_url"], "api_key": orig["llm"]["api_key"], "model": orig["llm"]["model"]}, "scenes": {"generation": {}, "chat": {}}})
 

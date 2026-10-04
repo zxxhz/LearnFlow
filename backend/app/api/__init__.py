@@ -17,6 +17,7 @@ from app.api import (
     settings,
     study,
     system,
+    tutor,
 )
 
 api_router = APIRouter(prefix="/api")
@@ -36,3 +37,5 @@ api_router.include_router(runtime.router)
 api_router.include_router(study.router)
 api_router.include_router(search.router)
 api_router.include_router(system.router)
+api_router.include_router(tutor.router)
+

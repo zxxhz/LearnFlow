@@ -52,7 +52,16 @@ export default function DataSafetySection() {
       qc.invalidateQueries({ queryKey: ["system-access"] });
       flash("已重新生成令牌，旧地址立即失效");
     },
-    onError: (e) => alert(e.message),
+    onError: (e) => alert((e as Error).message),
+  });
+  const doToggleLan = useMutation({
+    mutationFn: (enabled: boolean) => api.system.setLanAccess(enabled),
+    onSuccess: (a) => {
+      qc.setQueryData(["system-access"], a);
+      qc.invalidateQueries({ queryKey: ["system-access"] });
+      flash(a.lan_mode ? "已开启局域网访问" : "已关闭局域网访问");
+    },
+    onError: (e) => alert((e as Error).message),
   });
 
   return (
@@ -110,19 +119,49 @@ export default function DataSafetySection() {
       </div>
 
       <div className="mt-5 border-t border-gray-100 dark:border-gray-800 pt-4">
-        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">局域网访问（平板）</h3>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">局域网访问</h3>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              允许同一 Wi-Fi 或局域网下的手机、平板及其他设备通过浏览器访问本应用
+            </p>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={access?.lan_mode ?? true}
+              disabled={doToggleLan.isPending}
+              onChange={(e) => doToggleLan.mutate(e.target.checked)}
+            />
+            <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-brand-600"></div>
+          </label>
+        </div>
+
         {!access?.lan_mode ? (
-          <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-            当前仅本机访问（127.0.0.1）。用 <code className="rounded bg-gray-100 dark:bg-gray-800 px-1">APP_HOST=0.0.0.0</code> 启动可开启平板访问，开启后自动启用访问令牌。
+          <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
+            局域网访问已关闭，当前仅允许本机访问（127.0.0.1）。
           </p>
         ) : (
-          <div className="mt-2 space-y-2">
+          <div className="mt-3 space-y-2">
+            <div className="text-xs text-gray-600 dark:text-gray-400">
+              在局域网设备浏览器中打开以下完整地址（含专属安全令牌）：
+            </div>
             {access.lan_urls_with_token.map((u) => (
-              <div key={u} className="truncate rounded bg-gray-50 dark:bg-gray-800/50 px-2.5 py-1.5 font-mono text-[11px] text-gray-600 dark:text-gray-400">
-                {u}
+              <div
+                key={u}
+                onClick={() => {
+                  navigator.clipboard.writeText(u);
+                  flash("地址与令牌已复制到剪贴板");
+                }}
+                className="group flex items-center justify-between rounded-lg bg-gray-50 dark:bg-gray-800/50 px-3 py-2 font-mono text-xs text-gray-700 dark:text-gray-300 border border-gray-100 dark:border-gray-800 hover:border-brand-300 dark:hover:border-brand-700 cursor-pointer transition"
+                title="点击复制访问地址"
+              >
+                <span className="truncate">{u}</span>
+                <span className="shrink-0 text-[11px] text-brand-600 dark:text-brand-400 opacity-80 group-hover:opacity-100 ml-2">复制</span>
               </div>
             ))}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 pt-1">
               <Button variant="secondary" className="text-xs" disabled={doRotate.isPending} onClick={() => doRotate.mutate()}>
                 重新生成令牌
               </Button>

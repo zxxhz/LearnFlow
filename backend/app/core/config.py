@@ -24,7 +24,7 @@ class AppConfig(BaseSettings):
         env_prefix="APP_", env_file=_BASE_DIR / ".env", extra="ignore"
     )
 
-    host: str = "127.0.0.1"
+    host: str = "0.0.0.0"
     port: int = 8420
     open_browser: bool = True
     data_dir: Path = _BASE_DIR / "data"
