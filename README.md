@@ -2,166 +2,238 @@
 
 # LearnFlow
 
-本地运行的 AI 学习助手
+本地运行的 Agentic AI 伴学与练习系统
 
 [![Release][release-shield]][release-url]
 [![Stars][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
 
-[下载安装包](https://github.com/zxxhz/LearnFlow/releases) · [产品设计文档](docs/PRD.md) · [反馈问题](https://github.com/zxxhz/LearnFlow/issues)
+[下载安装包 (v0.4.10)][release-url] · [产品设计文档](docs/PRD.md) · [反馈问题][issues-url]
 
 </div>
 
-输入想学的科目（C++、高等数学之类），AI 先出大纲再逐章生成讲义；阅读时划线即可提问，学完就上手闯关：每关给渐进提示和明确的目标输出，从零手写代码、跑通才算过关，做错的题进错题本集中重刷。
+**LearnFlow** 是一款完全运行在本地、注重隐私的 **Agentic AI 伴学与高效刷题系统**。系统从传统的「单向问答 Chat」全面进化为具备**感知诊断、动态工具链调用（Tool Calling）、学习者认知建模**的智能伴学 Agent，为自学者构建“**生成体系讲义 ➔ 沉浸精读研讨 ➔ 链式闯关练习 ➔ 启发式助教引导 ➔ 题库极速刷题 ➔ 错题定向清零**”的完整闭环。
 
-自己的 Markdown 笔记也能导入，按标题拆章、原文不改写。`demos/` 下有两门示范课程（Python / C++ 基础语法），不配 LLM 也能导入体验代码运行；全新安装首次启动还会自动内置一节「C++ 指针入门」示例课，阅读 / 闯关 / 沙箱都能直接玩。
+- **体系化讲义与精读**：输入学习目标，AI 自动生成结构化大纲并逐章编撰体系化讲义；阅读时划选任意文字、公式或代码即可弹出卡片与 AI 多轮对话，高亮与问答历史原位持久化；支持导入自有 Markdown 笔记无损切章。
+- **硬核代码与代数闯关**：告别填鸭式阅读！每门课内置知识点链式关卡——由易到难串联解锁，提供渐进式提示（Hints）与目标输出常显，**无预置骨架从零手写代码**，本地安全沙箱真实运行判通才准过关；更支持基于 SymPy 的**代数等价判题引擎**（乘法交换、幂次变换等客观符号等价判定）。
+- **启发式 Agent 助教（Tool Calling）**：闯关卡壳或测试失败时，一键呼叫智能助教进行**启发式诊断**——不直接剧透答案，而是定位认知盲区与漏洞；助教可自主循环调用**工具链**（代码沙箱实测 `run_sandbox_code`、函数画图 `render_math_plot`、关卡透视 `inspect_exercise`），并自动建档学习者认知画像与易错模式，支持「💡 启发引导」与「📖 详细直答」双模态自由切换。
+- **独立题库刷题模块**：自带独立的「🎯 题库刷题」系统，支持 Excel（`.xls` / `.xlsx`）百题级秒级导入（单选、多选、判断），自由选择 10 / 20 / 50 题极速随机组卷，作答自动沉淀错题池，错题专练集中攻坚。
+- **全端互联与全景 PWA**：设置页原生提供「局域网访问」开关（默认开启），内置访问令牌防未授权暴露；全站深度支持 PWA（Progressive Web App），手机、平板、电脑均可「添加到主屏幕」作为独立轻量应用体验。
+- **开箱即用与纯本地存储**：Windows 安装包内置完整 Python 隔离运行环境，缺 C++ 编译器可在设置内一键便携安装；数据全落本地 SQLite 与 Markdown，复制目录即完成备份。
 
 <details>
 <summary>目录</summary>
 
-- [功能](#功能)
-- [安装](#安装)
-- [平板 / 局域网访问](#平板--局域网访问)
-- [代码运行沙箱](#代码运行沙箱)
-- [数据与备份](#数据与备份)
-- [桌面版（Tauri）](#桌面版tauri)
-- [路线图](#路线图)
+- [核心功能](#核心功能)
+  - [🤖 启发式伴学 Agent（从 Chat 到 Agent）](#-启发式伴学-agent从-chat-到-agent)
+  - [⚔️ 链式闯关练习与代数/代码判定](#️-链式闯关练习与代数代码判定)
+  - [🎯 独立题库刷题模块](#-独立题库刷题模块)
+  - [📚 讲义编撰与划线研讨](#-讲义编撰与划线研讨)
+  - [🖥️ 代码运行沙箱与函数绘图](#️-代码运行沙箱与函数绘图)
+  - [📱 局域网访问与 PWA 支持](#-局域网访问与-pwa-支持)
+  - [📊 掌握度仪表盘与本地备份](#-掌握度仪表盘与本地备份)
+  - [🎨 桌面端体验与自升级](#-桌面端体验与自升级)
+- [下载与安装](#下载与安装)
+- [快速开始](#快速开始)
+  - [桌面安装包运行（推荐）](#桌面安装包运行推荐)
+  - [源码运行与开发](#源码运行与开发)
+- [局域网访问与跨端使用（PWA）](#局域网访问与跨端使用pwa)
+- [代码沙箱与便携工具链](#代码沙箱与便携工具链)
+  - [一键安装运行环境](#一键安装运行环境)
+  - [函数图像绘图](#函数图像绘图)
+- [数据目录与备份恢复](#数据目录与备份恢复)
+- [桌面端（Tauri）与发版机制](#桌面端tauri与发版机制)
+- [路线图与设计原则](#路线图与设计原则)
 - [技术栈](#技术栈)
 
 </details>
 
-## 功能
+## 核心功能
 
-- 输入学习目标，AI 生成大纲（可手动改），再逐章生成讲义，带 LaTeX 公式和代码高亮；断了能续，单章能重生成
-- 划线提问：阅读时划选任意内容，弹出卡片跟 AI 多轮对话，划线和对话都持久化，重开文档还在原位
-- 闯关练习：按知识点生成由易到难的**代码关卡**——每关给渐进提示（默认给第 1 条，可再展开）+ 明确的目标输出，从零手写代码、真实运行对比 stdout 判定，**通关才解锁下一关**；通关后可看参考实现。存量的概念/单选/填空题作为支线练习保留（AI 评分/自动判定），做错的题自动进错题本；还能跨知识点组卷「随堂小测」出分
-- 错题本：最近一次做错的题集中一页，重刷通过后自动出池
-- 问整门课：课程页直接向全课程提问（章节摘要 + 全文检索拼上下文，SSE 流式回答）
-- 全局搜索：跨课程全文检索（FTS5），命中片段高亮，直达阅读位置
-- 代码运行：` ```python ` / ` ```cpp ` 块一键运行（限时 10 秒、限内存 256MB、进程树隔离），结果跟着文档存；缺编译器可一键装便携版（装在软件目录不动系统，下载自动择优直连/镜像、断点续传、SHA-256 校验）
-- 函数图像：` ```plot ` 块画图（SymPy + Matplotlib），多函数叠加、奇点自动断线
-- 仪表盘：课程进度、薄弱知识点（掌握度 0-100 = 闯关练习通过率）、学习热力图、阅读时长、Token 用量（近 30 天分场景）
-- 导出：整课导出 Markdown / 静态 HTML（公式可渲染、打印即 PDF）
-- 生成 / 答疑两个场景可各配一个模型，比如生成用便宜模型、答疑用快模型；支持 Ollama 本地模型（一键检测已装模型并填入）
-- 深色模式：侧栏一键切换、跟随系统记忆，代码高亮 / 公式 / 划线高亮全部适配
-- `APP_HOST=0.0.0.0` 启动后平板浏览器可直接访问（响应式已适配；自动启用访问令牌，非本机来源必须携带）
+### 🤖 启发式伴学 Agent（从 Chat 到 Agent）
+- **启发式诊断感知（M1）**：闯关未通过或遇到阻碍时，卡片即刻浮现「💡 呼叫助教启发诊断」。助教结合关卡任务、标准约束以及学习者的具体作答与报错信息，精准定位思维漏洞，以苏格拉底式提问引导学习者自主思考，支持多轮流式（SSE）深入追问。
+- **动态工具链闭环（M2 Tool Calling）**：助教具备工具自主调用循环（Agent Loop），在辅导时可主动调用沙箱实测代码猜想（`run_sandbox_code`）、动态调用 SymPy 绘制函数图像（`render_math_plot`）、透视关卡测试用例与标准边界（`inspect_exercise`），前端实时呈现动态执行卡片动效；对不支持 Function Calling 的模型具备平滑纯文本降级保护。
+- **学习者认知画像与易错模式（M3）**：数据库持久化建档学习者档案（`learner_profiles`：先验知识、认知风格、引导偏好）与认知漏洞（`learner_misconceptions`：易错模式、错误证据、修复状态）；支持「💡 启发」与「📖 直答」双模态自由切换。
 
-## 安装
+### ⚔️ 链式闯关练习与代数/代码判定
+- **知识点链式解锁**：同一知识点下的关卡按由浅入深的通关链路编排，前一关通过方可解锁下一关（通关状态永久记录）。
+- **从零手写与渐进提示**：每关呈现明确任务、目标输出常显，不提供现成代码骨架，倒逼学习者从零动手敲代码，真实标准输出（stdout）对比判定；配套 2-3 条渐进式提示（Hints，默认显露第 1 条，攻坚卡壳时按需展开）；通关后方可查看参考实现（Reference Code）。
+- **SymPy 代数等价判题引擎（M4）**：新增 `math` 练习题型，利用符号代数化简判定 `simplify(u - e) == 0`，支持乘法交换律、同类项合并、指数展开等客观数学等价性验证。
+- **错题自动进池与随堂小测**：做错题目自动纳入错题本，重刷通过后自动移出；支持跨知识点随机抽题组合「随堂小测」测试出分；存量选择/填空/概念题作为支线保留。
 
-从 [Releases](https://github.com/zxxhz/LearnFlow/releases) 下载 `LearnFlow_x.x.x_x64-setup.exe` 双击安装。Python 环境和全部依赖都打在包里，不用装；运行文档里的 C++ 代码块需要 g++——没装的话应用内可以一键安装便携版（见[代码运行沙箱](#代码运行沙箱)），也可以自己装 [MinGW-w64](https://www.mingw-w64.org/)。
+### 🎯 独立题库刷题模块
+- **Excel 批量极速导入**：独立于课程体系的刷题引擎，支持 `.xls` 与 `.xlsx` 格式秒级导入单选、多选、判断题。
+- **卡片式组卷刷题**：自由选择 10 / 20 / 50 题/轮极速随机组卷，作答即时打分与解析。
+- **动态错题池机制**：作答记录追加存储，以每道题最新一次作答状态自动派生错题池，支持错题专项重刷，攻坚通过即时出池。
+- **题库管理**：卡片式展现，支持一键重命名、题型分布统计与独立管理。
 
-从源码跑需要 Python 3.11+（[uv](https://docs.astral.sh/uv/) 管理）和 Node 18+（只为构建前端）：
+### 📚 讲义编撰与划线研讨
+- **结构化生成**：输入科目与目标，AI 生成多级大纲（支持自由增删调整），逐章流式生成详实讲义，配备 LaTeX 公式与代码高亮；支持断点续写与单章重新生成。
+- **划线多轮沉浸对话**：阅读讲义划选文字/公式/代码段，即时唤起对话卡片多轮探讨；划线高亮与对话内容完全持久化存储，重开文档位置不丢。
+- **全书问答与全局检索**：课程页直接面向整门讲义全文检索拼装上下文提问；支持基于 SQLite FTS5 的跨课程毫秒级全文检索与高亮直达。
+- **Markdown 笔记导入**：支持导入个人 Markdown 笔记，自动根据标题层级无损切章，支持课程随时重命名。
+
+### 🖥️ 代码运行沙箱与函数绘图
+- **多语言隔离沙箱**：内置 Python（`-I -B` 隔离模式，仅标准库）与 C++（系统编译器或便携版）沙箱；Windows Job Object 限制 256MB 内存，10 秒强制限时杀进程树，独立临时目录，历史执行结果全持久化。
+- **应用内一键便携安装**：设置页「代码运行环境」自动探测环境；缺 C++ 编译器（GCC 14.2.0）或 Python 时可一键后台静默下载便携版，支持国内镜像择优、断点续传与 SHA-256 哈希校验，不修改系统环境变量与注册表。
+- **动态函数绘图**：讲义支持 ` ```plot ` 代码块，每行一个函数表达式，SymPy + Matplotlib 自动绘制高清函数图像，多函数叠加对比与奇点自动断线。
+
+### 📱 局域网访问与 PWA 支持
+- **原生设置开关**：默认监听 `0.0.0.0`，在设置页「局域网访问」提供直观平滑的 Switch 开关，随时启停并一键复制带有令牌的 URL。
+- **安全访问令牌（Token Guard）**：局域网访问自动启用令牌校验保护，避免未经授权的设备访问本地服务与沙箱，静态资源白名单免阻拦。
+- **全景 PWA 支持**：配置 Web App Manifest、全尺寸自适应图标与专属 Service Worker，手机、平板或电脑浏览器均可「添加到主屏幕」化身独立轻量应用使用，支持缓存加速与离线降级。
+
+### 📊 掌握度仪表盘与本地备份
+- **多维学情追踪**：基于闯关练习真实通过率的知识点掌握度评分（0-100）、近 30 天学习热力图分布、累计阅读时长统计、按场景细分的 Token 消耗看板。
+- **纯本地数据主权**：所有学习记录与配置存储于本地 `app.db`（SQLite WAL 模式）与 `courses/`（纯 Markdown 文件）；设置页提供一键打包生成 zip 备份与无损恢复。
+
+### 🎨 桌面端体验与自升级
+- **Tauri v2 架构**：轻量独立窗口、托盘常驻、开机自启、关闭窗口自动最小化。
+- **居中 UpdateDialog 弹窗**：应用启动静默检测新版本，居中弹窗展示版本日志；支持 minisign 验签一键升级与平滑重启；多层防抖与默认系统浏览器安全唤起。
+- **界面统一与深色模式**：全局统一 5xl 居中容器与滚动条稳定槽位消除页面切换跳动；深色模式全面适配不透明画布与系统原生控件跟随；NSIS 钩子自动清理残留进程杜绝安装文件锁定。
+
+---
+
+## 下载与安装
+
+从 [Releases][release-url] 下载最新的 `LearnFlow_x.x.x_x64-setup.exe`（当前最新为 **v0.4.10**）双击安装。
+
+- Python 运行环境与核心依赖已随包内置，开箱即用。
+- 运行讲义与练习中的 C++ 代码块需要 g++：应用内会自动检测，未安装时可一键安装免配置的便携版（见[代码沙箱与便携工具链](#代码沙箱与便携工具链)），亦可使用本机系统环境中的 [MinGW-w64](https://www.mingw-w64.org/)。
+
+---
+
+## 快速开始
+
+### 桌面安装包运行（推荐）
+1. 双击运行 LearnFlow 安装包完成安装；
+2. 首次启动会自动内置一门「C++ 指针入门」示例课，可直接体验阅读、划线、代码沙箱与闯关练习；
+3. 进入设置页配置模型（支持 OpenAI 兼容格式，填入 base_url、API Key 与模型名，点击「测试连接」验证）。页面顶部提供 GLM / DeepSeek / OpenAI / Moonshot / Ollama / Gemini 快捷预设；
+4. 支持将生成大纲讲义（generation）与对话伴学助教（chat）分别配置不同模型。
+
+### 源码运行与开发
+
+需具备 Python 3.11+（推荐 [uv](https://docs.astral.sh/uv/) 管理）与 Node 18+：
 
 ```bash
-# 构建前端，产物输出到 backend/app/static（仓库自带 static 时可跳过）
+# 构建前端（产物输出至 backend/app/static）
 cd frontend && npm install && npm run build && cd ..
 
-# 启动后端，首次会自动 uv sync 装依赖、建库
+# 启动后端，首次会自动 uv sync 安装依赖并初始化数据库
 cd backend && uv run python -m app.main
 ```
 
-浏览器会自动打开 `http://127.0.0.1:8420`。先去设置页配模型（OpenAI 兼容协议，填 base_url + API Key + 模型名，点「测试连接」验证），顶部有智谱 GLM / DeepSeek / OpenAI / Moonshot / Ollama 快捷预设。
+浏览器访问 `http://127.0.0.1:8420` 即可进入系统。
 
-想完全离线：装 [Ollama](https://ollama.com/)，`ollama pull qwen2.5:7b`，设置页选「Ollama 本地」预设（base_url `http://localhost:11434/v1`，API Key 随便填）。
-
-### 开发模式
-
+#### 开发模式（热重载）
 ```bash
-cd backend && uv run uvicorn app.main:app --reload   # 后端 :8420
-cd frontend && npm run dev                           # 前端 :5173，/api 自动代理
+# 启动后端开发服务（:8420）
+cd backend && uv run uvicorn app.main:app --reload
+
+# 启动前端开发服务器（:5173，自动代理 /api）
+cd frontend && npm run dev
 ```
 
-## 平板 / 局域网访问
+---
 
-```bash
-cd backend && APP_HOST=0.0.0.0 uv run python -m app.main
-```
+## 局域网访问与跨端使用（PWA）
 
-控制台会打印局域网地址（自带访问令牌，如 `http://192.168.x.x:8420/?token=…`），平板连同一个 Wi-Fi 就能访问，界面已适配触屏和窄屏。
+LearnFlow 后端默认监听 `0.0.0.0:8420`，原生支持在局域网内使用平板、手机无缝伴学：
 
-`0.0.0.0` 模式自动启用访问令牌保护：非本机来源的所有请求必须携带 token（地址里的 `?token=…` 或 `X-Access-Token` 头均可），本机和桌面版不受影响。设置页「数据与安全」可查看带 token 的完整地址、随时重新生成令牌（旧地址立即失效）。不在同一网络的话，[Tailscale](https://tailscale.com/) 最省事：两台设备登同一账号，访问 `http://100.x.x.x:8420`；有公网服务器也可以用 frp / cloudflared 转发。
+1. **一键开启与复制**：进入「设置」➔「局域网访问」，开关默认处于开启状态，界面直接呈现局域网访问地址（例如 `http://192.168.1.100:8420/?token=...`），点击即可一键复制完整带令牌的 URL；
+2. **多端令牌安全防护**：非本机局域网请求必须经过访问令牌鉴权（URL 参数或 Header），有效防范未授权设备接触本地沙箱；支持在设置页随时「重新生成令牌」令历史链接即刻失效；
+3. **PWA 沉浸式应用体验**：
+   - 网页端内置 Web App Manifest 与 Service Worker，静态资源极速缓存，API 与流式直通；
+   - 在 iPad / iPhone Safari 浏览器中点击「分享」➔「添加到主屏幕」；
+   - 在 Android Chrome / Edge 浏览器中点击菜单 ➔「安装应用」或「添加到主屏幕」；
+   - 即可获得全屏独立窗口、无浏览器地址栏打扰的原生 App 级操作体验；
+4. **远程访问推荐**：若不在同一 Wi-Fi 网络下，推荐使用 [Tailscale](https://tailscale.com/) 组网直连，安全访问虚拟内网 IP。
 
-注意 0.0.0.0 会把服务（包括代码沙箱）暴露给所在网络，令牌只挡未授权访问，别把端口直接映射到公网。
+---
 
-## 代码运行沙箱
+## 代码沙箱与便携工具链
 
-代码块右上角有「▶ 运行」按钮：
+讲义代码块右上角设有「▶ 运行」按钮：
 
-- Python 不用额外配置：源码运行用当前解释器，安装包版用随包内置的独立 Python（`-I` 隔离模式，仅标准库）
-- C++ 需要本机有 g++ 或 clang++：系统 PATH 里有就直接用；没有时点运行结果里的「⬇ 一键安装」或设置页「代码运行环境」装便携版
-- 限制：单次 10 秒（超时杀整个进程树）、内存 256MB（Windows Job Object）、进程数上限、stdin 关闭、每次运行用一次性临时目录，全局串行执行
-- 运行结果（stdout / stderr / 退出码 / 耗时）持久化，重开文档还能看到上一次的输出
+- **Python**：开箱即用，安装包版本使用内置隔离 Python（`-I` 模式，仅加载安全标准库）；
+- **C++**：支持系统 `g++` / `clang++`，未安装时可在运行结果面板中点击「⬇ 一键安装」；
+- **安全沙箱配额**：单次执行硬性限制 10 秒（超时自动斩断整个进程树）、内存限额 256MB（基于 Windows Job Object）、关闭标准输入、每次执行分配一次性沙箱目录；
+- **结果持久化**：运行结果（stdout / stderr / 耗时 / 退出码）全量持久化，重开讲义原位可查。
 
 ### 一键安装运行环境
 
-设置页「代码运行环境」能看到 Python / C++ 的检测结果（内置 / 系统 / 应用内 / 未安装 + 版本），缺什么点「安装」：
+设置页「代码运行环境」能够实时展示当前 Python / C++ 环境状态，并提供一键后台静默安装：
 
-- **C++**：niXman mingw-builds 便携版（GCC 14.2.0，UCRT，7z 约 92MB），解压到软件安装目录的 `toolchains/mingw64/`
-- **Python**：python.org embeddable 便携版（3.12.10，约 11MB，仅标准库），解压到 `toolchains/python/`
-- 不写系统 PATH、不写注册表、不弹安装器——删掉 `toolchains/` 目录就是卸载；应用安装目录只读时（如装进 Program Files）自动落到数据目录
-- 下载源自动择优：GitHub 直连不通（国内常见）自动走 ghproxy 系镜像；Python 包走 python.org → 华为云 → npmmirror；下载支持断点续传，产物做 SHA-256 校验（不符自动清缓存换源重下）
-- 安装在后台进行，进度条实时显示；装完再点「▶ 运行」即可，无需重启
+- **C++ 工具链**：niXman mingw-builds 便携版（GCC 14.2.0，UCRT，解压到应用目录下的 `toolchains/mingw64/`）；
+- **Python 工具链**：官方 embeddable 便携版（3.12.10，解压到 `toolchains/python/`）；
+- **零系统污染**：不篡改系统 PATH、不写入 Windows 注册表，删除应用目录即彻底卸载；支持华为云、npmmirror 等国内高速镜像智能择优、断点续传与 SHA-256 完整性哈希校验。
 
-### 函数图像
+### 函数图像绘图
 
-` ```plot ` 代码块右上角是「📐 绘图」，每行一个函数（`sin(x)/x` 或 `f2(x)=x**2/8`），默认区间 [-10, 10]：
+支持在讲义中使用 ` ```plot ` 代码块，每行输入一个数学函数（如 `sin(x)/x` 或 `f(x)=x**2 - 4`），点击右上角「📐 绘图」即可调用 SymPy 与 Matplotlib 实时生成高清函数图像，多函数自动合并对比，奇点自动断线。
 
-````md
-```plot
-sin(x)/x
-f2(x)=x**2/8
-```
-````
+---
 
-## 数据与备份
+## 数据目录与备份恢复
 
-所有数据都在 `backend/data/`：
+LearnFlow 的所有数据均保留在用户本地掌控中：
 
-- `app.db` — SQLite（WAL 模式）：标注、对话、练习作答、代码执行记录、Token 用量
-- `courses/` — 课程文档，纯 Markdown（`current.md` + `versions/`），可以直接进 git
+- **源码与开发版**：默认位于 `backend/data/`；
+- **桌面安装包版**：默认位于 `%APPDATA%\com.learnflow.desktop\`（避免覆盖安装影响历史数据）；
+- **存储结构**：
+  - `app.db` — SQLite 数据库（WAL 模式）：存储课程元数据、作答记录、错题池、对话历史、Token 消耗及学习者认知档案；
+  - `courses/` — 纯 Markdown 课程目录（`current.md` 及版本快照），原生适配 Git 版本管控。
 
-备份就是复制这个目录。设置页「数据与安全」还能一键打包备份（`app.db` + `courses/` 存到 `data/backups/`）、查看 / 恢复 / 删除备份——恢复在重启应用后生效。整课内容也可以在课程页导出成 Markdown / HTML。
+在设置页「数据与安全」中支持**一键打包备份**为 zip 压缩包，并可随时浏览、下载或一键恢复历史备份。
 
-## 桌面版（Tauri）
+---
 
-`desktop/` 下是 Tauri 壳：独立窗口、托盘常驻、开机自启开关，壳负责拉起和回收本地后端，关窗即最小化到托盘。打包版后端用 PyInstaller 打成独立 exe 随安装包分发（目标机器不需要 Python / uv）：
+## 桌面端（Tauri）与发版机制
+
+`desktop/` 基于 Tauri v2 构建轻量桌面客户端，负责管理窗口生命周期与拉起后端守护进程：
 
 ```bash
-# 前置：Rust 工具链（rustup，MSVC stable）
-cd backend && uv sync && uv run python scripts/build_backend.py   # → backend/dist/learnflow-backend/
-cd desktop && npm install
-npx tauri dev     # 开发调试，debug 构建走 uv 流程，不依赖打包产物
-npx tauri build   # 产出 NSIS 安装包，位于 src-tauri/target/release/bundle/
+# 构建后端可执行程序（PyInstaller 打包至 backend/dist/learnflow-backend）
+cd backend && uv run python scripts/build_backend.py
+
+# 启动桌面端调试
+cd desktop && npm install && npx tauri dev
+
+# 打包生产环境 NSIS 安装包
+npx tauri build
 ```
 
-后端定位逻辑：开发版依次找环境变量 `LEARNFLOW_BACKEND_DIR` → 从 exe 向上找含 `backend/app` 的目录，用 `uv run python -m app.main` 拉起；打包版直接拉起安装目录里的 `backend/learnflow-backend.exe`，数据写在系统应用数据目录。端口默认 8420，可用 `LEARNFLOW_PORT` 覆盖；8420 已有服务在跑就直接复用，不重复拉起。联调打包后端用 `LEARNFLOW_BACKEND_EXE` 指向 exe。
+- **安装钩子守护**：内置 NSIS `installerHooks`（`installer-hooks.nsh`），在安装与卸载阶段自动清理残留孤儿进程，彻底解决因文件被占用导致升级失败的问题；
+- **应用内静默更新**：桌面端内置 `tauri-plugin-updater` 与居中 `UpdateDialog` 弹窗，版本发布时自动结合 minisign 签名机制校验安装包完整性，支持一键热更新平滑重启。
 
-> 国内网络提示：`tauri build` 首次会从 GitHub 下载 NSIS 工具链到 `%LOCALAPPDATA%/tauri/`，超时的话用镜像（如 `https://ghproxy.net/https://github.com/<原路径>`）手动下载 `nsis-3.11.zip` 解压成 `tauri/NSIS/`，`nsis_tauri_utils.dll` 放进 `tauri/NSIS/Plugins/x86-unicode/`（sha1 应为 75197FEE…，与 cli 二进制内嵌哈希一致）后重试。
+---
 
-### 应用内自动更新
+## 路线图与设计原则
 
-桌面版内置更新器（`tauri-plugin-updater`）：打开应用时静默检查新版本，横幅上「⬇ 一键更新」下载安装包（带进度）→ 校验 minisign 签名 → 静默安装 → 自动重启；浏览器 / 局域网模式回退「查看发布页」链接。
+### 设计原则（Non-goals）
+- **专注核心学习闭环**：坚决不引入脱离自学主线的番茄钟、游戏化徽章等繁杂外围功能；
+- **绝对本地与隐私第一**：不设公共课程市场，课程包与笔记导入导出仅定位于本地备份与多端迁移；
+- **LLM 立项四问准则**：系统内每个 AI 功能场景均严格遵循“单一角色定位、输入真实数据绑定、输出可校验 JSON、判定严格依循原文/事实”的严谨立项原则。
 
-发版时的额外步骤（在 `npx tauri build` 之前）：
+### 路线图
+- [x] 独立题库刷题模块与 Excel 批量导入（v0.3.0）
+- [x] 练习系统全面闯关化、链式解锁与从零手写代码（v0.4.0）
+- [x] 启发式伴学 Agent 闭环：感知诊断、Tool Calling 动态工具链、认知画像、代数等价判题（v0.4.7）
+- [x] 原生局域网访问开关与访问令牌保护（v0.4.7）
+- [x] 全端 PWA 支持与离线加速（v0.4.9）
+- [ ] 向量检索增强长课程宏观提问与答疑（计划中）
+- [ ] 题库错题自动关联讲义知识点并由 Agent 深度析因（计划中）
 
-```bash
-# 签名私钥不入库（desktop/src-tauri/keys/），丢失将无法签名更新，需换公钥重发一版手动安装
-export TAURI_SIGNING_PRIVATE_KEY="$(pwd)/src-tauri/keys/learnflow.key"
-export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
-npx tauri build   # 产出 exe 与同名 .sig
-```
-
-构建后按 `.sig` 内容手工生成 `latest.json`（`version` / `pub_date` / `platforms.windows-x86_64.{signature, url}`），与安装包一同上传 GitHub Release——更新器端点固定读 `releases/latest/download/latest.json`，少了它自动更新会静默回退到发布页链接。
-
-## 路线图
-
-- [ ] 向量检索增强长课程答疑
-
-更多想法欢迎提 [Issue](https://github.com/zxxhz/LearnFlow/issues)，PR 也欢迎。
+---
 
 ## 技术栈
 
-FastAPI + SQLAlchemy 2.0 (async) + SQLite（FTS5 全文检索），React 18 + TS + Vite + TailwindCSS（深色模式）。markdown-it 前后端同规则解析，KaTeX 公式，Shiki 双主题高亮，diff-match-patch 做划线模糊锚定，SSE 流式输出，LLM 走 OpenAI 兼容协议。
+- **后端核心**：FastAPI · SQLAlchemy 2.0 (asyncio) · SQLite (WAL 模式 + FTS5 全文索引) · Pydantic v2
+- **科学计算与代数判题**：SymPy 1.14 (代数等价判定与函数解析) · Matplotlib (函数曲线绘图)
+- **文件解析与工具库**：markdown-it-py · xlrd · openpyxl (题库导入) · py7zr
+- **前端架构**：React 18 · TypeScript · Vite · TailwindCSS · Zustand · TanStack Query
+- **渲染与交互**：markdown-it · KaTeX (数学公式) · Shiki (双主题语法高亮) · diff-match-patch (划线模糊锚定) · SSE (流式推送)
+- **跨端与桌面集成**：Tauri v2 · Rust · Web App Manifest & Service Worker (PWA) · NSIS Installer Hooks
 
 <!-- shields -->
 [release-shield]: https://img.shields.io/github/v/release/zxxhz/LearnFlow?style=for-the-badge
