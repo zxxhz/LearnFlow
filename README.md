@@ -8,7 +8,7 @@
 [![Stars][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
 
-[下载安装包 (v0.4.10)][release-url] · [产品设计文档](docs/PRD.md) · [反馈问题][issues-url]
+[下载安装包][release-url] · [产品设计文档](docs/PRD.md) · [反馈问题][issues-url]
 
 </div>
 
@@ -96,7 +96,7 @@
 
 ## 下载与安装
 
-从 [Releases][release-url] 下载最新的 `LearnFlow_x.x.x_x64-setup.exe`（当前最新为 **v0.4.10**）双击安装。
+从 [Releases][release-url] 下载最新版的 `LearnFlow_x.x.x_x64-setup.exe` 双击安装。
 
 - Python 运行环境与核心依赖已随包内置，开箱即用。
 - 运行讲义与练习中的 C++ 代码块需要 g++：应用内会自动检测，未安装时可一键安装免配置的便携版（见[代码沙箱与便携工具链](#代码沙箱与便携工具链)），亦可使用本机系统环境中的 [MinGW-w64](https://www.mingw-w64.org/)。
