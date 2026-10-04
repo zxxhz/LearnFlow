@@ -74,7 +74,11 @@ async def generate_quiz(
     )
     adapter = await create_adapter_from_settings(db, scene="generation")
     drafts: ExerciseDraftSet = await adapter.chat_json(
-        [{"role": "system", "content": system}], ExerciseDraftSet
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "请根据上述课程内容与要求生成随堂小测题目，严格以 JSON 格式输出。"},
+        ],
+        ExerciseDraftSet,
     )
 
     saved = 0

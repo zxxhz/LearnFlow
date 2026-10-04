@@ -63,7 +63,7 @@ def _db_session():
 
 
 class _AccessGuard:
-    """纯 ASGI 中间件：非回环来源（局域网/平板）必须携带访问令牌；本机与桌面壳直通。
+    """纯 ASGI 中间件：非回环来源（局域网）必须携带访问令牌；本机与桌面壳直通。
 
     不用 BaseHTTPMiddleware：避免对流式响应（SSE）引入缓冲层。
     """
@@ -88,26 +88,72 @@ class _AccessGuard:
                     await resp(scope, receive, send)
                     return
 
+                path = scope.get("path", "")
+                # 静态打包资产（JS/CSS/图标等）无敏感数据，豁免 token 校验，防止未就绪的浏览器白屏
+                if path.startswith("/assets/") or path in (
+                    "/favicon.ico",
+                    "/favicon.svg",
+                    "/apple-touch-icon.png",
+                ):
+                    await self.app(scope, receive, send)
+                    return
+
                 import secrets
                 import urllib.parse
 
+                server_token = get_access_token()
                 token = ""
-                for chunk in scope.get("query_string", b"").decode().split("&"):
+                found_in_query = False
+
+                # 1. 优先尝试从 query_string 获取 token
+                query_str = scope.get("query_string", b"").decode("latin-1")
+                for chunk in query_str.split("&"):
                     if chunk.startswith("token="):
                         token = urllib.parse.unquote(chunk[6:])
-                        break
-                for k, v in scope.get("headers", []):
-                    if k == b"x-access-token":
-                        token = v.decode("latin-1")
+                        found_in_query = True
                         break
 
-                if not token or not secrets.compare_digest(token, get_access_token()):
+                # 2. 尝试从 Header 获取 x-access-token
+                if not token:
+                    for k, v in scope.get("headers", []):
+                        if k.lower() == b"x-access-token":
+                            token = v.decode("latin-1")
+                            break
+
+                # 3. 尝试从 Cookie 获取 lf_token
+                if not token:
+                    for k, v in scope.get("headers", []):
+                        if k.lower() == b"cookie":
+                            cookie_header = v.decode("latin-1")
+                            for item in cookie_header.split(";"):
+                                item = item.strip()
+                                if item.startswith("lf_token="):
+                                    token = urllib.parse.unquote(item[9:])
+                                    break
+                            if token:
+                                break
+
+                if not token or not secrets.compare_digest(token, server_token):
                     resp = JSONResponse(
                         status_code=401,
                         content={"detail": "需要访问令牌：请用设置页「局域网访问」里带 token 的完整地址打开。"},
                     )
                     await resp(scope, receive, send)
                     return
+
+                # 若是通过 query_string 带有效 token 访问，自动下发 Set-Cookie 便于后续请求无缝通行
+                if found_in_query and secrets.compare_digest(token, server_token):
+                    async def send_with_cookie(message):
+                        if message["type"] == "http.response.start":
+                            headers = list(message.get("headers", []))
+                            cookie_val = f"lf_token={urllib.parse.quote(token)}; Path=/; SameSite=Lax; Max-Age=2592000"
+                            headers.append((b"set-cookie", cookie_val.encode("latin-1")))
+                            message["headers"] = headers
+                        await send(message)
+
+                    await self.app(scope, receive, send_with_cookie)
+                    return
+
         await self.app(scope, receive, send)
 
 

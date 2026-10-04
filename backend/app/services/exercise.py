@@ -141,7 +141,11 @@ async def generate_for_kp(
     )
     adapter = await create_adapter_from_settings(db, scene="generation")
     drafts: ExerciseDraftSet = await adapter.chat_json(
-        [{"role": "system", "content": system}], ExerciseDraftSet
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": "请根据上述教材原文与知识点要求，设计并生成关卡，严格按 JSON 格式输出。"},
+        ],
+        ExerciseDraftSet,
     )
 
     await delete_kp_exercises(db, [kp.id])
@@ -428,7 +432,13 @@ async def _grade_concept(db: AsyncSession, exercise: Exercise, content: str) -> 
         LEARNER_ANSWER=content,
     )
     adapter = await create_adapter_from_settings(db, scene="chat")
-    return await adapter.chat_json([{"role": "system", "content": system}], ConceptGrade)
+    return await adapter.chat_json(
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": f"请对学员的作答进行评分与指导分析：\n{content}"},
+        ],
+        ConceptGrade,
+    )
 
 
 async def delete_exercise(db: AsyncSession, exercise_id: str) -> None:

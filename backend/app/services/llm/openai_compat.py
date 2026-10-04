@@ -59,6 +59,18 @@ class OpenAICompatAdapter(LLMAdapter):
             duration_ms,
         )
 
+    @staticmethod
+    def _normalize_messages(messages: list[dict]) -> list[dict]:
+        """确保兼容各类 LLM 网关：
+        Gemini / Anthropic 等上游网关要求 messages 必须至少包含一条 user 消息。
+        若传入的消息列表不含 user 角色，自动追加一条通用触发消息。
+        """
+        if not messages:
+            return [{"role": "user", "content": "Hello"}]
+        if not any(m.get("role") == "user" for m in messages):
+            return list(messages) + [{"role": "user", "content": "请按照上述指令执行并输出。"}]
+        return list(messages)
+
     async def chat(
         self,
         messages: list[dict],
@@ -67,6 +79,7 @@ class OpenAICompatAdapter(LLMAdapter):
         max_tokens: int | None = None,
         json_mode: bool = False,
     ):
+        messages = self._normalize_messages(messages)
         kwargs: dict = {
             "model": self.model,
             "messages": messages,
@@ -111,6 +124,7 @@ class OpenAICompatAdapter(LLMAdapter):
         max_tokens: int | None = None,
     ):
         """返回完整的 ChatCompletionMessage 对象，包含 tool_calls 等元数据。"""
+        messages = self._normalize_messages(messages)
         kwargs: dict = {
             "model": self.model,
             "messages": messages,

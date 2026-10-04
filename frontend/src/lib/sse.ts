@@ -1,5 +1,6 @@
 // SSE 客户端：POST（发消息/触发动作）与 GET（订阅进度）两种
 import { fetchEventSource } from "@microsoft/fetch-event-source";
+import { getAccessToken } from "./api";
 
 function parseEvent(data: string, onEvent: (payload: any) => void) {
   if (!data) return;
@@ -17,9 +18,15 @@ export async function streamSSE(
   onEvent: (payload: any) => void,
   signal?: AbortSignal
 ): Promise<void> {
+  const token = getAccessToken();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+  };
+  if (token) headers["x-access-token"] = token;
   await fetchEventSource("/api" + url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    headers,
     body: JSON.stringify(body),
     signal,
     openWhenHidden: true,
@@ -38,9 +45,12 @@ export async function subscribeSSE(
   onEvent: (payload: any) => void,
   signal?: AbortSignal
 ): Promise<void> {
+  const token = getAccessToken();
+  const headers: Record<string, string> = { Accept: "text/event-stream" };
+  if (token) headers["x-access-token"] = token;
   await fetchEventSource("/api" + url, {
     method: "GET",
-    headers: { Accept: "text/event-stream" },
+    headers,
     signal,
     openWhenHidden: true,
     onmessage(ev) {

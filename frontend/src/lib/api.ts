@@ -42,9 +42,24 @@ import { streamSSE } from "./sse";
 
 const BASE = "/api";
 
+export function getAccessToken(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    const fromStorage = localStorage.getItem("lf_access_token");
+    if (fromStorage) return fromStorage;
+    const params = new URLSearchParams(window.location.search);
+    return params.get("token") || "";
+  } catch {
+    return "";
+  }
+}
+
 /** 触发浏览器下载后端导出的文件（Content-Disposition 命名）。 */
 export async function downloadFile(path: string): Promise<void> {
-  const res = await fetch(BASE + path);
+  const token = getAccessToken();
+  const headers: Record<string, string> = {};
+  if (token) headers["x-access-token"] = token;
+  const res = await fetch(BASE + path, { headers });
   if (!res.ok) {
     let detail = `下载失败（HTTP ${res.status}）`;
     try {
@@ -69,9 +84,17 @@ export async function downloadFile(path: string): Promise<void> {
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const isForm = typeof FormData !== "undefined" && opts.body instanceof FormData;
+  const token = getAccessToken();
+  const baseHeaders: Record<string, string> = {};
+  if (!isForm) {
+    baseHeaders["Content-Type"] = "application/json";
+  }
+  if (token) {
+    baseHeaders["x-access-token"] = token;
+  }
   const res = await fetch(BASE + path, {
     ...opts,
-    headers: isForm ? opts.headers : { "Content-Type": "application/json", ...opts.headers },
+    headers: { ...baseHeaders, ...opts.headers },
   });
   if (!res.ok) {
     let detail = `请求失败（HTTP ${res.status}）`;

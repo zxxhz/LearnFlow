@@ -266,6 +266,74 @@ def main() -> None:
     s, body = call(base, "/api/system/lan-access?enabled=true", "POST")
     check("设置中开启局域网访问", s == 200 and body.get("lan_mode") is True and body.get("lan_enabled") is True)
 
+    # 1.3 局域网访问门禁中间件全链路测试（静态资源免拦 / Cookie自动下发 / Header认证 / 401 / 403）
+    async def _test_access_guard():
+        from app.main import _AccessGuard
+        from fastapi.responses import PlainTextResponse
+
+        async def ok_app(scope, receive, send):
+            resp = PlainTextResponse("ok")
+            await resp(scope, receive, send)
+
+        guard = _AccessGuard(ok_app)
+
+        async def run_req(path: str, client_ip: str, query: str = "", headers: list | None = None):
+            res_headers = []
+            status = 0
+            body_bytes = b""
+            scope = {
+                "type": "http",
+                "client": (client_ip, 12345),
+                "path": path,
+                "query_string": query.encode(),
+                "headers": headers or [],
+            }
+            async def dummy_receive():
+                return {"type": "http.request"}
+            async def dummy_send(msg):
+                nonlocal status, body_bytes, res_headers
+                if msg["type"] == "http.response.start":
+                    status = msg["status"]
+                    res_headers = msg.get("headers", [])
+                elif msg["type"] == "http.response.body":
+                    body_bytes += msg.get("body", b"")
+            await guard(scope, dummy_receive, dummy_send)
+            return status, body_bytes, {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in res_headers}
+
+        from app.services.system import get_access_token, set_lan_access_enabled
+        tok = get_access_token()
+
+        st, _, _ = await run_req("/api/test", "127.0.0.1")
+        assert st == 200, f"loopback failed: {st}"
+
+        st, _, _ = await run_req("/assets/index-test.js", "192.168.1.99")
+        assert st == 200, f"asset bypass failed: {st}"
+
+        st, _, hdrs = await run_req("/", "192.168.1.99", query=f"token={tok}")
+        assert st == 200 and "set-cookie" in hdrs and f"lf_token={tok}" in hdrs["set-cookie"], f"query token failed: {st}, {hdrs}"
+
+        st, _, _ = await run_req("/api/test", "192.168.1.99", headers=[(b"cookie", f"lf_token={tok}".encode())])
+        assert st == 200, f"cookie auth failed: {st}"
+
+        st, _, _ = await run_req("/api/test", "192.168.1.99", headers=[(b"x-access-token", tok.encode())])
+        assert st == 200, f"header auth failed: {st}"
+
+        st, _, _ = await run_req("/api/test", "192.168.1.99")
+        assert st == 401, f"unauth check failed: {st}"
+
+        set_lan_access_enabled(False)
+        st, _, _ = await run_req("/", "192.168.1.99", query=f"token={tok}")
+        assert st == 403, f"disable lan failed: {st}"
+        set_lan_access_enabled(True)
+        return True
+
+    try:
+        guard_ok = asyncio.run(_test_access_guard())
+    except Exception as ex:
+        guard_ok = False
+        print("  _AccessGuard test error:", ex)
+    check("局域网门禁全链路校验(静态资源免拦/Cookie/Header/拦截)", guard_ok)
+
     # 2. 文档内容 + 块对齐
     s, body = call(base, f"/api/documents/{document_id}/content")
     check("文档 content 接口", s == 200)

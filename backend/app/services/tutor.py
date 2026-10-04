@@ -85,7 +85,10 @@ async def stream_exercise_diagnosis(
 
     agent_stream = stream_agent_with_tools(
         adapter,
-        [{"role": "system", "content": system}],
+        [
+            {"role": "system", "content": system},
+            {"role": "user", "content": question.strip() if question.strip() else "请根据我的作答和情况开始伴学指导。"},
+        ],
         db=db,
     )
 
