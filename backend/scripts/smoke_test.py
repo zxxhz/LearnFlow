@@ -226,6 +226,14 @@ new 与 delete 必须配对。
 
 
 def main() -> None:
+    # 确保冒烟测试验证默认无配置状态（清理残留的局域网开关标记）
+    lan_flag = settings.data_dir / "lan_access_enabled.txt"
+    if lan_flag.exists():
+        try:
+            lan_flag.unlink()
+        except OSError:
+            pass
+
     course_id, document_id, kp_id = asyncio.run(seed())
     port = settings.port  # 尊重 APP_PORT：8420 被已在跑的实例占用时可换端口
     base = f"http://127.0.0.1:{port}"
@@ -268,14 +276,14 @@ def main() -> None:
 
     # 1.2 局域网访问配置与令牌管理
     s, body = call(base, "/api/system/access-info")
-    check("局域网访问默认开启", s == 200 and body.get("lan_mode") is True and body.get("lan_enabled") is True and bool(body.get("token")))
+    check("局域网访问默认关闭", s == 200 and body.get("lan_mode") is False and body.get("lan_enabled") is False)
+    s, body = call(base, "/api/system/lan-access?enabled=true", "POST")
+    check("设置中开启局域网访问", s == 200 and body.get("lan_mode") is True and body.get("lan_enabled") is True and bool(body.get("token")))
     old_token = body.get("token")
     s, body = call(base, "/api/system/access-token/rotate", "POST")
     check("重新生成访问令牌", s == 200 and body.get("token") != old_token)
     s, body = call(base, "/api/system/lan-access?enabled=false", "POST")
     check("设置中关闭局域网访问", s == 200 and body.get("lan_mode") is False and body.get("lan_enabled") is False)
-    s, body = call(base, "/api/system/lan-access?enabled=true", "POST")
-    check("设置中开启局域网访问", s == 200 and body.get("lan_mode") is True and body.get("lan_enabled") is True)
 
     # 1.3 局域网访问门禁中间件全链路测试（静态资源免拦 / Cookie自动下发 / Header认证 / 401 / 403）
     async def _test_access_guard():
@@ -312,6 +320,7 @@ def main() -> None:
             return status, body_bytes, {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in res_headers}
 
         from app.services.system import get_access_token, set_lan_access_enabled
+        set_lan_access_enabled(True)
         tok = get_access_token()
 
         st, _, _ = await run_req("/api/test", "127.0.0.1")
@@ -335,7 +344,6 @@ def main() -> None:
         set_lan_access_enabled(False)
         st, _, _ = await run_req("/", "192.168.1.99", query=f"token={tok}")
         assert st == 403, f"disable lan failed: {st}"
-        set_lan_access_enabled(True)
         return True
 
     try:

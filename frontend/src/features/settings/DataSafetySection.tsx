@@ -130,7 +130,7 @@ export default function DataSafetySection() {
             <input
               type="checkbox"
               className="sr-only peer"
-              checked={access?.lan_mode ?? true}
+              checked={access?.lan_mode ?? false}
               disabled={doToggleLan.isPending}
               onChange={(e) => doToggleLan.mutate(e.target.checked)}
             />

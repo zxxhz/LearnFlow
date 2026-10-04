@@ -234,14 +234,18 @@ def main() -> None:
     import uvicorn
 
     if settings.host == "0.0.0.0":
-        # 局域网访问（PRD §5.9）：打印本机局域网地址（带访问令牌）
-        from app.services.system import get_access_token, lan_urls
+        # 局域网访问（PRD §5.9）：若开启则打印本机局域网地址（带访问令牌），默认关闭时给出引导
+        from app.services.system import get_access_token, lan_urls, is_lan_access_enabled
 
-        print("\n>>> 局域网访问地址（需与电脑同一网络，或走内网穿透）：")
-        token = get_access_token()
-        for url in lan_urls():
-            print(f">>>   {url}/?token={token}")
-        print(">>> 安全提示：已启用访问令牌保护，完整地址（含 token）可在设置页查看。\n")
+        if is_lan_access_enabled():
+            print("\n>>> 局域网访问地址（需与电脑同一网络，或走内网穿透）：")
+            token = get_access_token()
+            for url in lan_urls():
+                print(f">>>   {url}/?token={token}")
+            print(">>> 安全提示：已启用访问令牌保护，完整地址（含 token）可在设置页查看。\n")
+        else:
+            print("\n>>> 局域网访问当前处于关闭状态（仅限本机 127.0.0.1 访问）。")
+            print(">>> 如需在平板或手机浏览器中使用，请在设置页「数据与安全」开启「局域网访问」。\n")
 
     if settings.open_browser:
         url = f"http://{'127.0.0.1' if settings.host == '0.0.0.0' else settings.host}:{settings.port}"

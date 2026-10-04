@@ -56,14 +56,14 @@ def lan_access_path() -> Path:
 
 
 def is_lan_access_enabled() -> bool:
-    """是否允许局域网设备访问，默认开启（True）。"""
+    """是否允许局域网设备访问，默认关闭（False）。在设置中开启后才允许非回环设备访问。"""
     p = lan_access_path()
     if p.exists():
         try:
-            return p.read_text(encoding="utf-8").strip() != "0"
+            return p.read_text(encoding="utf-8").strip() == "1"
         except OSError:
-            return True
-    return True
+            return False
+    return False
 
 
 def set_lan_access_enabled(enabled: bool) -> bool:
