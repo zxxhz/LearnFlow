@@ -105,12 +105,14 @@ export default function ReaderPage() {
   const [toolbarColor, setToolbarColor] = useState<AnnotationColor>("yellow");
   const [creating, setCreating] = useState(false);
   const [activeAnn, setActiveAnn] = useState<Annotation | null>(null);
+  const [isClosingCard, setIsClosingCard] = useState(false);
   const currentActiveAnn = useMemo(() => {
     if (!activeAnn) return null;
     return annotations.find((a) => a.id === activeAnn.id) ?? activeAnn;
   }, [activeAnn, annotations]);
   const [convIdCache, setConvIdCache] = useState<Record<string, string>>({});
   const [convId, setConvId] = useState<string | null>(null);
+  const isCardOpen = !!(currentActiveAnn && convId) && !isClosingCard;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [kpOpen, setKpOpen] = useState(false);
   const [exerciseOpen, setExerciseOpen] = useState(false);
@@ -172,12 +174,25 @@ export default function ReaderPage() {
     setSelection({ anchor, rect });
   }, [reAnchoring]);
 
+  // ===== 卡片与关闭调度 =====
+  const closeAnnotation = useCallback(() => {
+    setIsClosingCard(true);
+    setTimeout(() => {
+      setActiveAnn(null);
+      setConvId(null);
+      setIsClosingCard(false);
+    }, 300);
+  }, []);
+
   useEffect(() => {
     const onMouseUp = () => setTimeout(captureSelection, 0);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setSelection(null);
         setReAnchoring(null);
+        if (activeAnn) {
+          closeAnnotation();
+        }
       }
     };
     // 触屏：长按选择后 touchend 捕获选区（PRD §5.9 平板适配）
@@ -189,7 +204,7 @@ export default function ReaderPage() {
       document.removeEventListener("touchend", onMouseUp);
       document.removeEventListener("keyup", onKey);
     };
-  }, [captureSelection]);
+  }, [captureSelection, activeAnn, closeAnnotation]);
 
   const createAnnotation = useMutation({
     mutationFn: async (openCard: boolean) => {
@@ -213,6 +228,7 @@ export default function ReaderPage() {
 
   // ===== 卡片与定位 =====
   const openAnnotation = async (a: Annotation, knownConvId?: string) => {
+    setIsClosingCard(false);
     setActiveAnn(a);
     setKpOpen(false);
     const cached = knownConvId ?? convIdCache[a.id];
@@ -345,7 +361,7 @@ export default function ReaderPage() {
   const orphanCount = annotations.filter((a) => a.status === "orphan").length;
 
   return (
-    <div className="flex min-h-screen bg-white dark:bg-gray-900">
+    <div className="flex min-h-screen bg-white dark:bg-gray-900 overflow-x-hidden">
       {/* 目录：桌面常驻左侧栏；左边是目录，右边正文 */}
       <aside className="sticky top-0 hidden h-screen w-72 shrink-0 flex-col border-r border-gray-100 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-800/40 md:flex">
         {/* 顶部：返回首页、课程名、课程详情 */}
@@ -403,8 +419,13 @@ export default function ReaderPage() {
         </div>
       </aside>
 
-      {/* 正文列 */}
-      <div className="relative mx-auto w-full max-w-3xl px-4 py-8 md:px-10">
+      {/* 正文主区域：提问卡片打开时平滑向左避让，关闭时丝滑复原 */}
+      <main
+        className={`flex-1 min-w-0 transition-all duration-300 ease-out ${
+          isCardOpen ? "md:mr-[420px]" : "mr-0"
+        }`}
+      >
+        <div className="relative mx-auto w-full max-w-3xl px-4 py-8 md:px-10">
         {/* 页头 */}
         <div className="sticky top-0 z-20 -mx-4 mb-6 flex items-center justify-between gap-2 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900/90 px-4 py-3 backdrop-blur md:-mx-10 md:px-10">
           <div className="flex items-center gap-1">
@@ -523,6 +544,7 @@ export default function ReaderPage() {
         </div>
 
       </div>
+      </main>
 
       {/* 小屏目录浮层 */}
       {tocOpen && (
@@ -638,8 +660,7 @@ export default function ReaderPage() {
               api.annotations.remove(a.id).then(() => {
                 invalidate();
                 if (activeAnn?.id === a.id) {
-                  setActiveAnn(null);
-                  setConvId(null);
+                  closeAnnotation();
                 }
               });
             }
@@ -654,10 +675,8 @@ export default function ReaderPage() {
           key={currentActiveAnn.id}
           annotation={currentActiveAnn}
           conversationId={convId}
-          onClose={() => {
-            setActiveAnn(null);
-            setConvId(null);
-          }}
+          closing={isClosingCard}
+          onClose={closeAnnotation}
           onJump={(a) => jumpTo(a.section_id, a.id)}
         />
       )}

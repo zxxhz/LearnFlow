@@ -19,6 +19,7 @@ const KATEX_DELIMITERS = [
 interface Props {
   annotation: Annotation;
   conversationId: string;
+  closing?: boolean;
   onClose: () => void;
   onJump: (a: Annotation) => void;
 }
@@ -26,11 +27,13 @@ interface Props {
 export default function AnnotationCard({
   annotation,
   conversationId,
+  closing = false,
   onClose,
   onJump,
 }: Props) {
   const queryClient = useQueryClient();
   const hlColors = useHlColors();
+  const [mounted, setMounted] = useState(false);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState("");
   const [streamErr, setStreamErr] = useState("");
@@ -40,6 +43,13 @@ export default function AnnotationCard({
   const [currentColor, setCurrentColor] = useState<AnnotationColor>(annotation.color);
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setMounted(true);
+    }, 20);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     setCurrentColor(annotation.color);
@@ -114,8 +124,14 @@ export default function AnnotationCard({
     },
   });
 
+  const isVisible = mounted && !closing;
+
   return (
-    <div className="fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl sm:w-[420px]">
+    <div
+      className={`fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl sm:w-[420px] transition-transform duration-300 ease-out transform ${
+        isVisible ? "translate-x-0" : "translate-x-full"
+      }`}
+    >
       {/* 头部：颜色切换 */}
       <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3">
         <div className="flex items-center gap-2">
