@@ -108,6 +108,7 @@ export default function ReaderPage() {
   const [flashSection, setFlashSection] = useState<string | null>(null);
   const [regenOpen, setRegenOpen] = useState(false);
   const [regenInstruction, setRegenInstruction] = useState("");
+  const [regenAutoHighlight, setRegenAutoHighlight] = useState(true);
   const [regenMsg, setRegenMsg] = useState("");
   const [runningSection, setRunningSection] = useState<string | null>(null);
   const [runError, setRunError] = useState("");
@@ -275,7 +276,12 @@ export default function ReaderPage() {
 
   // ===== 重新生成本章 =====
   const regenerate = useMutation({
-    mutationFn: () => api.documents.regenerate(documentId!, regenInstruction.trim() || undefined),
+    mutationFn: () =>
+      api.documents.regenerate(
+        documentId!,
+        regenInstruction.trim() || undefined,
+        regenAutoHighlight
+      ),
     onSuccess: () => {
       setRegenOpen(false);
       setRegenMsg("重新生成中…");
@@ -633,6 +639,15 @@ export default function ReaderPage() {
           onChange={(e) => setRegenInstruction(e.target.value)}
           placeholder="可选：对重新生成的调整要求，如「推导再详细一点」「多举一个例子」"
         />
+        <label className="mt-3 flex items-center gap-2 text-xs text-gray-700 dark:text-gray-300 select-none cursor-pointer">
+          <input
+            type="checkbox"
+            checked={regenAutoHighlight}
+            onChange={(e) => setRegenAutoHighlight(e.target.checked)}
+            className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+          />
+          <span>🖍 重新生成时自动划重点</span>
+        </label>
         {orphanCount > 0 && (
           <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
             注意：本章有 {orphanCount} 条 orphan 标注，重新生成后可在标注抽屉中重新挂载。

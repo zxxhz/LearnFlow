@@ -623,8 +623,11 @@ def main() -> None:
     s, body = call(base, "/api/settings", "PUT", {
         "llm": test_llm,
         "scenes": {"generation": {}, "chat": {"model": "fast-model"}},
+        "preferences": {"auto_highlight": False},
     })
-    check("保存场景化配置", s == 200 and body["scenes"]["chat"]["model"] == "fast-model", str(body)[:150])
+    check("保存场景化与偏好配置", s == 200 and body["scenes"]["chat"]["model"] == "fast-model" and body["preferences"]["auto_highlight"] is False, str(body)[:150])
+    s, body = call(base, "/api/settings", "PUT", {"preferences": {"auto_highlight": True}})
+    check("设置中重新开启自动划重点", s == 200 and body["preferences"]["auto_highlight"] is True)
     import asyncio as _aio
 
     from app.core.db import async_session_factory

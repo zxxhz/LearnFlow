@@ -34,6 +34,8 @@ logger = logging.getLogger(__name__)
 
 # 课程级任务注册表：course_id -> Task（含单章重生成任务，同用课程 id 键）
 _tasks: dict[str, asyncio.Task] = {}
+# 课程级生成选项缓存：course_id -> dict(auto_highlight=...)
+_course_options: dict[str, dict] = {}
 # 进度事件总线：course_id -> 订阅队列集合（SSE 推送）
 _subscribers: dict[str, set[asyncio.Queue]] = {}
 
@@ -60,12 +62,17 @@ def is_running(course_id: str) -> bool:
 
 def cancel(course_id: str) -> None:
     t = _tasks.pop(course_id, None)
+    _course_options.pop(course_id, None)
     if t and not t.done():
         t.cancel()
 
 
 async def run_chapter(
-    db: AsyncSession, course: Course, doc: Document, instruction: str | None = None
+    db: AsyncSession,
+    course: Course,
+    doc: Document,
+    instruction: str | None = None,
+    auto_highlight: bool | None = None,
 ) -> None:
     """生成单章：LLM → 落盘 → 重建索引 → 知识点/出卡 → 状态推进。异常向上抛。"""
     doc.status = "generating"
@@ -183,7 +190,12 @@ async def run_chapter(
             db.add(kp)
             await db.flush()
 
-    # 自动划重点：模型元数据优先 + 核心语句提炼兜底，锚定至对应 Section
+    if auto_highlight is None:
+        should_highlight = bool(prefs.get("auto_highlight", True))
+    else:
+        should_highlight = bool(auto_highlight)
+
+    # 自动划重点：模型元数据优先 + 核心语句提炼兜底，锚定至对应 Section（可由入参或设置关闭）
     await create_auto_highlights(
         db,
         doc=doc,
@@ -191,6 +203,7 @@ async def run_chapter(
         raw_markdown=body,
         meta_highlights=meta.highlights if meta else None,
         knowledge_points=meta.knowledge_points if meta else None,
+        enabled=should_highlight,
     )
     await db.commit()
     publish(
@@ -208,6 +221,8 @@ async def _mark_failed(db: AsyncSession, doc: Document, exc: Exception) -> None:
 
 async def run_course(course_id: str) -> None:
     """顺序生成课程所有未完成章节（断点续生成：跳过 done）。"""
+    options = _course_options.get(course_id, {})
+    auto_highlight = options.get("auto_highlight")
     try:
         async with async_session_factory() as db:
             course = await db.get(Course, course_id)
@@ -224,7 +239,7 @@ async def run_course(course_id: str) -> None:
                 if doc.status == "done":
                     continue
                 try:
-                    await run_chapter(db, course, doc)
+                    await run_chapter(db, course, doc, auto_highlight=auto_highlight)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
@@ -242,16 +257,21 @@ async def run_course(course_id: str) -> None:
         logger.info("course generation cancelled: %s", course_id)
     finally:
         _tasks.pop(course_id, None)
+        _course_options.pop(course_id, None)
 
 
-def start_course_generation(course_id: str) -> None:
+def start_course_generation(course_id: str, auto_highlight: bool | None = None) -> None:
     t = _tasks.get(course_id)
     if t is not None and not t.done():
         return
+    if auto_highlight is not None:
+        _course_options[course_id] = {"auto_highlight": auto_highlight}
     _tasks[course_id] = asyncio.create_task(run_course(course_id))
 
 
-async def queue_single_document(document_id: str, instruction: str | None) -> str:
+async def queue_single_document(
+    document_id: str, instruction: str | None, auto_highlight: bool | None = None
+) -> str:
     """单章重新生成：返回 course_id；课程任务在跑时抛 RuntimeError。"""
     async with async_session_factory() as db:
         doc = await db.get(Document, document_id)
@@ -272,7 +292,9 @@ async def queue_single_document(document_id: str, instruction: str | None) -> st
                 if course is None or doc is None:
                     return
                 try:
-                    await run_chapter(db, course, doc, instruction)
+                    await run_chapter(
+                        db, course, doc, instruction, auto_highlight=auto_highlight
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:

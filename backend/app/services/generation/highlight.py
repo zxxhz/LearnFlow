@@ -108,21 +108,11 @@ async def create_auto_highlights(
     raw_markdown: str,
     meta_highlights: list[HighlightItem] | None = None,
     knowledge_points: list[KPItem] | None = None,
+    enabled: bool = True,
 ) -> list[Annotation]:
-    """为生成的文档自动生成划线重点并落库。"""
+    """为生成的文档自动生成划线重点并落库。若 enabled=False 则仅清理旧版残留自动划线。"""
     if not sections or not raw_markdown.strip():
         return []
-
-    parsed_blocks = parse_blocks(raw_markdown)
-    block_map = {
-        s.id: parsed_blocks[s.order_index]
-        for s in sections
-        if s.order_index < len(parsed_blocks)
-    }
-    plain_map = {
-        sid: get_block_plain_text(b.raw)
-        for sid, b in block_map.items()
-    }
 
     # 1. 重新生成章节时：清理旧版本残留且未产生对话问答的自动划线
     existing_auto_anns = (
@@ -148,9 +138,25 @@ async def create_auto_highlights(
             ).first()
             if has_msg:
                 continue  # 用户有过问答，保留
+            await db.execute(delete(Message).where(Message.conversation_id == conv.id))
             await db.execute(delete(Conversation).where(Conversation.id == conv.id))
         await db.delete(old_ann)
     await db.flush()
+
+    if not enabled:
+        logger.info("auto-highlights disabled for document %s, skipped creation", doc.id)
+        return []
+
+    parsed_blocks = parse_blocks(raw_markdown)
+    block_map = {
+        s.id: parsed_blocks[s.order_index]
+        for s in sections
+        if s.order_index < len(parsed_blocks)
+    }
+    plain_map = {
+        sid: get_block_plain_text(b.raw)
+        for sid, b in block_map.items()
+    }
 
     # 2. 收集候选划线列表：模型输出优先 + 文本加粗提炼兜底
     candidates: list[tuple[str, str, str]] = []

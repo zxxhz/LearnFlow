@@ -37,6 +37,7 @@ export default function SettingsPage() {
     chapter_length: 3000,
     exercises_per_kp: 3,
     highlight_colors: {},
+    auto_highlight: true,
   });
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
@@ -49,7 +50,7 @@ export default function SettingsPage() {
         generation: { ...EMPTY_SCENE, ...settings.scenes?.generation, api_key: "" },
         chat: { ...EMPTY_SCENE, ...settings.scenes?.chat, api_key: "" },
       });
-      setPrefs(settings.preferences);
+      setPrefs({ auto_highlight: true, ...settings.preferences });
     }
   }, [settings]);
 
@@ -356,6 +357,20 @@ export default function SettingsPage() {
             </button>
           </div>
           <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">影响阅读器划线底色与标注卡片色板，保存偏好后生效。</p>
+        </div>
+        <div className="mt-4 border-t border-gray-100 dark:border-gray-800 pt-4">
+          <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 select-none cursor-pointer">
+            <input
+              type="checkbox"
+              checked={prefs.auto_highlight ?? true}
+              onChange={(e) => setPrefs({ ...prefs, auto_highlight: e.target.checked })}
+              className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+            />
+            <span>生成时自动划重点</span>
+          </label>
+          <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+            生成新章节时，根据模型提炼与核心要点自动生成划线高亮。若关闭，则生成时不主动打标，仅在阅读时手动划选。
+          </p>
         </div>
         <Button className="mt-4" disabled={savePrefs.isPending} onClick={() => savePrefs.mutate()}>
           保存偏好

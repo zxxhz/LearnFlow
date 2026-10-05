@@ -77,9 +77,15 @@ class CourseListItem(CourseOut):
     first_document_id: str | None = None
 
 
+class CourseGenerateRequest(BaseModel):
+    auto_highlight: bool | None = None
+
+
 class OutlineUpdate(BaseModel):
     outline: list[OutlineItem]
 
 
 class RegenerateRequest(BaseModel):
     instruction: str | None = None
+    auto_highlight: bool | None = None
+

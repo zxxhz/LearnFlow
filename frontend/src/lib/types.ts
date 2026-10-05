@@ -120,6 +120,7 @@ export interface Preferences {
   chapter_length: number;
   exercises_per_kp: number;
   highlight_colors: Partial<Record<AnnotationColor, string>>;
+  auto_highlight?: boolean;
 }
 
 export interface SceneLLMConfig {

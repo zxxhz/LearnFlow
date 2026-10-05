@@ -170,8 +170,11 @@ export const api = {
         method: "PATCH",
         ...jsonBody({ title }),
       }),
-    generate: (id: string) =>
-      request<Course>(`/courses/${id}/generate`, { method: "POST" }),
+    generate: (id: string, options?: { auto_highlight?: boolean }) =>
+      request<Course>(`/courses/${id}/generate`, {
+        method: "POST",
+        ...(options ? jsonBody(options) : {}),
+      }),
     list: () => request<CourseListItem[]>("/courses"),
     get: (id: string) => request<CourseDetail>(`/courses/${id}`),
     exportMd: (id: string) => downloadFile(`/courses/${id}/export.md`),
@@ -247,10 +250,13 @@ export const api = {
   documents: {
     getContent: (id: string) =>
       request<DocumentContent>(`/documents/${id}/content`),
-    regenerate: (id: string, instruction?: string) =>
+    regenerate: (id: string, instruction?: string, auto_highlight?: boolean) =>
       request<{ ok: boolean }>(`/documents/${id}/regenerate`, {
         method: "POST",
-        ...jsonBody({ instruction: instruction ?? null }),
+        ...jsonBody({
+          instruction: instruction ?? null,
+          ...(auto_highlight !== undefined ? { auto_highlight } : {}),
+        }),
       }),
     executions: (id: string) =>
       request<CodeExecution[]>(`/documents/${id}/executions`),

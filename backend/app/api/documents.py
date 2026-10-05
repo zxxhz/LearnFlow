@@ -57,7 +57,9 @@ async def regenerate(document_id: str, body: RegenerateRequest, db: AsyncSession
             detail="导入的文档保留原文，不支持重新生成；如需 AI 重写，请新建课程后学习。",
         )
     try:
-        await pipeline.queue_single_document(document_id, body.instruction)
+        await pipeline.queue_single_document(
+            document_id, body.instruction, auto_highlight=body.auto_highlight
+        )
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except RuntimeError as e:

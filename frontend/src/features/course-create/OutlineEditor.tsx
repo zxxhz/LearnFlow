@@ -16,6 +16,7 @@ export default function OutlineEditor({ course }: Props) {
   );
   const [regenOpen, setRegenOpen] = useState(false);
   const [regenInstruction, setRegenInstruction] = useState("");
+  const [autoHighlight, setAutoHighlight] = useState(true);
   const [error, setError] = useState("");
 
   const update = (i: number, patch: Partial<OutlineItem>) =>
@@ -37,7 +38,7 @@ export default function OutlineEditor({ course }: Props) {
         .map((it, i) => ({ index: i + 1, title: it.title.trim(), points: it.points.filter((p) => p.trim()) }));
       if (normalized.length === 0) throw new Error("至少需要一个章节");
       await api.courses.saveOutline(course.id, normalized);
-      if (thenGenerate) await api.courses.generate(course.id);
+      if (thenGenerate) await api.courses.generate(course.id, { auto_highlight: autoHighlight });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["course", course.id] }),
     onError: (e) => setError(e.message),
@@ -87,6 +88,15 @@ export default function OutlineEditor({ course }: Props) {
             "保存并开始生成文档"
           )}
         </Button>
+        <label className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300 select-none cursor-pointer">
+          <input
+            type="checkbox"
+            checked={autoHighlight}
+            onChange={(e) => setAutoHighlight(e.target.checked)}
+            className="rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+          />
+          <span>🖍 自动划重点</span>
+        </label>
         <Button variant="ghost" onClick={() => setRegenOpen(true)}>
           🔄 AI 重新生成大纲
         </Button>

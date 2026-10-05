@@ -30,6 +30,8 @@ class Preferences(BaseModel):
     exercises_per_kp: int = 3
     # 划线高亮四色（hex），缺失/非法项回落默认
     highlight_colors: dict[str, str] = dict(DEFAULT_HL_COLORS)
+    # 生成章节时是否自动划重点
+    auto_highlight: bool = True
 
     @field_validator("highlight_colors", mode="before")
     @classmethod

@@ -13,6 +13,7 @@ from app.schemas.course import (
     ChapterProgress,
     CourseCreate,
     CourseDetailOut,
+    CourseGenerateRequest,
     CourseListItem,
     CourseOut,
     CourseSettingsUpdate,
@@ -112,7 +113,11 @@ def _create_documents(db: AsyncSession, course: Course, outline: list[dict]) -> 
 
 
 @router.post("/{course_id}/generate", response_model=CourseOut)
-async def generate(course_id: str, db: AsyncSession = Depends(get_db)):
+async def generate(
+    course_id: str,
+    body: CourseGenerateRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+):
     course = await _get_course(db, course_id)
     if pipeline.is_running(course_id):
         raise HTTPException(status_code=409, detail="该课程的生成任务正在进行中")
@@ -139,7 +144,9 @@ async def generate(course_id: str, db: AsyncSession = Depends(get_db)):
     course.status = "generating"
     course.updated_at = utcnow_iso()
     await db.commit()
-    pipeline.start_course_generation(course_id)
+    pipeline.start_course_generation(
+        course_id, auto_highlight=body.auto_highlight if body else None
+    )
     return CourseOut.model_validate(course)
 
 
