@@ -201,7 +201,7 @@ export default function Layout() {
           </header>
         )}
         {/* scrollbar-gutter: 滚动条出现/消失不再让居中内容横移（各页面标题位置保持一致） */}
-        <main className={`min-h-0 flex-1 overflow-auto ${isReader ? "" : "[scrollbar-gutter:stable]"}`}>
+        <main className={`min-h-0 flex-1 ${isReader ? "overflow-hidden" : "overflow-auto [scrollbar-gutter:stable]"}`}>
           <Outlet />
         </main>
       </div>

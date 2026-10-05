@@ -126,6 +126,18 @@ export default function ReaderPage() {
   const [runningSection, setRunningSection] = useState<string | null>(null);
   const [runError, setRunError] = useState("");
   const [tocOpen, setTocOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    const saved = localStorage.getItem("learnflow-reader-sidebar-open");
+    return saved !== null ? saved === "true" : true;
+  });
+
+  const toggleSidebar = useCallback(() => {
+    setSidebarOpen((prev) => {
+      const next = !prev;
+      localStorage.setItem("learnflow-reader-sidebar-open", String(next));
+      return next;
+    });
+  }, []);
   const contentRef = useRef<HTMLDivElement>(null);
 
   const execBySection = useMemo(
@@ -187,6 +199,11 @@ export default function ReaderPage() {
   useEffect(() => {
     const onMouseUp = () => setTimeout(captureSelection, 0);
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        toggleSidebar();
+        return;
+      }
       if (e.key === "Escape") {
         setSelection(null);
         setReAnchoring(null);
@@ -204,7 +221,7 @@ export default function ReaderPage() {
       document.removeEventListener("touchend", onMouseUp);
       document.removeEventListener("keyup", onKey);
     };
-  }, [captureSelection, activeAnn, closeAnnotation]);
+  }, [captureSelection, activeAnn, closeAnnotation, toggleSidebar]);
 
   const createAnnotation = useMutation({
     mutationFn: async (openCard: boolean) => {
@@ -361,10 +378,14 @@ export default function ReaderPage() {
   const orphanCount = annotations.filter((a) => a.status === "orphan").length;
 
   return (
-    <div className="flex min-h-screen bg-white dark:bg-gray-900 overflow-x-hidden">
-      {/* 目录：桌面常驻左侧栏；左边是目录，右边正文 */}
-      <aside className="sticky top-0 hidden h-screen w-72 shrink-0 flex-col border-r border-gray-100 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-800/40 md:flex">
-        {/* 顶部：返回首页、课程名、课程详情 */}
+    <div className="flex h-full w-full bg-white dark:bg-gray-900 overflow-hidden">
+      {/* 目录：桌面左侧栏；固定不随文章滑动，支持丝滑折叠展开 */}
+      <aside
+        className={`hidden h-full w-72 shrink-0 flex-col border-r border-gray-100 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-800/40 md:flex transition-all duration-300 ease-in-out ${
+          sidebarOpen ? "ml-0 opacity-100 pointer-events-auto" : "-ml-72 opacity-0 pointer-events-none border-r-0"
+        }`}
+      >
+        {/* 顶部：返回首页、课程名、折叠按钮 */}
         <div className="border-b border-gray-200/60 dark:border-gray-700/60 p-4">
           <div className="mb-2 flex items-center justify-between">
             <Link
@@ -375,22 +396,33 @@ export default function ReaderPage() {
               <span>←</span>
               <span>返回首页</span>
             </Link>
-            {courseId && (
-              <Link
-                to={`/courses/${courseId}`}
-                className="text-xs text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition"
-                title="课程详情与设置"
+            <div className="flex items-center gap-1.5">
+              {courseId && (
+                <Link
+                  to={`/courses/${courseId}`}
+                  className="text-xs text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition mr-1"
+                  title="课程详情与设置"
+                >
+                  课程详情
+                </Link>
+              )}
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                className="flex h-6 w-6 items-center justify-center rounded text-xs text-gray-400 hover:bg-gray-200/60 dark:hover:bg-gray-700/60 hover:text-gray-600 dark:hover:text-gray-200 transition"
+                title="折叠目录 (Ctrl+B)"
+                aria-label="折叠目录"
               >
-                课程详情
-              </Link>
-            )}
+                ◀
+              </button>
+            </div>
           </div>
           <div className="truncate text-sm font-bold text-gray-900 dark:text-gray-100" title={courseQuery.data?.title}>
             {courseQuery.data?.title ?? "课程"}
           </div>
         </div>
 
-        {/* 目录树：全课程章节 + 当前章小节 */}
+        {/* 目录树：全课程章节 + 当前章小节（独立上下滚动） */}
         <div className="flex-1 overflow-y-auto px-2 py-3">
           <TocSidebar
             items={tocItems}
@@ -419,9 +451,9 @@ export default function ReaderPage() {
         </div>
       </aside>
 
-      {/* 正文主区域：提问卡片打开时平滑向左避让，关闭时丝滑复原 */}
+      {/* 正文主区域：独立纵向滚动，提问卡片打开时平滑向左避让，关闭时丝滑复原 */}
       <main
-        className={`flex-1 min-w-0 transition-all duration-300 ease-out ${
+        className={`flex-1 h-full overflow-y-auto min-w-0 transition-all duration-300 ease-out ${
           isCardOpen ? "md:mr-[420px]" : "mr-0"
         }`}
       >
@@ -435,6 +467,15 @@ export default function ReaderPage() {
               onClick={() => setTocOpen(true)}
             >
               ☰ 目录
+            </Button>
+            <Button
+              variant="ghost"
+              className="hidden text-xs md:inline-flex items-center gap-1"
+              onClick={toggleSidebar}
+              title={sidebarOpen ? "折叠目录 (Ctrl+B)" : "展开目录 (Ctrl+B)"}
+            >
+              <span>{sidebarOpen ? "◀" : "▶"}</span>
+              <span>{sidebarOpen ? "折叠目录" : "展开目录"}</span>
             </Button>
             <Button
               variant="ghost"
