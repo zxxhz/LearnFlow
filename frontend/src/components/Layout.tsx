@@ -79,6 +79,8 @@ function NavActions({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 export default function Layout() {
+  const { pathname } = useLocation();
+  const isReader = pathname.startsWith("/read/");
   const [navOpen, setNavOpen] = useState(false);
   const [theme, setThemeState] = useState<Theme>(() => getTheme());
   const [dialogUpdate, setDialogUpdate] = useState<UpdateCheckResult | null>(null);
@@ -136,27 +138,29 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
-      {/* 桌面侧栏 */}
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 md:flex">
-        <div className="flex items-center gap-2 px-5 py-5">
-          <span className="text-xl font-bold text-brand-600">LearnFlow</span>
-        </div>
-        <NavLinks />
-        <NavActions />
-        <div className="border-t border-gray-100 dark:border-gray-800 p-3">
-          <button
-            onClick={toggleTheme}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-            title="切换深色 / 浅色"
-          >
-            <span>{theme === "dark" ? "☀️" : "🌙"}</span>
-            {theme === "dark" ? "浅色模式" : "深色模式"}
-          </button>
-        </div>
-      </aside>
+      {/* 桌面侧栏：进入课程阅读后隐藏，释放全宽给课程目录+正文两栏 */}
+      {!isReader && (
+        <aside className="hidden w-56 shrink-0 flex-col border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 md:flex">
+          <div className="flex items-center gap-2 px-5 py-5">
+            <span className="text-xl font-bold text-brand-600">LearnFlow</span>
+          </div>
+          <NavLinks />
+          <NavActions />
+          <div className="border-t border-gray-100 dark:border-gray-800 p-3">
+            <button
+              onClick={toggleTheme}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+              title="切换深色 / 浅色"
+            >
+              <span>{theme === "dark" ? "☀️" : "🌙"}</span>
+              {theme === "dark" ? "浅色模式" : "深色模式"}
+            </button>
+          </div>
+        </aside>
+      )}
 
       {/* 移动端抽屉 */}
-      {navOpen && (
+      {!isReader && navOpen && (
         <div className="fixed inset-0 z-50 md:hidden" onClick={() => setNavOpen(false)}>
           <div className="absolute inset-0 bg-black/40" />
           <aside
@@ -176,26 +180,28 @@ export default function Layout() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* 移动端顶栏 */}
-        <header className="flex items-center gap-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-2.5 md:hidden">
-          <button
-            onClick={() => setNavOpen(true)}
-            className="rounded-md p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-            aria-label="打开菜单"
-          >
-            ☰
-          </button>
-          <span className="text-base font-bold text-brand-600">LearnFlow</span>
-          <button
-            onClick={toggleTheme}
-            className="ml-auto rounded-md p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-            aria-label="切换深色 / 浅色"
-          >
-            {theme === "dark" ? "☀️" : "🌙"}
-          </button>
-        </header>
+        {/* 移动端顶栏（阅读界面由阅读器自身顶栏接管） */}
+        {!isReader && (
+          <header className="flex items-center gap-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-2.5 md:hidden">
+            <button
+              onClick={() => setNavOpen(true)}
+              className="rounded-md p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+              aria-label="打开菜单"
+            >
+              ☰
+            </button>
+            <span className="text-base font-bold text-brand-600">LearnFlow</span>
+            <button
+              onClick={toggleTheme}
+              className="ml-auto rounded-md p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+              aria-label="切换深色 / 浅色"
+            >
+              {theme === "dark" ? "☀️" : "🌙"}
+            </button>
+          </header>
+        )}
         {/* scrollbar-gutter: 滚动条出现/消失不再让居中内容横移（各页面标题位置保持一致） */}
-        <main className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]">
+        <main className={`min-h-0 flex-1 overflow-auto ${isReader ? "" : "[scrollbar-gutter:stable]"}`}>
           <Outlet />
         </main>
       </div>

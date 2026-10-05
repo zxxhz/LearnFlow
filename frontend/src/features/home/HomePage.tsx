@@ -13,6 +13,14 @@ export default function HomePage() {
   const navigate = useNavigate();
   const { data: courses, isLoading } = useQuery({ queryKey: ["courses"], queryFn: api.courses.list });
 
+  const handleCourseClick = (c: { id: string; status: string; first_document_id?: string | null }) => {
+    if (c.status === "ready" && c.first_document_id) {
+      navigate(`/read/${c.first_document_id}`);
+    } else {
+      navigate(`/courses/${c.id}`);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-5xl p-8">
       <div className="mb-6 flex items-center justify-between">
@@ -47,14 +55,26 @@ export default function HomePage() {
             return (
               <div
                 key={c.id}
-                onClick={() => navigate(`/courses/${c.id}`)}
+                onClick={() => handleCourseClick(c)}
                 className="cursor-pointer rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-5 transition hover:border-brand-500 hover:shadow-md"
               >
                 <div className="flex items-start justify-between gap-3">
                   <h3 className="min-w-0 flex-1 break-words text-base font-semibold text-gray-900 dark:text-gray-100">
                     {c.title}
                   </h3>
-                  <Badge color={badge.color}>{badge.label}</Badge>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/courses/${c.id}`);
+                      }}
+                      className="rounded px-2 py-0.5 text-xs text-gray-400 hover:text-brand-600 hover:bg-gray-100 dark:text-gray-500 dark:hover:text-brand-400 dark:hover:bg-gray-800 transition"
+                      title="课程详情与设置"
+                    >
+                      详情
+                    </button>
+                    <Badge color={badge.color}>{badge.label}</Badge>
+                  </div>
                 </div>
                 <p className="mt-1 line-clamp-2 text-sm text-gray-500 dark:text-gray-400">{c.topic}</p>
                 <div className="mt-4 flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">

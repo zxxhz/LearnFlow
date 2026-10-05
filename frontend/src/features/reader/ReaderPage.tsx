@@ -15,6 +15,7 @@ import TocSidebar, { buildToc } from "./TocSidebar";
 import AnnotationsDrawer from "./AnnotationsDrawer";
 import ExerciseDrawer from "./ExerciseDrawer";
 import { hlColorVars, useHlColors } from "./colors";
+import { useTheme } from "../../lib/theme";
 
 export default function ReaderPage() {
   const { documentId } = useParams<{ documentId: string }>();
@@ -22,6 +23,7 @@ export default function ReaderPage() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const hlColors = useHlColors();
+  const { theme, toggle: toggleTheme } = useTheme();
 
   const contentQuery = useQuery({
     queryKey: ["doc", documentId],
@@ -327,15 +329,61 @@ export default function ReaderPage() {
 
   return (
     <div className="flex min-h-screen bg-white dark:bg-gray-900">
-      {/* 目录：桌面常驻侧栏；小屏收起，用浮动按钮打开 */}
-      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 overflow-auto border-r border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 py-5 lg:block">
-        <div className="px-4 pb-3">
-          <Link to={`/courses/${courseId}`} className="text-xs text-gray-400 dark:text-gray-500 hover:text-brand-600">
-            ← {courseQuery.data?.title ?? "课程"}
-          </Link>
-          <div className="mt-1 truncate text-sm font-semibold text-gray-800 dark:text-gray-200">{doc.title}</div>
+      {/* 目录：桌面常驻左侧栏；左边是目录，右边正文 */}
+      <aside className="sticky top-0 hidden h-screen w-72 shrink-0 flex-col border-r border-gray-100 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-800/40 md:flex">
+        {/* 顶部：返回首页、课程名、课程详情 */}
+        <div className="border-b border-gray-200/60 dark:border-gray-700/60 p-4">
+          <div className="mb-2 flex items-center justify-between">
+            <Link
+              to="/"
+              className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-brand-600 dark:text-gray-400 dark:hover:text-brand-400 transition"
+              title="返回应用首页"
+            >
+              <span>←</span>
+              <span>返回首页</span>
+            </Link>
+            {courseId && (
+              <Link
+                to={`/courses/${courseId}`}
+                className="text-xs text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition"
+                title="课程详情与设置"
+              >
+                课程详情
+              </Link>
+            )}
+          </div>
+          <div className="truncate text-sm font-bold text-gray-900 dark:text-gray-100" title={courseQuery.data?.title}>
+            {courseQuery.data?.title ?? "课程"}
+          </div>
         </div>
-        <TocSidebar items={tocItems} onJump={(sid) => jumpTo(sid)} />
+
+        {/* 目录树：全课程章节 + 当前章小节 */}
+        <div className="flex-1 overflow-y-auto px-2 py-3">
+          <TocSidebar
+            items={tocItems}
+            chapters={docs}
+            currentDocId={doc.id}
+            onJump={(sid) => jumpTo(sid)}
+            onSelectChapter={(docId) => navigate(`/read/${docId}`)}
+          />
+        </div>
+
+        {/* 底部：进度与深浅色模式切换 */}
+        <div className="border-t border-gray-200/60 dark:border-gray-700/60 p-3">
+          <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+            <span>
+              {docs.length > 0 ? `第 ${idx + 1} / ${docs.length} 章` : ""}
+            </span>
+            <button
+              onClick={toggleTheme}
+              className="flex items-center gap-1 rounded-md px-2 py-1 hover:bg-gray-200/60 dark:hover:bg-gray-700/60 transition"
+              title="切换深浅色主题"
+            >
+              <span>{theme === "dark" ? "☀️" : "🌙"}</span>
+              <span>{theme === "dark" ? "浅色" : "深色"}</span>
+            </button>
+          </div>
+        </div>
       </aside>
 
       {/* 正文列 */}
@@ -345,7 +393,7 @@ export default function ReaderPage() {
           <div className="flex items-center gap-1">
             <Button
               variant="ghost"
-              className="text-xs lg:hidden"
+              className="text-xs md:hidden"
               onClick={() => setTocOpen(true)}
             >
               ☰ 目录
@@ -437,25 +485,35 @@ export default function ReaderPage() {
 
       {/* 小屏目录浮层 */}
       {tocOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setTocOpen(false)}>
+        <div className="fixed inset-0 z-40 md:hidden" onClick={() => setTocOpen(false)}>
           <div className="absolute inset-0 bg-black/40" />
           <div
-            className="absolute inset-y-0 left-0 w-72 overflow-auto bg-white dark:bg-gray-900 p-4 shadow-xl"
+            className="absolute inset-y-0 left-0 flex w-72 flex-col bg-white dark:bg-gray-900 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="mb-2 flex items-center justify-between">
-              <span className="truncate text-sm font-semibold text-gray-800 dark:text-gray-200">{doc.title}</span>
+            <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 p-4">
+              <span className="truncate text-sm font-bold text-gray-900 dark:text-gray-100">
+                {courseQuery.data?.title ?? doc.title}
+              </span>
               <button className="text-gray-400 dark:text-gray-500" onClick={() => setTocOpen(false)}>
                 ✕
               </button>
             </div>
-            <TocSidebar
-              items={tocItems}
-              onJump={(sid) => {
-                jumpTo(sid);
-                setTocOpen(false);
-              }}
-            />
+            <div className="flex-1 overflow-y-auto p-2">
+              <TocSidebar
+                items={tocItems}
+                chapters={docs}
+                currentDocId={doc.id}
+                onJump={(sid) => {
+                  jumpTo(sid);
+                  setTocOpen(false);
+                }}
+                onSelectChapter={(docId) => {
+                  navigate(`/read/${docId}`);
+                  setTocOpen(false);
+                }}
+              />
+            </div>
           </div>
         </div>
       )}
