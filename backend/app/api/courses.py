@@ -270,7 +270,7 @@ async def ask_course(course_id: str, body: dict, db: AsyncSession = Depends(get_
         "\n\n要求：中文回答，紧扣课程内容；课程里没有依据的，明确说明课程未覆盖。"
     )
     adapter = await create_adapter_from_settings(db, scene="chat")
-    deltas = adapter.chat(
+    deltas = await adapter.chat(
         [{"role": "system", "content": system}, {"role": "user", "content": question}],
         stream=True,
     )
@@ -280,6 +280,8 @@ async def ask_course(course_id: str, body: dict, db: AsyncSession = Depends(get_
             async for delta in deltas:
                 yield f"data: {json.dumps({'type': 'delta', 'text': delta}, ensure_ascii=False)}\n\n"
         except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger(__name__).exception("全课问答流式输出异常: %s", e)
             from app.services.llm.errors import LLMError
 
             detail = e.message if isinstance(e, LLMError) else "服务异常，请重试。"

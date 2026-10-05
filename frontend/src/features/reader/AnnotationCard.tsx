@@ -37,8 +37,13 @@ export default function AnnotationCard({
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState(annotation.note ?? "");
   const [confirmDel, setConfirmDel] = useState(false);
+  const [currentColor, setCurrentColor] = useState<AnnotationColor>(annotation.color);
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setCurrentColor(annotation.color);
+  }, [annotation.color]);
 
   const { data: msgs, isLoading } = useQuery({
     queryKey: ["conv", conversationId],
@@ -96,6 +101,11 @@ export default function AnnotationCard({
       queryClient.invalidateQueries({ queryKey: ["doc-anns", annotation.document_id] }),
   });
 
+  const handleColorChange = (c: AnnotationColor) => {
+    setCurrentColor(c);
+    patch.mutate({ color: c });
+  };
+
   const remove = useMutation({
     mutationFn: () => api.annotations.remove(annotation.id),
     onSuccess: () => {
@@ -111,7 +121,7 @@ export default function AnnotationCard({
         <div className="flex items-center gap-2">
           <span
             className="h-3.5 w-3.5 rounded-full"
-            style={{ backgroundColor: hlColors[annotation.color] }}
+            style={{ backgroundColor: hlColors[currentColor] }}
           />
           <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">划线提问</span>
           {annotation.status === "orphan" && (
@@ -124,9 +134,9 @@ export default function AnnotationCard({
           {HL_COLOR_KEYS.map((c) => (
             <button
               key={c}
-              onClick={() => patch.mutate({ color: c })}
+              onClick={() => handleColorChange(c)}
               className={`h-3.5 w-3.5 rounded-full border ${
-                annotation.color === c ? "ring-2 ring-brand-500 ring-offset-1" : ""
+                currentColor === c ? "ring-2 ring-brand-500 ring-offset-1" : ""
               }`}
               style={{ backgroundColor: hlColors[c] }}
               title="更换颜色"
@@ -147,7 +157,7 @@ export default function AnnotationCard({
         <div className="flex gap-2">
           <span
             className="w-1 shrink-0 rounded"
-            style={{ backgroundColor: hlColors[annotation.color] }}
+            style={{ backgroundColor: hlColors[currentColor] }}
           />
           <p className="line-clamp-6 flex-1 text-sm text-gray-600 dark:text-gray-400">{annotation.exact}</p>
         </div>

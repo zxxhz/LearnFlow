@@ -1,17 +1,20 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi.responses import StreamingResponse
 
-from app.core.db import get_db
-from app.models import Annotation, Conversation, Document, Message
+from app.core.db import async_session_factory, get_db
+from app.models import Annotation, Conversation, Message
 from app.models.base import utcnow_iso
 from app.schemas.conversation import MessageCreate, MessageOut
 from app.services.context import build_annotation_messages
 from app.services.llm import create_adapter_from_settings
 from app.services.llm.errors import LLMError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -52,8 +55,8 @@ async def post_message(
     await db.commit()
     messages = await build_annotation_messages(db, conv)
     adapter = await create_adapter_from_settings(db, scene="chat")
-    deltas = adapter.chat(messages, stream=True)
-    annotation_mode = True
+    deltas = await adapter.chat(messages, stream=True)
+    conv_id = conv.id
 
     async def gen():
         buffer: list[str] = []
@@ -62,22 +65,21 @@ async def post_message(
                 buffer.append(delta)
                 yield f"data: {json.dumps({'type': 'delta', 'text': delta}, ensure_ascii=False)}\n\n"
         except LLMError as e:
+            logger.warning(f"LLM stream error: {e}")
             yield f"data: {json.dumps({'type': 'error', 'detail': e.message}, ensure_ascii=False)}\n\n"
             return
         except Exception as e:  # noqa: BLE001
-            yield f"data: {json.dumps({'type': 'error', 'detail': '服务异常，请重试。'}, ensure_ascii=False)}\n\n"
+            logger.exception(f"Conversation stream exception: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'detail': f'服务异常：{e}'}, ensure_ascii=False)}\n\n"
             return
-        if annotation_mode:
+
+        async with async_session_factory() as s:
             saved = Message(
-                conversation_id=conv.id, role="assistant", content="".join(buffer)
+                conversation_id=conv_id, role="assistant", content="".join(buffer)
             )
-            db.add(saved)
-            await db.commit()
-            yield f"data: {json.dumps({'type': 'done', 'message_id': saved.id}, ensure_ascii=False)}\n\n"
-        else:
-            payload = {"type": "done", "suggest_evaluate": turn.suggest_evaluate}
-            if turn.saved_message_id:
-                payload["message_id"] = turn.saved_message_id
-            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            s.add(saved)
+            await s.commit()
+            msg_id = saved.id
+        yield f"data: {json.dumps({'type': 'done', 'message_id': msg_id}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream")

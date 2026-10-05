@@ -105,6 +105,10 @@ export default function ReaderPage() {
   const [toolbarColor, setToolbarColor] = useState<AnnotationColor>("yellow");
   const [creating, setCreating] = useState(false);
   const [activeAnn, setActiveAnn] = useState<Annotation | null>(null);
+  const currentActiveAnn = useMemo(() => {
+    if (!activeAnn) return null;
+    return annotations.find((a) => a.id === activeAnn.id) ?? activeAnn;
+  }, [activeAnn, annotations]);
   const [convIdCache, setConvIdCache] = useState<Record<string, string>>({});
   const [convId, setConvId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -645,10 +649,10 @@ export default function ReaderPage() {
       )}
 
       {/* 提问卡片 */}
-      {activeAnn && convId && (
+      {currentActiveAnn && convId && (
         <AnnotationCard
-          key={activeAnn.id}
-          annotation={activeAnn}
+          key={currentActiveAnn.id}
+          annotation={currentActiveAnn}
           conversationId={convId}
           onClose={() => {
             setActiveAnn(null);
