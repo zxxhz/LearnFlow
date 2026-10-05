@@ -2,12 +2,12 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
-import type { LLMConfig, Preferences, SceneLLMConfig, SceneName, SettingsData } from "../../lib/types";
+import type { AnnotationColor, AdhdMode, LLMConfig, Preferences, SceneLLMConfig, SceneName, SettingsData } from "../../lib/types";
 import DataSafetySection from "./DataSafetySection";
-import { Button, Input, Spinner } from "../../components/ui";
+import { Button, Input, Select, Spinner } from "../../components/ui";
 import { HL_COLOR_KEYS, HL_DEFAULTS, HL_LABELS } from "../reader/colors";
 import RuntimeEnvSection from "./RuntimeEnvSection";
-import type { AnnotationColor } from "../../lib/types";
+
 
 const PROVIDER_PRESETS: { label: string; base_url: string; model: string }[] = [
   { label: "智谱 GLM", base_url: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
@@ -38,7 +38,9 @@ export default function SettingsPage() {
     exercises_per_kp: 3,
     highlight_colors: {},
     auto_highlight: true,
+    adhd_mode: "off",
   });
+
   const [ollamaModels, setOllamaModels] = useState<string[] | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
   const [sceneOpen, setSceneOpen] = useState(false); // 场景模型默认折叠
@@ -372,7 +374,54 @@ export default function SettingsPage() {
             生成新章节时，根据模型提炼与核心要点自动生成划线高亮。若关闭，则生成时不主动打标，仅在阅读时手动划选。
           </p>
         </div>
+        <div className="mt-4 border-t border-gray-100 dark:border-gray-800 pt-4">
+          <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+            ADHD 模式
+          </label>
+          <div className="max-w-md">
+            <Select
+              value={prefs.adhd_mode ?? "off"}
+              onChange={(e) => setPrefs({ ...prefs, adhd_mode: e.target.value as AdhdMode })}
+            >
+              <option value="off">关闭</option>
+              <option value="a">A（段落交替底色 + 圆角）</option>
+              <option value="b">B（鼠标移入聚焦高亮）</option>
+            </Select>
+            <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+              A 为开启后文章内每一段使用不同的背景颜色（段落周围带圆角）；B 为开启后鼠标移到段落区域即显示聚焦背景色，切换时具备流畅动效。
+            </p>
+            {/* 实时微缩预览 */}
+            <div className="mt-2.5 rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-850 p-2.5 text-xs text-gray-600 dark:text-gray-400">
+              <span className="text-[11px] text-gray-400 dark:text-gray-500">效果预览：</span>
+              <div className="mt-1.5 space-y-1.5">
+                <div
+                  className={`px-3 py-1.5 ${
+                    prefs.adhd_mode === "a"
+                      ? "adhd-para adhd-color-0"
+                      : prefs.adhd_mode === "b"
+                      ? "adhd-para adhd-mode-b"
+                      : "rounded bg-white dark:bg-gray-800"
+                  }`}
+                >
+                  第 1 段示例：注意力集中，通过视觉提示锚定阅读进度。
+                </div>
+                <div
+                  className={`px-3 py-1.5 ${
+                    prefs.adhd_mode === "a"
+                      ? "adhd-para adhd-color-1"
+                      : prefs.adhd_mode === "b"
+                      ? "adhd-para adhd-mode-b"
+                      : "rounded bg-white dark:bg-gray-800"
+                  }`}
+                >
+                  第 2 段示例：{prefs.adhd_mode === "b" ? "将鼠标移动到这里试试聚焦动效" : "交替柔和底色防止阅读串行。"}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
         <Button className="mt-4" disabled={savePrefs.isPending} onClick={() => savePrefs.mutate()}>
+
           保存偏好
         </Button>
       </section>

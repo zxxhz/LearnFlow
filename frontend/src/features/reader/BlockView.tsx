@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import renderMathInElement from "katex/contrib/auto-render";
 import { api } from "../../lib/api";
-import type { Annotation, CodeExecution, ExecStatus } from "../../lib/types";
+import type { AdhdMode, Annotation, CodeExecution, ExecStatus } from "../../lib/types";
 import type { ParsedBlock } from "../../lib/markdown";
 import { applyHighlights } from "./highlight";
 
@@ -54,7 +54,10 @@ interface Props {
   running: boolean;
   runError: string;
   onRun: (sectionId: string, lang: string, code: string) => void;
+  adhdMode?: AdhdMode;
+  pIndex?: number;
 }
+
 
 function stripFence(raw: string): { lang: string; code: string } {
   const lines = raw.replace(/\r\n/g, "\n").split("\n");
@@ -198,6 +201,8 @@ export default function BlockView({
   running,
   runError,
   onRun,
+  adhdMode = "off",
+  pIndex = 0,
 }: Props) {
   const innerRef = useRef<HTMLDivElement>(null);
   const codeRef = useRef<HTMLDivElement>(null);
@@ -210,7 +215,21 @@ export default function BlockView({
   const [draft, setDraft] = useState<string | null>(null);
   const adoptedExecId = useRef<string | null>(null);
   const html = block.html;
+
+  const isParagraph = block.type === "paragraph";
+  const adhdClass = useMemo(() => {
+    if (!isParagraph || adhdMode === "off") return "";
+    if (adhdMode === "a") {
+      return `adhd-para adhd-color-${(pIndex ?? 0) % 6} px-4 py-3 my-2.5`;
+    }
+    if (adhdMode === "b") {
+      return "adhd-para adhd-mode-b px-4 py-3 my-2.5";
+    }
+    return "";
+  }, [isParagraph, adhdMode, pIndex]);
+
   const annKey = useMemo(
+
     () => annotations.map((a) => `${a.id}:${a.status}:${a.color}:${a.exact.length}`).join("|"),
     [annotations]
   );
@@ -330,9 +349,10 @@ export default function BlockView({
     return isCode ? (
       <div ref={codeRef} className="code-block my-3" />
     ) : (
-      <div className="doc-content" dangerouslySetInnerHTML={{ __html: html }} />
+      <div className={`doc-content ${adhdClass}`} dangerouslySetInnerHTML={{ __html: html }} />
     );
   }
+
 
   const flash = flashSectionId === sectionId;
 
@@ -411,11 +431,12 @@ export default function BlockView({
     <div
       ref={innerRef}
       data-section-id={sectionId}
-      className={`doc-content ${flash ? "outline outline-2 outline-brand-400 rounded-lg" : ""}`}
+      className={`doc-content ${adhdClass} ${flash ? "outline outline-2 outline-brand-400 rounded-lg" : ""}`}
       dangerouslySetInnerHTML={{ __html: html }}
       onClick={onClick}
     />
   );
+
 }
 
 function escapeHtml(s: string): string {

@@ -114,3 +114,52 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
 
 /* 深色下的颜色输入框与选中态 */
 .dark ::selection { background-color: rgba(99, 102, 241, 0.4); }
+
+/* ===== ADHD 辅助阅读模式 ===== */
+.adhd-para {
+  transition: background-color 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.25s ease,
+              box-shadow 0.25s ease,
+              transform 0.2s ease;
+  border-radius: 0.75rem; /* rounded-xl */
+  border: 1px solid transparent;
+}
+
+/* 消除段落内部默认上下 margin，由外层 card padding 与外部 gap 统一管理 */
+.adhd-para > p {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+/* 模式 A：6 色柔和循环护眼调色板（浅色模式） */
+.adhd-color-0 { background-color: rgba(224, 242, 254, 0.7); border-color: rgba(186, 230, 253, 0.65); }
+.adhd-color-1 { background-color: rgba(220, 252, 231, 0.7); border-color: rgba(187, 247, 208, 0.65); }
+.adhd-color-2 { background-color: rgba(254, 243, 199, 0.7); border-color: rgba(253, 230, 138, 0.65); }
+.adhd-color-3 { background-color: rgba(243, 232, 255, 0.7); border-color: rgba(233, 213, 255, 0.65); }
+.adhd-color-4 { background-color: rgba(255, 228, 230, 0.7); border-color: rgba(254, 205, 211, 0.65); }
+.adhd-color-5 { background-color: rgba(204, 251, 241, 0.7); border-color: rgba(153, 246, 228, 0.65); }
+
+/* 模式 A：深色模式（低饱和度，温和不刺眼） */
+.dark .adhd-color-0 { background-color: rgba(30, 58, 138, 0.25); border-color: rgba(59, 130, 246, 0.25); }
+.dark .adhd-color-1 { background-color: rgba(6, 78, 59, 0.25); border-color: rgba(34, 197, 94, 0.25); }
+.dark .adhd-color-2 { background-color: rgba(120, 53, 15, 0.25); border-color: rgba(234, 179, 8, 0.25); }
+.dark .adhd-color-3 { background-color: rgba(88, 28, 135, 0.25); border-color: rgba(168, 85, 247, 0.25); }
+.dark .adhd-color-4 { background-color: rgba(136, 19, 55, 0.25); border-color: rgba(244, 63, 94, 0.25); }
+.dark .adhd-color-5 { background-color: rgba(19, 78, 74, 0.25); border-color: rgba(20, 184, 166, 0.25); }
+
+/* 模式 B：悬停聚焦聚光灯动效 */
+.adhd-mode-b {
+  cursor: default;
+}
+.adhd-mode-b:hover {
+  background-color: rgba(238, 242, 255, 0.85);
+  border-color: rgba(199, 210, 254, 0.85);
+  box-shadow: 0 4px 14px -2px rgba(99, 102, 241, 0.1);
+  transform: translateX(3px);
+}
+.dark .adhd-mode-b:hover {
+  background-color: rgba(99, 102, 241, 0.18);
+  border-color: rgba(129, 140, 248, 0.35);
+  box-shadow: 0 4px 14px -2px rgba(0, 0, 0, 0.35);
+  transform: translateX(3px);
+}

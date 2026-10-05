@@ -35,7 +35,9 @@ DEFAULT_PREFS = {
         "blue": "#bfdbfe",
         "pink": "#fbcfe8",
     },
+    "adhd_mode": "off",
 }
+
 
 
 async def _load_row(db: AsyncSession) -> AppSetting:

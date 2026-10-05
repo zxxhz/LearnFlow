@@ -116,12 +116,16 @@ export interface LLMConfig {
   model: string;
 }
 
+export type AdhdMode = "off" | "a" | "b";
+
 export interface Preferences {
   chapter_length: number;
   exercises_per_kp: number;
   highlight_colors: Partial<Record<AnnotationColor, string>>;
   auto_highlight?: boolean;
+  adhd_mode?: AdhdMode;
 }
+
 
 export interface SceneLLMConfig {
   base_url: string;

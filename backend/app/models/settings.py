@@ -12,7 +12,9 @@ DEFAULT_PREFERENCES = {
     "chapter_length": 3000,
     "exercises_per_kp": 3,
     "highlight_colors": DEFAULT_HL_COLORS,
+    "adhd_mode": "off",
 }
+
 
 
 class AppSetting(Base):

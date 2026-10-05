@@ -1,7 +1,10 @@
+from typing import Literal
+
 from pydantic import BaseModel, field_validator
 
 from app.models.settings import DEFAULT_HL_COLORS
 from app.schemas.common import ORMModel
+
 
 
 class SceneLLMConfig(BaseModel):
@@ -32,6 +35,8 @@ class Preferences(BaseModel):
     highlight_colors: dict[str, str] = dict(DEFAULT_HL_COLORS)
     # 生成章节时是否自动划重点
     auto_highlight: bool = True
+    # ADHD 阅读辅助模式：off | a | b
+    adhd_mode: Literal["off", "a", "b"] = "off"
 
     @field_validator("highlight_colors", mode="before")
     @classmethod

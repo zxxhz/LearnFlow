@@ -16,6 +16,7 @@ import AnnotationsDrawer from "./AnnotationsDrawer";
 import ExerciseDrawer from "./ExerciseDrawer";
 import { hlColorVars, useHlColors } from "./colors";
 import { useTheme } from "../../lib/theme";
+import { useAdhdMode } from "./adhd";
 
 export default function ReaderPage() {
   const { documentId } = useParams<{ documentId: string }>();
@@ -24,6 +25,8 @@ export default function ReaderPage() {
   const [searchParams] = useSearchParams();
   const hlColors = useHlColors();
   const { theme, toggle: toggleTheme } = useTheme();
+  const { adhdMode, setAdhdMode } = useAdhdMode();
+
 
   const contentQuery = useQuery({
     queryKey: ["doc", documentId],
@@ -92,6 +95,10 @@ export default function ReaderPage() {
     return m;
   }, [annotations]);
   const tocItems = useMemo(() => buildToc(parsed, sectionIdOf), [parsed, sectionIdOf]);
+  const paragraphIndices = useMemo(() => {
+    let count = 0;
+    return parsed.map((b) => (b.type === "paragraph" ? count++ : -1));
+  }, [parsed]);
 
   // ===== UI 状态 =====
   const [selection, setSelection] = useState<{ anchor: AnchorRange; rect: DOMRect } | null>(null);
@@ -438,6 +445,27 @@ export default function ReaderPage() {
             <Button variant="ghost" className="text-xs" onClick={() => setDrawerOpen((v) => !v)}>
               🖍 标注 {annotations.length > 0 && annotations.length}
             </Button>
+            {/* ADHD 辅助阅读模式快捷切换按钮 */}
+            <button
+              type="button"
+              onClick={() => {
+                const next = adhdMode === "off" ? "a" : adhdMode === "a" ? "b" : "off";
+                setAdhdMode(next);
+              }}
+              className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
+                adhdMode === "a"
+                  ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
+                  : adhdMode === "b"
+                  ? "border-indigo-300 bg-indigo-50 text-indigo-800 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300"
+                  : "border-gray-200 dark:border-gray-700 bg-transparent text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+              }`}
+              title={`当前 ADHD 模式：${adhdMode === "off" ? "关闭" : adhdMode === "a" ? "A（交替底色）" : "B（悬停高亮）"}，点击快捷切换`}
+            >
+              <span>🧠 ADHD:</span>
+              <span className="font-bold">
+                {adhdMode === "off" ? "关" : adhdMode === "a" ? "A" : "B"}
+              </span>
+            </button>
             {doc.source === "imported" ? (
               <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs text-blue-700">
                 导入文档 · 原文保留
@@ -483,10 +511,13 @@ export default function ReaderPage() {
                 running={runningSection === sid}
                 runError={runningSection === sid ? runError : ""}
                 onRun={onRunCode}
+                adhdMode={adhdMode}
+                pIndex={paragraphIndices[i]}
               />
             );
           })}
         </div>
+
       </div>
 
       {/* 小屏目录浮层 */}
