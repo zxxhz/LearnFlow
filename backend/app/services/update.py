@@ -20,6 +20,16 @@ REQUEST_TIMEOUT = 5.0
 _cache: dict = {"checked_at": 0.0, "result": None}
 
 
+DOMESTIC_MIRRORS = [
+    # 优先国内主流 GitHub 文件代理获取 latest.json（带 CDN，无 API 限流且直达最新版）
+    ("latest_json", "https://ghproxy.net/https://github.com/{repo}/releases/latest/download/latest.json"),
+    ("latest_json", "https://gh-proxy.com/https://github.com/{repo}/releases/latest/download/latest.json"),
+    ("latest_json", "https://ghfast.top/https://github.com/{repo}/releases/latest/download/latest.json"),
+    # API 镜像代理获取完整 release 信息
+    ("api", "https://ghproxy.net/https://api.github.com/repos/{repo}/releases/latest"),
+]
+
+
 def _ver_tuple(v: str) -> tuple:
     """'v1.2.3-beta' → (1, 2, 3, is_release)。用于简单比较。"""
     v = v.strip().lstrip("vV")
@@ -39,19 +49,61 @@ def has_newer_version(latest: str, current: str = APP_VERSION) -> bool:
     return _ver_tuple(latest) > _ver_tuple(current)
 
 
-async def fetch_latest_release(repo: str) -> dict:
-    """请求 GitHub Releases latest；抛出异常由调用方处理。"""
-    url = f"https://api.github.com/repos/{repo}/releases/latest"
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
-        resp = await client.get(url, headers={"User-Agent": "LearnFlow-Update-Check", "Accept": "application/vnd.github+json"})
-        resp.raise_for_status()
-        data = resp.json()
+def _parse_api_release(data: dict, repo: str) -> dict:
     return {
         "tag": str(data.get("tag_name") or "").strip(),
         "url": str(data.get("html_url") or f"https://github.com/{repo}/releases"),
         "notes": str(data.get("body") or "")[:2000],
         "prerelease": bool(data.get("prerelease")),
     }
+
+
+def _parse_latest_json(data: dict, repo: str) -> dict:
+    ver = str(data.get("version") or "").strip()
+    tag = ver if ver.startswith("v") or ver.startswith("V") else f"v{ver}"
+    notes = str(data.get("notes") or data.get("body") or "")[:2000]
+    return {
+        "tag": tag,
+        "url": f"https://github.com/{repo}/releases/tag/{tag}",
+        "notes": notes,
+        "prerelease": False,
+    }
+
+
+async def fetch_latest_release(repo: str) -> dict:
+    """请求最新版本信息：优先官方 GitHub API，若网络不可达/超时/限流则自动无缝回退国内镜像。"""
+    official_url = f"https://api.github.com/repos/{repo}/releases/latest"
+    headers = {"User-Agent": "LearnFlow-Update-Check", "Accept": "application/vnd.github+json"}
+
+    # 1. 优先尝试官方源（超时设为 4.0 秒，避免长时间阻塞前端）
+    try:
+        async with httpx.AsyncClient(timeout=4.0, follow_redirects=True) as client:
+            resp = await client.get(official_url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get("tag_name"):
+                return _parse_api_release(data, repo)
+    except Exception as e:
+        logger.info("GitHub 官方更新接口不可达 (%s)，正在自动切换至国内镜像源...", e)
+
+    # 2. 官方源不可达，依次尝试国内镜像
+    for kind, template in DOMESTIC_MIRRORS:
+        mirror_url = template.format(repo=repo)
+        try:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
+                resp = await client.get(mirror_url, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                if kind == "api" and data.get("tag_name"):
+                    logger.info("通过国内镜像源成功获取更新: %s", mirror_url)
+                    return _parse_api_release(data, repo)
+                elif kind == "latest_json" and data.get("version"):
+                    logger.info("通过国内镜像源成功获取更新: %s", mirror_url)
+                    return _parse_latest_json(data, repo)
+        except Exception as mirror_err:
+            logger.debug("国内镜像源尝试失败: %s (%s)", mirror_url, mirror_err)
+
+    raise RuntimeError("所有更新检查端点（官方与国内镜像）均不可达")
 
 
 def _effective_repo() -> str:
@@ -83,7 +135,7 @@ async def check_update(db: AsyncSession, force: bool = False) -> dict:
         latest = release["tag"]
         if latest:
             result["latest"] = latest
-            result["has_update"] = has_newer_version(latest)
+            result["has_update"] = has_newer_version(latest, APP_VERSION)
             if result["has_update"]:
                 result["url"] = release["url"]
                 result["notes"] = release["notes"]
