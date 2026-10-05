@@ -545,6 +545,7 @@ export default function ReaderPage() {
               });
             }
           }}
+          onClose={() => setDrawerOpen(false)}
         />
       )}
 

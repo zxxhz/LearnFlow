@@ -11,9 +11,16 @@ class KPItem(BaseModel):
     heading: str = ""
 
 
+class HighlightItem(BaseModel):
+    exact: str
+    note: str | None = "重点提炼"
+    color: str = "yellow"
+
+
 class ChapterMeta(BaseModel):
     summary: str = ""
     knowledge_points: list[KPItem] = []
+    highlights: list[HighlightItem] = []
 
 
 def parse_chapter_output(raw: str) -> tuple[str, ChapterMeta | None]:

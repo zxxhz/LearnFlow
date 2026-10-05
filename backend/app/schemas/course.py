@@ -74,6 +74,7 @@ class CourseDetailOut(CourseOut):
 class CourseListItem(CourseOut):
     done_chapters: int = 0
     total_chapters: int = 0
+    first_document_id: str | None = None
 
 
 class OutlineUpdate(BaseModel):

@@ -23,6 +23,7 @@ from app.models import (
 from app.models.base import utcnow_iso
 from app.services.generation.indexing import rebuild_sections
 from app.services.generation.knowledge import parse_chapter_output
+from app.services.generation.highlight import create_auto_highlights
 from app.services.exercise import delete_kp_exercises, purge_document_exercises
 from app.services.llm import create_adapter_from_settings
 from app.services.llm.errors import LLMError
@@ -181,6 +182,16 @@ async def run_chapter(
             )
             db.add(kp)
             await db.flush()
+
+    # 自动划重点：模型元数据优先 + 核心语句提炼兜底，锚定至对应 Section
+    await create_auto_highlights(
+        db,
+        doc=doc,
+        sections=sections,
+        raw_markdown=body,
+        meta_highlights=meta.highlights if meta else None,
+        knowledge_points=meta.knowledge_points if meta else None,
+    )
     await db.commit()
     publish(
         course.id,

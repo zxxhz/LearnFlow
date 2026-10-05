@@ -67,7 +67,21 @@ async def seed() -> tuple[str, str]:
         doc.file_path = doc_dir.joinpath("current.md").relative_to(settings.data_dir).as_posix()
         doc.version = 1
         doc.summary = "本章介绍指针。"
-        await rebuild_sections(db, doc, SAMPLE_MD, 1)
+        sections = await rebuild_sections(db, doc, SAMPLE_MD, 1)
+        from app.services.generation.highlight import create_auto_highlights
+        from app.services.generation.knowledge import HighlightItem
+
+        meta_highlights = [
+            HighlightItem(exact="C++ 中指针是一个变量，其值为内存地址。指针是 C++ 的核心概念。", note="核心定义", color="yellow"),
+            HighlightItem(exact="解引用空指针是未定义行为", note="避坑要害", color="pink"),
+        ]
+        await create_auto_highlights(
+            db,
+            doc=doc,
+            sections=sections,
+            raw_markdown=SAMPLE_MD,
+            meta_highlights=meta_highlights,
+        )
         kp = KnowledgePoint(document_id=doc.id, title="指针概念", summary="指针存放内存地址")
         db.add(kp)
         await db.flush()
@@ -361,6 +375,22 @@ def main() -> None:
         types = [b["block_type"] for b in body["blocks"]]
         check("9 个块全部索引", len(body["blocks"]) == 9, str(types))
         check("块类型齐全", types == ["heading", "paragraph", "code", "heading", "list", "quote", "paragraph", "math", "table"], str(types))
+
+    # 2.5 自动划重点回显（生成课程时自动提取与落库）
+    s, auto_anns = call(base, f"/api/documents/{document_id}/annotations")
+    check("自动划重点接口回显", s == 200 and len(auto_anns) >= 2, json.dumps(auto_anns, ensure_ascii=False)[:200])
+    if s == 200 and auto_anns:
+        first_auto = auto_anns[0]
+        check(
+            "自动划重点五元组与字段完整",
+            bool(first_auto["exact"])
+            and bool(first_auto["section_id"])
+            and first_auto["status"] == "active"
+            and first_auto["note"] in ("核心定义", "避坑要害", "重点提炼"),
+            json.dumps(first_auto, ensure_ascii=False)[:150],
+        )
+        s, auto_conv = call(base, f"/api/annotations/{first_auto['id']}/conversation")
+        check("自动划重点对话绑定正常", s == 200 and bool(auto_conv.get("conversation_id")))
 
     # 3. 创建标注
     s, body = call(base, f"/api/documents/{document_id}/annotations", "POST", {

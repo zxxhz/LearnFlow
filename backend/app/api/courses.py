@@ -154,9 +154,13 @@ async def list_courses(db: AsyncSession = Depends(get_db)):
     items = []
     for c in courses:
         mine = [d for d in docs if d.course_id == c.id]
+        mine_done = [d for d in mine if d.status == "done"]
         item = CourseListItem.model_validate(c)
-        item.done_chapters = sum(1 for d in mine if d.status == "done")
+        item.done_chapters = len(mine_done)
         item.total_chapters = len(mine)
+        if mine_done:
+            mine_done.sort(key=lambda d: d.chapter_index)
+            item.first_document_id = mine_done[0].id
         items.append(item)
     return items
 

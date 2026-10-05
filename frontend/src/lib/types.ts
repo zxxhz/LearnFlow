@@ -49,6 +49,7 @@ export interface CourseDetail extends Course {
 export interface CourseListItem extends Course {
   done_chapters: number;
   total_chapters: number;
+  first_document_id?: string | null;
 }
 
 export interface DocumentMeta {
