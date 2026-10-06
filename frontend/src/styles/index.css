@@ -125,11 +125,28 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
   border: 1px solid transparent;
 }
 
-/* 消除段落内部默认上下 margin，由外层 card padding 与外部 gap 统一管理 */
-.adhd-para > p {
+/* 消除内容块内部默认上下 margin，由外层 card padding 与外部 gap 统一管理 */
+.adhd-para > p,
+.adhd-para > ul,
+.adhd-para > ol,
+.adhd-para > blockquote,
+.adhd-para > table,
+.adhd-para > .katex-display {
   margin-top: 0 !important;
   margin-bottom: 0 !important;
 }
+
+/* 引用块内部消除多余边距，底色设为透明让卡片柔和底色自然透出，保留左侧重点竖条装饰 */
+.adhd-para blockquote {
+  background-color: transparent !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+.adhd-para blockquote > p {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
 
 /* 模式 A：6 色柔和循环护眼调色板（浅色模式） */
 .adhd-color-0 { background-color: rgba(224, 242, 254, 0.7); border-color: rgba(186, 230, 253, 0.65); }

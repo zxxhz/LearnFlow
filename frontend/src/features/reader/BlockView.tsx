@@ -216,9 +216,9 @@ export default function BlockView({
   const adoptedExecId = useRef<string | null>(null);
   const html = block.html;
 
-  const isParagraph = block.type === "paragraph";
+  const isContentBlock = block.type !== "heading" && block.type !== "code";
   const adhdClass = useMemo(() => {
-    if (!isParagraph || adhdMode === "off") return "";
+    if (!isContentBlock || adhdMode === "off") return "";
     if (adhdMode === "a") {
       return `adhd-para adhd-color-${(pIndex ?? 0) % 6} px-4 py-3 my-2.5`;
     }
@@ -226,7 +226,8 @@ export default function BlockView({
       return "adhd-para adhd-mode-b px-4 py-3 my-2.5";
     }
     return "";
-  }, [isParagraph, adhdMode, pIndex]);
+  }, [isContentBlock, adhdMode, pIndex]);
+
 
   const annKey = useMemo(
 

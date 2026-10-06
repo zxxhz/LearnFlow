@@ -97,8 +97,9 @@ export default function ReaderPage() {
   const tocItems = useMemo(() => buildToc(parsed, sectionIdOf), [parsed, sectionIdOf]);
   const paragraphIndices = useMemo(() => {
     let count = 0;
-    return parsed.map((b) => (b.type === "paragraph" ? count++ : -1));
+    return parsed.map((b) => (b.type !== "heading" && b.type !== "code" ? count++ : -1));
   }, [parsed]);
+
 
   // ===== UI 状态 =====
   const [selection, setSelection] = useState<{ anchor: AnchorRange; rect: DOMRect } | null>(null);
