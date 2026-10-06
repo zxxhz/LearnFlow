@@ -76,10 +76,12 @@ export function Badge({
   children,
   color = "gray",
   className = "",
+  title,
 }: {
   children: ReactNode;
   color?: "gray" | "green" | "blue" | "red" | "amber" | "purple";
   className?: string;
+  title?: string;
 }) {
   const styles = {
     gray: "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400",
@@ -92,12 +94,14 @@ export function Badge({
 
   return (
     <span
+      title={title}
       className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${styles[color]} ${className}`}
     >
       {children}
     </span>
   );
 }
+
 
 export function Spinner({ className = "" }: { className?: string }) {
   return (
