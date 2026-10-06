@@ -1,7 +1,7 @@
 # Memory Index
 
 - [题库刷题模块](bank-drill-module-plan.md) — 独立刷题模块(v0.3.0完成，v0.4.22-v0.4.23演进)：463题导入、动态错题池、错题 AI 流式解答、题库专属提示词与 AI 原地润色、已生成解析持久化与全链路保留、小结选项精准渲染
-- [功能路线图与PRD对照](feature-roadmap-prd-alignment.md) — 产品决策与版本日志：v0.4.0–v0.4.23全版本迭代（划线提问平移避让联动与现代流式打字机、目录固定独立滚动与折叠动效Ctrl+B、国内更新镜像回退、右侧全景面板统一动效避让、题库AI深度答疑与提示词自定制、错题解析跨状态保留持久化等）
+- [功能路线图与PRD对照](feature-roadmap-prd-alignment.md) — 产品决策与版本日志：v0.4.0–v0.4.24全版本迭代（ADHD辅助阅读全内容块覆盖与圆角内衬、划线提问平移避让联动与现代流式打字机、目录固定独立滚动与折叠动效Ctrl+B、国内更新镜像回退、右侧全景面板统一动效避让、题库AI深度答疑与提示词自定制、错题解析跨状态保留持久化等）
 
 - [Windows时间戳平局坑](windows-timestamp-monotonic.md) — time.time()粒度15.6ms致排序随机，utcnow_iso已单调化；smoke末尾自清理勿误判丢数据
 - [发版全流程](release-process.md) — 版本bump三处、双构建、签名私钥路径、latest.json手工生成、API发布七步
