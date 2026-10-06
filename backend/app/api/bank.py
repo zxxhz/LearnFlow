@@ -4,27 +4,36 @@
 """
 import logging
 
+import json
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.models.bank import BankAttempt, BankQuestion, QuestionBank
 from app.schemas.bank import (
+    BankAiExplainIn,
     BankAnalysisOut,
     BankAttemptRequest,
     BankAttemptResult,
     BankOut,
+    BankPromptPolishIn,
+    BankPromptPolishOut,
     BankQuestionOut,
     BankRenameIn,
     BankRoundOut,
     BankRoundRequest,
     BankSkippedRow,
     BankStatsOut,
+    BankUpdateIn,
     BankWrongQuestionOut,
 )
 from app.services import bank as bank_service
 from app.services.bank import BankParseError
+from app.services.llm import create_adapter_from_settings
+from app.services.llm.errors import LLMError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/banks", tags=["bank"])
@@ -112,6 +121,7 @@ async def import_confirm(
         name=bank.name,
         source_file=bank.source_file,
         question_count=bank.question_count,
+        ai_prompt=bank.ai_prompt or "",
         created_at=bank.created_at,
         stats=BankStatsOut(**stats),
     )
@@ -131,6 +141,7 @@ async def list_banks(db: AsyncSession = Depends(get_db)):
                 name=b.name,
                 source_file=b.source_file,
                 question_count=b.question_count,
+                ai_prompt=b.ai_prompt or "",
                 created_at=b.created_at,
                 stats=BankStatsOut(**stats),
             )
@@ -223,13 +234,91 @@ async def wrong_book(bank_id: str, db: AsyncSession = Depends(get_db)):
     return out
 
 
+@router.get("/default-prompt")
+async def get_default_prompt():
+    """获取系统默认的错题答疑 AI 提示词。"""
+    return {"default_prompt": bank_service.DEFAULT_BANK_AI_PROMPT}
+
+
+@router.post("/polish-prompt", response_model=BankPromptPolishOut)
+async def polish_bank_prompt(
+    body: BankPromptPolishIn, db: AsyncSession = Depends(get_db)
+):
+    """利用大模型对题库自定义提示词进行深度润色优化。"""
+    try:
+        polished = await bank_service.polish_prompt_with_llm(
+            db, body.prompt, body.bank_name
+        )
+        return BankPromptPolishOut(polished_prompt=polished)
+    except Exception as e:
+        logger.exception("Bank prompt polish failed")
+        raise HTTPException(status_code=500, detail=f"AI 润色失败：{e}") from e
+
+
+@router.post("/questions/{question_id}/ai-explain")
+async def ai_explain_question(
+    question_id: str,
+    body: BankAiExplainIn,
+    db: AsyncSession = Depends(get_db),
+):
+    """刷题错题 AI 流式深度解答（结合题库提示词、考点剖析与避坑指引）。"""
+    q = await db.get(BankQuestion, question_id)
+    if q is None:
+        raise HTTPException(status_code=404, detail="题目不存在")
+    bank = await _bank_or_404(db, q.bank_id)
+    messages = bank_service.build_explain_messages(bank, q, body.picked)
+    adapter = await create_adapter_from_settings(db, scene="chat")
+    deltas = await adapter.chat(messages, stream=True)
+
+    async def gen():
+        try:
+            async for delta in deltas:
+                yield f"data: {json.dumps({'type': 'delta', 'text': delta}, ensure_ascii=False)}\n\n"
+        except LLMError as e:
+            logger.warning(f"Bank explain LLM error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'detail': e.message}, ensure_ascii=False)}\n\n"
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"Bank explain stream error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'detail': f'服务异常：{e}'}, ensure_ascii=False)}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream; charset=utf-8",
+        },
+    )
+
+
 @router.patch("/{bank_id}")
-async def rename_bank(bank_id: str, body: BankRenameIn, db: AsyncSession = Depends(get_db)):
-    """题库改名（错题池/作答记录不动，仅更新名称）。"""
+async def update_bank(
+    bank_id: str, body: BankUpdateIn, db: AsyncSession = Depends(get_db)
+):
+    """更新题库（名称与 AI 自定义答疑提示词）。"""
     bank = await _bank_or_404(db, bank_id)
-    bank.name = body.name
+    if body.name is not None:
+        bank.name = body.name
+    if body.ai_prompt is not None:
+        bank.ai_prompt = body.ai_prompt
     await db.commit()
-    return {"ok": True}
+    await db.refresh(bank)
+    stats = await bank_service.bank_stats(db, bank)
+    return BankOut(
+        id=bank.id,
+        name=bank.name,
+        source_file=bank.source_file,
+        question_count=bank.question_count,
+        ai_prompt=bank.ai_prompt or "",
+        created_at=bank.created_at,
+        stats=BankStatsOut(**stats),
+    )
 
 
 @router.delete("/{bank_id}")
@@ -237,3 +326,4 @@ async def delete_bank(bank_id: str, db: AsyncSession = Depends(get_db)):
     bank = await _bank_or_404(db, bank_id)
     await bank_service.delete_bank(db, bank)
     return {"ok": True}
+

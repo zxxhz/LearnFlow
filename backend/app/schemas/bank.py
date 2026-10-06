@@ -73,11 +73,40 @@ class BankRenameIn(BaseModel):
         return v[:200]
 
 
+class BankUpdateIn(BaseModel):
+    name: str | None = None
+    ai_prompt: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _clean_name(cls, v):
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            raise ValueError("题库名称不能为空")
+        return v[:200]
+
+
+class BankPromptPolishIn(BaseModel):
+    prompt: str = ""
+    bank_name: str = ""
+
+
+class BankPromptPolishOut(BaseModel):
+    polished_prompt: str
+
+
+class BankAiExplainIn(BaseModel):
+    picked: list[str] = Field(default_factory=list)
+
+
 class BankOut(BaseModel):
     id: str
     name: str
     source_file: str
     question_count: int
+    ai_prompt: str = ""
     created_at: str
     stats: BankStatsOut
 

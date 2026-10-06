@@ -14,6 +14,7 @@ import {
   Spinner,
 } from "../../components/ui";
 import type { Bank, BankAnalysis } from "../../lib/types";
+import BankPromptModal from "./BankPromptModal";
 
 const TYPE_LABEL: Record<string, string> = { single: "单选", multi: "多选", judge: "判断" };
 
@@ -24,6 +25,7 @@ export default function BankListPage() {
   const [deleteTarget, setDeleteTarget] = useState<Bank | null>(null);
   const [renameTarget, setRenameTarget] = useState<Bank | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [promptTarget, setPromptTarget] = useState<Bank | null>(null);
 
   const rename = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => api.banks.rename(id, name),
@@ -91,6 +93,14 @@ export default function BankListPage() {
                 <Button
                   variant="ghost"
                   className="shrink-0 text-xs"
+                  onClick={() => setPromptTarget(b)}
+                  title="设置该题库专属的 AI 答疑提示词（留空使用默认，支持一键 AI 润色）"
+                >
+                  ⚙️ 提示词
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="shrink-0 text-xs"
                   onClick={() => {
                     setRenameTarget(b);
                     setRenameValue(b.name);
@@ -109,6 +119,11 @@ export default function BankListPage() {
                 {b.stats.wrong_count > 0 && (
                   <Badge color="red">错题 {b.stats.wrong_count}</Badge>
                 )}
+                {b.ai_prompt && (
+                  <Badge color="purple" title="已设置专属 AI 提示词">
+                    ✨ 专属提示词
+                  </Badge>
+                )}
                 <Link
                   to={`/bank/${b.id}`}
                   className="ml-auto text-brand-600 dark:text-brand-400 hover:underline"
@@ -121,6 +136,11 @@ export default function BankListPage() {
         </div>
       )}
 
+      <BankPromptModal
+        open={!!promptTarget}
+        bank={promptTarget}
+        onClose={() => setPromptTarget(null)}
+      />
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} />
       <ConfirmDialog
         open={!!deleteTarget}

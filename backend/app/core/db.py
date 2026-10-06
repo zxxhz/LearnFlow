@@ -60,6 +60,8 @@ async def init_db() -> None:
             "ALTER TABLE exercises ADD COLUMN order_index INTEGER DEFAULT 0",
             "ALTER TABLE exercises ADD COLUMN hints TEXT DEFAULT '[]'",
             "ALTER TABLE exercises ADD COLUMN reference_code TEXT DEFAULT ''",
+            # v0.4.22 题库自定义提示词
+            "ALTER TABLE question_banks ADD COLUMN ai_prompt TEXT DEFAULT ''",
         ]
         for ddl in migrations:
             try:

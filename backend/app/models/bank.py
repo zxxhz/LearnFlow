@@ -23,6 +23,7 @@ class QuestionBank(UUIDPk, UserIdMixin, CreatedAt, Base):
     name: Mapped[str] = mapped_column(String(200))
     source_file: Mapped[str] = mapped_column(String(300), default="")
     question_count: Mapped[int] = mapped_column(Integer, default=0)
+    ai_prompt: Mapped[str] = mapped_column(Text, default="")
 
 
 class BankQuestion(UUIDPk, UserIdMixin, CreatedAt, Base):

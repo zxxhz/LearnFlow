@@ -1,12 +1,21 @@
 // 题库刷题页：随机练习 / 错题重刷两种模式，一轮抽 N 题，答完出小结；
 // 轮中进度（轮 / 位置 / 作答）即时持久化 localStorage，中途退出可从「继续上次」恢复
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import MarkdownIt from "markdown-it";
+import renderMathInElement from "katex/contrib/auto-render";
 import { api } from "../../lib/api";
 import { Badge, Button, ErrorText, Select, Spinner } from "../../components/ui";
 import BankQuestionCard from "./BankQuestionCard";
-import type { BankAttemptResult, BankRound } from "../../lib/types";
+import BankPromptModal from "./BankPromptModal";
+import type { BankAttemptResult, BankQuestion, BankRound } from "../../lib/types";
+
+const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
+const KATEX_DELIMITERS = [
+  { left: "$$", right: "$$", display: true },
+  { left: "$", right: "$", display: false },
+];
 
 const SIZES = [10, 20, 50];
 const TYPE_LABEL: Record<string, string> = { single: "单选", multi: "多选", judge: "判断" };
@@ -63,6 +72,7 @@ export default function BankDrillPage() {
   );
   const [size, setSize] = useState(20);
   const [startError, setStartError] = useState("");
+  const [promptOpen, setPromptOpen] = useState(false);
 
   // 轮中任何变化即时落盘；round 为空（无轮）时不写，round 归属不符（路由复用残留）也不写
   useEffect(() => {
@@ -143,22 +153,9 @@ export default function BankDrillPage() {
         {roundWrong.length > 0 && (
           <div className="mt-4 space-y-3">
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">本轮错题</h2>
-            {roundWrong.map((q) => {
-              const r = results[q.id];
-              return (
-                <div key={q.id} className="rounded-lg border border-red-100 dark:border-red-900/40 bg-red-50/50 dark:bg-red-900/10 p-3 text-sm">
-                  <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
-                    <Badge color="red">{TYPE_LABEL[q.qtype]}</Badge>
-                    <span>第 {q.seq} 题</span>
-                  </div>
-                  <p className="mt-1 whitespace-pre-wrap text-gray-800 dark:text-gray-200">{q.title}</p>
-                  <p className="mt-1 text-xs text-green-700 dark:text-green-400">正确答案：{r.correct_answer}</p>
-                  {r.explanation && (
-                    <p className="mt-1 whitespace-pre-wrap text-xs leading-relaxed text-gray-500 dark:text-gray-400">{r.explanation}</p>
-                  )}
-                </div>
-              );
-            })}
+            {roundWrong.map((q) => (
+              <WrongQuestionItem key={q.id} question={q} result={results[q.id]} />
+            ))}
           </div>
         )}
 
@@ -228,9 +225,23 @@ export default function BankDrillPage() {
   const s = bank.stats;
   return (
     <div className="mx-auto max-w-5xl p-8">
-      <Link to="/bank" className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
-        ← 题库列表
-      </Link>
+      <div className="flex items-center justify-between">
+        <Link to="/bank" className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
+          ← 题库列表
+        </Link>
+        <button
+          type="button"
+          onClick={() => setPromptOpen(true)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 py-1 text-xs text-gray-700 dark:text-gray-300 hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-400 transition"
+          title="自定义此题库的 AI 错题解答提示词与润色"
+        >
+          <span>⚙️</span>
+          <span>AI 提示词设置</span>
+          {bank.ai_prompt?.trim() && (
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-500" title="已自定义" />
+          )}
+        </button>
+      </div>
       <h1 className="mt-1 text-2xl font-bold text-gray-900 dark:text-gray-100">🎯 {bank.name}</h1>
       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">来源：{bank.source_file}</p>
 
@@ -307,6 +318,12 @@ export default function BankDrillPage() {
         </div>
         <ErrorText>{startError}</ErrorText>
       </div>
+
+      <BankPromptModal
+        open={promptOpen}
+        bank={bank}
+        onClose={() => setPromptOpen(false)}
+      />
     </div>
   );
 }
@@ -318,6 +335,225 @@ function StatCard({ label, value, tone }: { label: string; value: string; tone?:
         {value}
       </div>
       <div className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{label}</div>
+    </div>
+  );
+}
+
+function WrongQuestionItem({
+  question,
+  result,
+}: {
+  question: BankQuestion;
+  result?: BankAttemptResult;
+}) {
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiThinking, setAiThinking] = useState(false);
+  const [aiStreaming, setAiStreaming] = useState(false);
+  const [aiText, setAiText] = useState("");
+  const [aiError, setAiError] = useState("");
+  const aiStreamRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (aiStreamRef.current && aiText) {
+      try {
+        renderMathInElement(aiStreamRef.current, {
+          delimiters: KATEX_DELIMITERS,
+          throwOnError: false,
+        });
+      } catch (err) {
+        console.warn("KaTeX render error:", err);
+      }
+    }
+  }, [aiText]);
+
+  const userPicked = useMemo(() => {
+    if (!result?.answer) return [];
+    return result.answer.split("").filter(Boolean);
+  }, [result]);
+
+  const correctPicked = useMemo(() => {
+    if (!result?.correct_answer) return [];
+    return result.correct_answer.split("").filter(Boolean);
+  }, [result]);
+
+  async function startAiExplain() {
+    setAiThinking(true);
+    setAiStreaming(true);
+    setAiText("");
+    setAiError("");
+
+    let acc = "";
+    try {
+      await api.banks.explainSSE(
+        question.id,
+        userPicked,
+        (ev) => {
+          if (ev.type === "delta" && ev.text) {
+            setAiThinking(false);
+            acc += ev.text;
+            setAiText(acc);
+          } else if (ev.type === "done") {
+            setAiThinking(false);
+            setAiStreaming(false);
+          } else if (ev.type === "error") {
+            setAiThinking(false);
+            setAiStreaming(false);
+            setAiError(ev.detail || "AI 解答遇到异常，请稍后重试");
+          }
+        }
+      );
+    } catch (e) {
+      setAiThinking(false);
+      setAiStreaming(false);
+      setAiError(`网络或服务异常：${(e as Error).message}`);
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+      <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
+        <Badge color={question.qtype === "multi" ? "amber" : question.qtype === "judge" ? "blue" : "gray"}>
+          {TYPE_LABEL[question.qtype] ?? question.qtype}
+        </Badge>
+        {question.difficulty && <span>难度：{question.difficulty}</span>}
+        <span className="ml-auto">第 {question.seq} 题</span>
+      </div>
+      <p className="mt-2 text-sm leading-relaxed text-gray-900 dark:text-gray-100 font-medium">
+        {question.title}
+      </p>
+
+      {/* 选项 */}
+      <div className="mt-2.5 space-y-1">
+        {question.options.map((opt) => {
+          const isUserPicked = userPicked.includes(opt.letter);
+          const isCorrect = correctPicked.includes(opt.letter);
+          return (
+            <div
+              key={opt.letter}
+              className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${
+                isCorrect
+                  ? "border-green-400 dark:border-green-600 bg-green-50/70 dark:bg-green-950/30 text-green-800 dark:text-green-300 font-medium"
+                  : isUserPicked
+                  ? "border-red-400 dark:border-red-600 bg-red-50/70 dark:bg-red-950/30 text-red-800 dark:text-red-300"
+                  : "border-gray-200 dark:border-gray-700 bg-gray-50/40 dark:bg-gray-800/30 text-gray-600 dark:text-gray-400"
+              }`}
+            >
+              <span
+                className={`flex h-4 w-4 shrink-0 items-center justify-center text-[10px] font-bold rounded ${
+                  isCorrect
+                    ? "bg-green-600 text-white"
+                    : isUserPicked
+                    ? "bg-red-500 text-white"
+                    : "bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
+                }`}
+              >
+                {opt.letter}
+              </span>
+              <span>{opt.text}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {result && (
+        <div className="mt-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 p-2.5 text-xs">
+          <div className="text-red-700 dark:text-red-400 font-medium">
+            ✗ 你的作答：{result.answer || "未选"} · 正确答案：{result.correct_answer}
+          </div>
+          {result.explanation && (
+            <p className="mt-1 whitespace-pre-wrap leading-relaxed text-gray-600 dark:text-gray-400">
+              {result.explanation}
+            </p>
+          )}
+
+          {/* AI 深度流式解答 */}
+          <div className="mt-2.5 border-t border-gray-200/60 dark:border-gray-700/60 pt-2.5">
+            {!aiOpen ? (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  💡 想看这道题的详细原理解析？
+                </span>
+                <Button
+                  variant="secondary"
+                  className="text-xs !py-1 text-brand-600 dark:text-brand-400 border-brand-200 dark:border-brand-800 hover:bg-brand-50 dark:hover:bg-brand-950/40"
+                  onClick={() => {
+                    setAiOpen(true);
+                    startAiExplain();
+                  }}
+                >
+                  🤖 获取 AI 深度解析
+                </Button>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-brand-200 dark:border-brand-800 bg-brand-50/50 dark:bg-brand-950/20 p-3 text-xs shadow-sm">
+                <div className="flex items-center justify-between pb-2 border-b border-brand-100 dark:border-brand-900/60">
+                  <div className="flex items-center gap-1.5 font-semibold text-brand-800 dark:text-brand-300">
+                    <span>🤖 AI 助教错题剖析</span>
+                    {aiStreaming && <span className="inline-block h-2 w-2 rounded-full bg-brand-500 animate-ping" />}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {!aiStreaming && !aiThinking && (
+                      <button
+                        type="button"
+                        className="text-[11px] text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 px-1"
+                        onClick={startAiExplain}
+                        title="重新生成解答"
+                      >
+                        ↻ 重新生成
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"
+                      onClick={() => setAiOpen(false)}
+                      title="收起 AI 解析"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                {aiThinking && (
+                  <div className="py-3 flex items-center justify-center gap-2 text-gray-500 dark:text-gray-400">
+                    <div className="flex space-x-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-brand-500 animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <span className="h-1.5 w-1.5 rounded-full bg-brand-500 animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="h-1.5 w-1.5 rounded-full bg-brand-500 animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
+                    <span>AI 正在剖析错因与考点…</span>
+                  </div>
+                )}
+
+                {aiText && (
+                  <div className="mt-2 text-gray-800 dark:text-gray-200 leading-relaxed overflow-x-auto">
+                    <div
+                      ref={aiStreamRef}
+                      className="prose prose-sm dark:prose-invert max-w-none text-xs leading-relaxed"
+                      dangerouslySetInnerHTML={{ __html: md.render(aiText) }}
+                    />
+                    {aiStreaming && (
+                      <span className="inline-block h-3.5 w-1.5 ml-0.5 align-middle bg-brand-500 animate-pulse rounded-sm" />
+                    )}
+                  </div>
+                )}
+
+                {aiError && (
+                  <div className="mt-2 text-red-600 dark:text-red-400">
+                    {aiError}
+                    <button
+                      type="button"
+                      className="ml-2 underline font-medium"
+                      onClick={startAiExplain}
+                    >
+                      重试
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -315,6 +315,23 @@ export const api = {
         method: "PATCH",
         ...jsonBody({ name }),
       }),
+    update: (id: string, body: { name?: string; ai_prompt?: string }) =>
+      request<Bank>(`/banks/${id}`, {
+        method: "PATCH",
+        ...jsonBody(body),
+      }),
+    getDefaultPrompt: () => request<{ default_prompt: string }>("/banks/default-prompt"),
+    polishPrompt: (prompt: string, bank_name?: string) =>
+      request<{ polished_prompt: string }>("/banks/polish-prompt", {
+        method: "POST",
+        ...jsonBody({ prompt, bank_name }),
+      }),
+    explainSSE: (
+      questionId: string,
+      picked: string[],
+      onEvent: (payload: any) => void,
+      signal?: AbortSignal
+    ) => streamSSE(`/banks/questions/${questionId}/ai-explain`, { picked }, onEvent, signal),
     remove: (id: string) => request<{ ok: boolean }>(`/banks/${id}`, { method: "DELETE" }),
   },
   study: {

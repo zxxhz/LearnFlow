@@ -1,8 +1,16 @@
-// 题库题目作答卡片：单选/多选/判断三种作答形态，提交后即时出判分与解析
-import { useState } from "react";
+// 题库题目作答卡片：单选/多选/判断三种作答形态，提交后即时出判分与解析；回答错误时支持 AI 流式深度解答
+import { useEffect, useRef, useState } from "react";
+import MarkdownIt from "markdown-it";
+import renderMathInElement from "katex/contrib/auto-render";
 import { Badge, Button, ErrorText, Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
 import type { BankAttemptResult, BankQuestion } from "../../lib/types";
+
+const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
+const KATEX_DELIMITERS = [
+  { left: "$$", right: "$$", display: true },
+  { left: "$", right: "$", display: false },
+];
 
 const LETTERS = "ABCDEFGH".split("");
 const TYPE_LABEL: Record<string, string> = { single: "单选", multi: "多选", judge: "判断" };
@@ -34,6 +42,24 @@ export default function BankQuestionCard({
   const [error, setError] = useState("");
   const opts = visibleOptions(question);
 
+  // AI 错题解答流式状态
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiThinking, setAiThinking] = useState(false);
+  const [aiStreaming, setAiStreaming] = useState(false);
+  const [aiText, setAiText] = useState("");
+  const [aiError, setAiError] = useState("");
+  const aiStreamRef = useRef<HTMLDivElement>(null);
+
+  // 数学公式渲染
+  useEffect(() => {
+    if (aiStreamRef.current) {
+      renderMathInElement(aiStreamRef.current, {
+        delimiters: KATEX_DELIMITERS,
+        throwOnError: false,
+      });
+    }
+  }, [aiText]);
+
   function toggle(letter: string) {
     if (result) return;
     setPicked((p) =>
@@ -59,8 +85,41 @@ export default function BankQuestionCard({
     }
   }
 
+  async function startAiExplain() {
+    setAiThinking(true);
+    setAiStreaming(true);
+    setAiText("");
+    setAiError("");
+
+    let acc = "";
+    try {
+      await api.banks.explainSSE(
+        question.id,
+        picked,
+        (ev) => {
+          if (ev.type === "delta" && ev.text) {
+            setAiThinking(false);
+            acc += ev.text;
+            setAiText(acc);
+          } else if (ev.type === "done") {
+            setAiThinking(false);
+            setAiStreaming(false);
+          } else if (ev.type === "error") {
+            setAiThinking(false);
+            setAiStreaming(false);
+            setAiError(ev.detail || "AI 解答遇到异常，请稍后重试");
+          }
+        }
+      );
+    } catch (e) {
+      setAiThinking(false);
+      setAiStreaming(false);
+      setAiError(`网络或服务异常：${(e as Error).message}`);
+    }
+  }
+
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 transition-all">
       <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
         <Badge color={multi ? "amber" : question.qtype === "judge" ? "blue" : "gray"}>
           {TYPE_LABEL[question.qtype] ?? question.qtype}
@@ -114,6 +173,95 @@ export default function BankQuestionCard({
             <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-gray-600 dark:text-gray-400">
               {result.explanation}
             </p>
+          )}
+
+          {/* 回答错误时：提供 AI 深度流式解答 */}
+          {!result.passed && (
+            <div className="mt-3 border-t border-gray-200/60 dark:border-gray-700/60 pt-3">
+              {!aiOpen ? (
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    💡 想彻底搞懂为什么做错？
+                  </span>
+                  <Button
+                    variant="secondary"
+                    className="text-xs !py-1 text-brand-600 dark:text-brand-400 border-brand-200 dark:border-brand-800 hover:bg-brand-50 dark:hover:bg-brand-950/40"
+                    onClick={() => {
+                      setAiOpen(true);
+                      startAiExplain();
+                    }}
+                  >
+                    🤖 获取 AI 深度解析
+                  </Button>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-brand-200 dark:border-brand-800 bg-brand-50/50 dark:bg-brand-950/20 p-3 text-xs shadow-sm">
+                  <div className="flex items-center justify-between pb-2 border-b border-brand-100 dark:border-brand-900/60">
+                    <div className="flex items-center gap-1.5 font-semibold text-brand-800 dark:text-brand-300">
+                      <span>🤖 AI 助教错题剖析</span>
+                      {aiStreaming && <span className="inline-block h-2 w-2 rounded-full bg-brand-500 animate-ping" />}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {!aiStreaming && !aiThinking && (
+                        <button
+                          type="button"
+                          className="text-[11px] text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 px-1"
+                          onClick={startAiExplain}
+                          title="重新生成解答"
+                        >
+                          ↻ 重新生成
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"
+                        onClick={() => setAiOpen(false)}
+                        title="收起 AI 解析"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+
+                  {aiThinking && (
+                    <div className="py-4 flex items-center justify-center gap-2 text-gray-500 dark:text-gray-400">
+                      <div className="flex space-x-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-brand-500 animate-bounce" style={{ animationDelay: "0ms" }} />
+                        <span className="h-1.5 w-1.5 rounded-full bg-brand-500 animate-bounce" style={{ animationDelay: "150ms" }} />
+                        <span className="h-1.5 w-1.5 rounded-full bg-brand-500 animate-bounce" style={{ animationDelay: "300ms" }} />
+                      </div>
+                      <span>AI 正在结合题库规则诊断错因与考点…</span>
+                    </div>
+                  )}
+
+                  {aiText && (
+                    <div className="mt-2 text-gray-800 dark:text-gray-200 leading-relaxed overflow-x-auto">
+                      <div
+                        ref={aiStreamRef}
+                        className="prose prose-sm dark:prose-invert max-w-none text-xs leading-relaxed"
+                        dangerouslySetInnerHTML={{ __html: md.render(aiText) }}
+                      />
+                      {aiStreaming && (
+                        <span className="inline-block h-3.5 w-1.5 ml-0.5 align-middle bg-brand-500 animate-pulse rounded-sm" />
+                      )}
+                    </div>
+                  )}
+
+                  {aiError && (
+                    <div className="mt-2 text-red-600 dark:text-red-400">
+                      {aiError}
+                      <button
+                        type="button"
+                        className="ml-2 underline font-medium"
+                        onClick={startAiExplain}
+                      >
+                        重试
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
       ) : (

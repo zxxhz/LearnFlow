@@ -457,6 +457,7 @@ export interface Bank {
   name: string;
   source_file: string;
   question_count: number;
+  ai_prompt: string;
   created_at: string;
   stats: BankStats;
 }
