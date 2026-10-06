@@ -114,8 +114,11 @@ export default function ReaderPage() {
   const [convId, setConvId] = useState<string | null>(null);
   const isCardOpen = !!(currentActiveAnn && convId) && !isClosingCard;
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [isClosingDrawer, setIsClosingDrawer] = useState(false);
   const [kpOpen, setKpOpen] = useState(false);
+  const [isClosingKp, setIsClosingKp] = useState(false);
   const [exerciseOpen, setExerciseOpen] = useState(false);
+  const [isClosingExercise, setIsClosingExercise] = useState(false);
   const [exerciseFocus, setExerciseFocus] = useState<string | null>(null);
   const [reAnchoring, setReAnchoring] = useState<Annotation | null>(null);
   const [flashSection, setFlashSection] = useState<string | null>(null);
@@ -186,7 +189,7 @@ export default function ReaderPage() {
     setSelection({ anchor, rect });
   }, [reAnchoring]);
 
-  // ===== 卡片与关闭调度 =====
+  // ===== 右侧面板平滑关闭与调度 =====
   const closeAnnotation = useCallback(() => {
     setIsClosingCard(true);
     setTimeout(() => {
@@ -195,6 +198,67 @@ export default function ReaderPage() {
       setIsClosingCard(false);
     }, 300);
   }, []);
+
+  const closeDrawer = useCallback(() => {
+    setIsClosingDrawer(true);
+    setTimeout(() => {
+      setDrawerOpen(false);
+      setIsClosingDrawer(false);
+    }, 300);
+  }, []);
+
+  const closeExercise = useCallback(() => {
+    setIsClosingExercise(true);
+    setTimeout(() => {
+      setExerciseOpen(false);
+      setExerciseFocus(null);
+      setIsClosingExercise(false);
+    }, 300);
+  }, []);
+
+  const closeKp = useCallback(() => {
+    setIsClosingKp(true);
+    setTimeout(() => {
+      setKpOpen(false);
+      setIsClosingKp(false);
+    }, 300);
+  }, []);
+
+  // 互斥打开
+  const openDrawer = useCallback(() => {
+    if (activeAnn) closeAnnotation();
+    if (exerciseOpen) closeExercise();
+    if (kpOpen) closeKp();
+    setIsClosingDrawer(false);
+    setDrawerOpen(true);
+  }, [activeAnn, exerciseOpen, kpOpen, closeAnnotation, closeExercise, closeKp]);
+
+  const openExercise = useCallback(
+    (focusId?: string | null) => {
+      if (activeAnn) closeAnnotation();
+      if (drawerOpen) closeDrawer();
+      if (kpOpen) closeKp();
+      setIsClosingExercise(false);
+      setExerciseOpen(true);
+      setExerciseFocus(focusId ?? null);
+    },
+    [activeAnn, drawerOpen, kpOpen, closeAnnotation, closeDrawer, closeKp]
+  );
+
+  const openKp = useCallback(() => {
+    if (activeAnn) closeAnnotation();
+    if (drawerOpen) closeDrawer();
+    if (exerciseOpen) closeExercise();
+    setIsClosingKp(false);
+    setKpOpen(true);
+  }, [activeAnn, drawerOpen, exerciseOpen, closeAnnotation, closeDrawer, closeExercise]);
+
+  const isRightPanelOpen = Boolean(
+    isCardOpen ||
+      (drawerOpen && !isClosingDrawer) ||
+      (exerciseOpen && !isClosingExercise) ||
+      (kpOpen && !isClosingKp)
+  );
 
   useEffect(() => {
     const onMouseUp = () => setTimeout(captureSelection, 0);
@@ -207,9 +271,10 @@ export default function ReaderPage() {
       if (e.key === "Escape") {
         setSelection(null);
         setReAnchoring(null);
-        if (activeAnn) {
-          closeAnnotation();
-        }
+        if (activeAnn) closeAnnotation();
+        if (drawerOpen) closeDrawer();
+        if (exerciseOpen) closeExercise();
+        if (kpOpen) closeKp();
       }
     };
     // 触屏：长按选择后 touchend 捕获选区（PRD §5.9 平板适配）
@@ -221,7 +286,18 @@ export default function ReaderPage() {
       document.removeEventListener("touchend", onMouseUp);
       document.removeEventListener("keyup", onKey);
     };
-  }, [captureSelection, activeAnn, closeAnnotation, toggleSidebar]);
+  }, [
+    captureSelection,
+    activeAnn,
+    drawerOpen,
+    exerciseOpen,
+    kpOpen,
+    closeAnnotation,
+    closeDrawer,
+    closeExercise,
+    closeKp,
+    toggleSidebar,
+  ]);
 
   const createAnnotation = useMutation({
     mutationFn: async (openCard: boolean) => {
@@ -245,9 +321,11 @@ export default function ReaderPage() {
 
   // ===== 卡片与定位 =====
   const openAnnotation = async (a: Annotation, knownConvId?: string) => {
+    if (drawerOpen) closeDrawer();
+    if (exerciseOpen) closeExercise();
+    if (kpOpen) closeKp();
     setIsClosingCard(false);
     setActiveAnn(a);
-    setKpOpen(false);
     const cached = knownConvId ?? convIdCache[a.id];
     if (cached) {
       setConvId(cached);
@@ -451,10 +529,10 @@ export default function ReaderPage() {
         </div>
       </aside>
 
-      {/* 正文主区域：独立纵向滚动，提问卡片打开时平滑向左避让，关闭时丝滑复原 */}
+      {/* 正文主区域：独立纵向滚动，右侧面板打开时平滑向左避让，关闭时丝滑复原 */}
       <main
         className={`flex-1 h-full overflow-y-auto min-w-0 transition-all duration-300 ease-out ${
-          isCardOpen ? "md:mr-[420px]" : "mr-0"
+          isRightPanelOpen ? "md:mr-[420px]" : "mr-0"
         }`}
       >
         <div className="relative mx-auto w-full max-w-3xl px-4 py-8 md:px-10">
@@ -495,20 +573,37 @@ export default function ReaderPage() {
             </Button>
           </div>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" className="text-xs" onClick={() => setKpOpen((v) => !v)}>
+            <Button
+              variant="ghost"
+              className={`text-xs transition-colors ${
+                kpOpen && !isClosingKp
+                  ? "bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300 font-semibold"
+                  : ""
+              }`}
+              onClick={() => (kpOpen ? closeKp() : openKp())}
+            >
               💡 知识点 {activeKps.length > 0 && activeKps.length}
             </Button>
             <Button
               variant="ghost"
-              className="text-xs"
-              onClick={() => {
-                setExerciseOpen((v) => !v);
-                setExerciseFocus(null);
-              }}
+              className={`text-xs transition-colors ${
+                exerciseOpen && !isClosingExercise
+                  ? "bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300 font-semibold"
+                  : ""
+              }`}
+              onClick={() => (exerciseOpen ? closeExercise() : openExercise(null))}
             >
               🎮 闯关 {(exercisesQuery.data?.length ?? 0) > 0 && exercisesQuery.data!.length}
             </Button>
-            <Button variant="ghost" className="text-xs" onClick={() => setDrawerOpen((v) => !v)}>
+            <Button
+              variant="ghost"
+              className={`text-xs transition-colors ${
+                drawerOpen && !isClosingDrawer
+                  ? "bg-brand-50 text-brand-700 dark:bg-brand-950/40 dark:text-brand-300 font-semibold"
+                  : ""
+              }`}
+              onClick={() => (drawerOpen ? closeDrawer() : openDrawer())}
+            >
               🖍 标注 {annotations.length > 0 && annotations.length}
             </Button>
             {/* ADHD 辅助阅读模式快捷切换按钮 */}
@@ -622,35 +717,51 @@ export default function ReaderPage() {
         </div>
       )}
 
-      {/* 知识点浮层 */}
+      {/* 知识点抽屉：统一右侧 420px 滑入动效与正文平移避让 */}
       {kpOpen && (
-        <div className="fixed right-6 top-14 z-30 w-80 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 shadow-xl">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">本章知识点</span>
-            <button className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300" onClick={() => setKpOpen(false)}>
+        <div
+          className={`fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl sm:w-[420px] transition-transform duration-300 ease-out transform ${
+            !isClosingKp ? "translate-x-0" : "translate-x-full"
+          }`}
+        >
+          <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">💡 本章知识点</span>
+              <span className="rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-xs text-gray-500 dark:text-gray-400">
+                {activeKps.length}
+              </span>
+            </div>
+            <button
+              className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
+              onClick={closeKp}
+              title="关闭"
+            >
               ✕
             </button>
           </div>
           {activeKps.length === 0 ? (
-            <p className="py-4 text-center text-xs text-gray-400 dark:text-gray-500">（暂无知识点）</p>
+            <p className="py-12 text-center text-xs text-gray-400 dark:text-gray-500">（本章暂无拆解出的知识点）</p>
           ) : (
-            <div className="max-h-[60vh] space-y-2 overflow-auto">
+            <div className="flex-1 space-y-3 overflow-y-auto p-4">
               {activeKps.map((kp) => (
-                <div key={kp.id} className="rounded-lg border border-gray-100 dark:border-gray-800 p-2.5">
-                  <div className="text-sm font-medium text-gray-800 dark:text-gray-200">{kp.title}</div>
-                  <p className="mt-0.5 line-clamp-2 text-xs text-gray-500 dark:text-gray-400">{kp.summary}</p>
-                  <div className="mt-1.5 flex items-center gap-2">
-                    <button
-                      className="text-xs text-brand-600 underline"
+                <div
+                  key={kp.id}
+                  className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-3.5 shadow-sm hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{kp.title}</div>
+                    <Button
+                      variant="ghost"
+                      className="text-xs text-brand-600 dark:text-brand-400 hover:text-brand-700"
                       onClick={() => {
-                        setKpOpen(false);
-                        setExerciseFocus(kp.id);
-                        setExerciseOpen(true);
+                        closeKp();
+                        openExercise(kp.id);
                       }}
                     >
-                      🎮 闯关
-                    </button>
+                      🎮 关联闯关
+                    </Button>
                   </div>
+                  <p className="mt-1.5 text-xs text-gray-600 dark:text-gray-400 leading-relaxed">{kp.summary}</p>
                 </div>
               ))}
             </div>
@@ -665,10 +776,8 @@ export default function ReaderPage() {
           kps={activeKps}
           exercises={exercisesQuery.data ?? []}
           focusKpId={exerciseFocus}
-          onClose={() => {
-            setExerciseOpen(false);
-            setExerciseFocus(null);
-          }}
+          closing={isClosingExercise}
+          onClose={closeExercise}
         />
       )}
 
@@ -691,7 +800,9 @@ export default function ReaderPage() {
           annotations={annotations}
           activeAnnId={activeAnn?.id ?? null}
           reAnchoring={reAnchoring}
+          closing={isClosingDrawer}
           onOpen={(a) => {
+            closeDrawer();
             openAnnotation(a);
             jumpTo(a.section_id, a.id);
           }}
@@ -706,7 +817,7 @@ export default function ReaderPage() {
               });
             }
           }}
-          onClose={() => setDrawerOpen(false)}
+          onClose={closeDrawer}
         />
       )}
 

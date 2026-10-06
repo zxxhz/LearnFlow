@@ -11,11 +11,28 @@ interface Props {
   kps: KnowledgePoint[];
   exercises: Exercise[];
   focusKpId: string | null;
+  closing?: boolean;
   onClose: () => void;
 }
 
-export default function ExerciseDrawer({ documentId, kps, exercises, focusKpId, onClose }: Props) {
+export default function ExerciseDrawer({
+  documentId,
+  kps,
+  exercises,
+  focusKpId,
+  closing = false,
+  onClose,
+}: Props) {
   const queryClient = useQueryClient();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setMounted(true);
+    }, 20);
+    return () => clearTimeout(timer);
+  }, []);
+
   const [langByKp, setLangByKp] = useState<Record<string, "python" | "cpp">>({});
   const [quizMode, setQuizMode] = useState(false);
   const [quizLang, setQuizLang] = useState<"python" | "cpp">("python");
@@ -120,8 +137,14 @@ export default function ExerciseDrawer({ documentId, kps, exercises, focusKpId, 
   const cleared = ladder.filter((e) => e.ever_passed).length;
   const total = exercises.length;
 
+  const isVisible = mounted && !closing;
+
   return (
-    <div className="fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-lg sm:w-[420px]">
+    <div
+      className={`fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl sm:w-[420px] transition-transform duration-300 ease-out transform ${
+        isVisible ? "translate-x-0" : "translate-x-full"
+      }`}
+    >
       <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">🎮 闯关练习{total > 0 && `（${total}）`}</span>

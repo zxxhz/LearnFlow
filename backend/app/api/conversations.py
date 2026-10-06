@@ -50,15 +50,21 @@ async def post_message(
     ann = await db.get(Annotation, conv.annotation_id) if conv.annotation_id else None
     if ann is None:
         raise HTTPException(status_code=400, detail="标注不存在")
-    db.add(Message(conversation_id=conv.id, role="user", content=body.content))
+    user_msg = Message(conversation_id=conv.id, role="user", content=body.content)
+    db.add(user_msg)
     ann.updated_at = utcnow_iso()
     await db.commit()
+    await db.refresh(user_msg)
+
+    user_msg_dict = MessageOut.model_validate(user_msg).model_dump()
     messages = await build_annotation_messages(db, conv)
     adapter = await create_adapter_from_settings(db, scene="chat")
     deltas = await adapter.chat(messages, stream=True)
     conv_id = conv.id
 
     async def gen():
+        # 首先立即确认用户消息已保存，供前端快速对齐
+        yield f"data: {json.dumps({'type': 'user_ack', 'message': user_msg_dict}, ensure_ascii=False)}\n\n"
         buffer: list[str] = []
         try:
             async for delta in deltas:
@@ -73,13 +79,24 @@ async def post_message(
             yield f"data: {json.dumps({'type': 'error', 'detail': f'服务异常：{e}'}, ensure_ascii=False)}\n\n"
             return
 
+        full_content = "".join(buffer)
         async with async_session_factory() as s:
             saved = Message(
-                conversation_id=conv_id, role="assistant", content="".join(buffer)
+                conversation_id=conv_id, role="assistant", content=full_content
             )
             s.add(saved)
             await s.commit()
             msg_id = saved.id
-        yield f"data: {json.dumps({'type': 'done', 'message_id': msg_id}, ensure_ascii=False)}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'message_id': msg_id, 'content': full_content}, ensure_ascii=False)}\n\n"
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream; charset=utf-8",
+        },
+    )
+
