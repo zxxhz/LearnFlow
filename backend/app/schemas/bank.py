@@ -32,6 +32,7 @@ class BankQuestionOut(BaseModel):
     title: str
     options: list[str]  # 按列位的 8 元素数组（含空串），字母 = 下标；判断题为 []
     difficulty: str
+    ai_explanation: str = ""
 
 
 class BankWrongQuestionOut(BankQuestionOut):
@@ -49,6 +50,7 @@ class BankAttemptResult(BaseModel):
     correct_answer: str  # 展示串（判断题 正确/错误，多选顿号连接）
     answer_raw: str
     explanation: str
+    ai_explanation: str = ""
 
 
 class BankStatsOut(BaseModel):

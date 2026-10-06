@@ -7,7 +7,7 @@ import MarkdownIt from "markdown-it";
 import renderMathInElement from "katex/contrib/auto-render";
 import { api } from "../../lib/api";
 import { Badge, Button, ErrorText, Select, Spinner } from "../../components/ui";
-import BankQuestionCard from "./BankQuestionCard";
+import BankQuestionCard, { visibleOptions } from "./BankQuestionCard";
 import BankPromptModal from "./BankPromptModal";
 import type { BankAttemptResult, BankQuestion, BankRound } from "../../lib/types";
 
@@ -25,6 +25,7 @@ interface DrillDraft {
   round: BankRound;
   idx: number;
   results: Record<string, BankAttemptResult>;
+  aiExplains?: Record<string, string>;
 }
 
 const draftKey = (bankId: string) => `learnflow.bank-drill.${bankId}`;
@@ -70,6 +71,16 @@ export default function BankDrillPage() {
   const [results, setResults] = useState<Record<string, BankAttemptResult>>(() =>
     draftFinished ? { ...draft!.results } : {},
   );
+  const [aiExplains, setAiExplains] = useState<Record<string, string>>(() => {
+    const fromDraft = draft?.aiExplains || {};
+    const fromQuestions: Record<string, string> = {};
+    if (draft?.round?.questions) {
+      for (const q of draft.round.questions) {
+        if (q.ai_explanation) fromQuestions[q.id] = q.ai_explanation;
+      }
+    }
+    return { ...fromQuestions, ...fromDraft };
+  });
   const [size, setSize] = useState(20);
   const [startError, setStartError] = useState("");
   const [promptOpen, setPromptOpen] = useState(false);
@@ -77,20 +88,26 @@ export default function BankDrillPage() {
   // 轮中任何变化即时落盘；round 为空（无轮）时不写，round 归属不符（路由复用残留）也不写
   useEffect(() => {
     if (!round || round.bank_id !== bankId) return;
-    saveDraft(bankId!, { round, idx, results });
-  }, [bankId, round, idx, results]);
+    saveDraft(bankId!, { round, idx, results, aiExplains });
+  }, [bankId, round, idx, results, aiExplains]);
+
+  const handleAiExplained = (qId: string, text: string) => {
+    setAiExplains((prev) => ({ ...prev, [qId]: text }));
+  };
 
   const resumeDraft = () => {
     if (!draft) return;
     setRound(draft.round);
     setIdx(draft.idx);
     setResults({ ...draft.results });
+    if (draft.aiExplains) setAiExplains({ ...draft.aiExplains });
   };
 
   const discardRound = () => {
     setDraft(null);
     saveDraft(bankId!, null);
     setRound(null);
+    setAiExplains({});
   };
 
   const start = useMutation({
@@ -100,6 +117,11 @@ export default function BankDrillPage() {
       setIdx(0);
       setResults({});
       setStartError("");
+      const initialAi: Record<string, string> = {};
+      for (const q of r.questions) {
+        if (q.ai_explanation) initialAi[q.id] = q.ai_explanation;
+      }
+      setAiExplains(initialAi);
       qc.invalidateQueries({ queryKey: ["banks"] });
     },
     onError: (e) => setStartError((e as Error).message),
@@ -107,6 +129,9 @@ export default function BankDrillPage() {
 
   const onAnswered = (qId: string, r: BankAttemptResult) => {
     setResults((prev) => ({ ...prev, [qId]: r }));
+    if (r.ai_explanation) {
+      setAiExplains((prev) => ({ ...prev, [qId]: prev[qId] || r.ai_explanation! }));
+    }
     qc.invalidateQueries({ queryKey: ["banks"] });
   };
 
@@ -154,7 +179,13 @@ export default function BankDrillPage() {
           <div className="mt-4 space-y-3">
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">本轮错题</h2>
             {roundWrong.map((q) => (
-              <WrongQuestionItem key={q.id} question={q} result={results[q.id]} />
+              <WrongQuestionItem
+                key={q.id}
+                question={q}
+                result={results[q.id]}
+                initialAiExplain={aiExplains[q.id] || q.ai_explanation}
+                onAiExplained={(text) => handleAiExplained(q.id, text)}
+              />
             ))}
           </div>
         )}
@@ -205,7 +236,13 @@ export default function BankDrillPage() {
             style={{ width: `${((idx + (results[current.id] ? 1 : 0)) / questions.length) * 100}%` }}
           />
         </div>
-        <BankQuestionCard key={current.id} question={current} onAnswered={(r) => onAnswered(current.id, r)} />
+        <BankQuestionCard
+          key={current.id}
+          question={current}
+          initialAiExplain={aiExplains[current.id] || current.ai_explanation}
+          onAiExplained={(text) => handleAiExplained(current.id, text)}
+          onAnswered={(r) => onAnswered(current.id, r)}
+        />
         <div className="mt-4 flex justify-end">
           {idx < questions.length - 1 ? (
             <Button disabled={!results[current.id]} onClick={() => setIdx(idx + 1)}>
@@ -342,16 +379,22 @@ function StatCard({ label, value, tone }: { label: string; value: string; tone?:
 function WrongQuestionItem({
   question,
   result,
+  initialAiExplain,
+  onAiExplained,
 }: {
   question: BankQuestion;
   result?: BankAttemptResult;
+  initialAiExplain?: string;
+  onAiExplained?: (text: string) => void;
 }) {
-  const [aiOpen, setAiOpen] = useState(false);
+  const existingExplain = initialAiExplain || question.ai_explanation || "";
+  const [aiOpen, setAiOpen] = useState(!!existingExplain);
   const [aiThinking, setAiThinking] = useState(false);
   const [aiStreaming, setAiStreaming] = useState(false);
-  const [aiText, setAiText] = useState("");
+  const [aiText, setAiText] = useState(existingExplain);
   const [aiError, setAiError] = useState("");
   const aiStreamRef = useRef<HTMLDivElement>(null);
+  const opts = visibleOptions(question);
 
   useEffect(() => {
     if (aiStreamRef.current && aiText) {
@@ -392,9 +435,11 @@ function WrongQuestionItem({
             setAiThinking(false);
             acc += ev.text;
             setAiText(acc);
+            onAiExplained?.(acc);
           } else if (ev.type === "done") {
             setAiThinking(false);
             setAiStreaming(false);
+            onAiExplained?.(acc);
           } else if (ev.type === "error") {
             setAiThinking(false);
             setAiStreaming(false);
@@ -424,7 +469,7 @@ function WrongQuestionItem({
 
       {/* 选项 */}
       <div className="mt-2.5 space-y-1">
-        {question.options.map((opt) => {
+        {opts.map((opt) => {
           const isUserPicked = userPicked.includes(opt.letter);
           const isCorrect = correctPicked.includes(opt.letter);
           return (
@@ -478,10 +523,10 @@ function WrongQuestionItem({
                   className="text-xs !py-1 text-brand-600 dark:text-brand-400 border-brand-200 dark:border-brand-800 hover:bg-brand-50 dark:hover:bg-brand-950/40"
                   onClick={() => {
                     setAiOpen(true);
-                    startAiExplain();
+                    if (!aiText) startAiExplain();
                   }}
                 >
-                  🤖 获取 AI 深度解析
+                  {aiText ? "🤖 查看已生成的 AI 解析" : "🤖 获取 AI 深度解析"}
                 </Button>
               </div>
             ) : (
@@ -489,7 +534,13 @@ function WrongQuestionItem({
                 <div className="flex items-center justify-between pb-2 border-b border-brand-100 dark:border-brand-900/60">
                   <div className="flex items-center gap-1.5 font-semibold text-brand-800 dark:text-brand-300">
                     <span>🤖 AI 助教错题剖析</span>
-                    {aiStreaming && <span className="inline-block h-2 w-2 rounded-full bg-brand-500 animate-ping" />}
+                    {aiStreaming ? (
+                      <span className="inline-block h-2 w-2 rounded-full bg-brand-500 animate-ping" />
+                    ) : (
+                      <span className="rounded bg-brand-100 dark:bg-brand-900/60 px-1 py-0.2 text-[10px] text-brand-700 dark:text-brand-300 font-normal">
+                        已保留
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1">
                     {!aiStreaming && !aiThinking && (

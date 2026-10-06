@@ -425,6 +425,7 @@ export interface BankQuestion {
   /** 按列位的选项数组（含空串），字母 = A + 下标；判断题为 [] */
   options: string[];
   difficulty: string;
+  ai_explanation?: string;
 }
 
 export interface BankWrongQuestion extends BankQuestion {
@@ -440,6 +441,7 @@ export interface BankAttemptResult {
   correct_answer: string;
   answer_raw: string;
   explanation: string;
+  ai_explanation?: string;
 }
 
 export interface BankStats {

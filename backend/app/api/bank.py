@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.db import get_db
+from app.core.db import async_session_factory, get_db
 from app.models.bank import BankAttempt, BankQuestion, QuestionBank
 from app.schemas.bank import (
     BankAiExplainIn,
@@ -49,6 +49,7 @@ def _question_out(q: BankQuestion) -> BankQuestionOut:
         title=q.title,
         options=json.loads(q.options) if q.options else [],
         difficulty=q.difficulty,
+        ai_explanation=q.ai_explanation or "",
     )
 
 
@@ -199,6 +200,7 @@ async def submit_attempt(
         correct_answer=bank_service.format_correct_answer(q),
         answer_raw=q.answer_raw,
         explanation=q.explanation,
+        ai_explanation=q.ai_explanation or "",
     )
 
 
@@ -270,9 +272,12 @@ async def ai_explain_question(
     adapter = await create_adapter_from_settings(db, scene="chat")
     deltas = await adapter.chat(messages, stream=True)
 
+    accumulated: list[str] = []
+
     async def gen():
         try:
             async for delta in deltas:
+                accumulated.append(delta)
                 yield f"data: {json.dumps({'type': 'delta', 'text': delta}, ensure_ascii=False)}\n\n"
         except LLMError as e:
             logger.warning(f"Bank explain LLM error: {e}")
@@ -282,6 +287,18 @@ async def ai_explain_question(
             logger.exception(f"Bank explain stream error: {e}")
             yield f"data: {json.dumps({'type': 'error', 'detail': f'服务异常：{e}'}, ensure_ascii=False)}\n\n"
             return
+
+        # 流式顺利结束，持久化到 bank_questions.ai_explanation
+        full_text = "".join(accumulated).strip()
+        if full_text:
+            try:
+                async with async_session_factory() as save_db:
+                    saved_q = await save_db.get(BankQuestion, question_id)
+                    if saved_q:
+                        saved_q.ai_explanation = full_text
+                        await save_db.commit()
+            except Exception as se:
+                logger.warning(f"Failed to persist question ai_explanation: {se}")
 
         yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
 

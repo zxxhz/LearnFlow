@@ -43,6 +43,7 @@ class BankQuestion(UUIDPk, UserIdMixin, CreatedAt, Base):
     answer_raw: Mapped[str] = mapped_column(String(60), default="")
     difficulty: Mapped[str] = mapped_column(String(20), default="")
     explanation: Mapped[str] = mapped_column(Text, default="")
+    ai_explanation: Mapped[str] = mapped_column(Text, default="")
 
 
 class BankAttempt(UUIDPk, UserIdMixin, CreatedAt, Base):

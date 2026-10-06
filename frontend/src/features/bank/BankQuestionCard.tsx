@@ -31,9 +31,13 @@ export function visibleOptions(q: BankQuestion): { letter: string; text: string 
 export default function BankQuestionCard({
   question,
   onAnswered,
+  initialAiExplain,
+  onAiExplained,
 }: {
   question: BankQuestion;
   onAnswered: (result: BankAttemptResult, picked: string[]) => void;
+  initialAiExplain?: string;
+  onAiExplained?: (text: string) => void;
 }) {
   const multi = question.qtype === "multi";
   const [picked, setPicked] = useState<string[]>([]);
@@ -42,11 +46,12 @@ export default function BankQuestionCard({
   const [error, setError] = useState("");
   const opts = visibleOptions(question);
 
-  // AI 错题解答流式状态
+  // AI 错题解答流式状态（优先复用已生成的解析）
+  const existingAi = initialAiExplain || question.ai_explanation || "";
   const [aiOpen, setAiOpen] = useState(false);
   const [aiThinking, setAiThinking] = useState(false);
   const [aiStreaming, setAiStreaming] = useState(false);
-  const [aiText, setAiText] = useState("");
+  const [aiText, setAiText] = useState(existingAi);
   const [aiError, setAiError] = useState("");
   const aiStreamRef = useRef<HTMLDivElement>(null);
 
@@ -65,8 +70,8 @@ export default function BankQuestionCard({
     setPicked((p) =>
       multi
         ? p.includes(letter)
-          ? p.filter((x) => x !== letter)
-          : [...p, letter]
+        ? p.filter((x) => x !== letter)
+        : [...p, letter]
         : [letter],
     );
   }
@@ -77,6 +82,10 @@ export default function BankQuestionCard({
     try {
       const r = await api.banks.attempt(question.id, picked);
       setResult(r);
+      if (r.ai_explanation && !aiText) {
+        setAiText(r.ai_explanation);
+        onAiExplained?.(r.ai_explanation);
+      }
       onAnswered(r, picked);
     } catch (e) {
       setError((e as Error).message);
@@ -101,9 +110,11 @@ export default function BankQuestionCard({
             setAiThinking(false);
             acc += ev.text;
             setAiText(acc);
+            onAiExplained?.(acc);
           } else if (ev.type === "done") {
             setAiThinking(false);
             setAiStreaming(false);
+            onAiExplained?.(acc);
           } else if (ev.type === "error") {
             setAiThinking(false);
             setAiStreaming(false);
@@ -188,10 +199,10 @@ export default function BankQuestionCard({
                     className="text-xs !py-1 text-brand-600 dark:text-brand-400 border-brand-200 dark:border-brand-800 hover:bg-brand-50 dark:hover:bg-brand-950/40"
                     onClick={() => {
                       setAiOpen(true);
-                      startAiExplain();
+                      if (!aiText) startAiExplain();
                     }}
                   >
-                    🤖 获取 AI 深度解析
+                    {aiText ? "🤖 查看已生成的 AI 解析" : "🤖 获取 AI 深度解析"}
                   </Button>
                 </div>
               ) : (
@@ -199,7 +210,13 @@ export default function BankQuestionCard({
                   <div className="flex items-center justify-between pb-2 border-b border-brand-100 dark:border-brand-900/60">
                     <div className="flex items-center gap-1.5 font-semibold text-brand-800 dark:text-brand-300">
                       <span>🤖 AI 助教错题剖析</span>
-                      {aiStreaming && <span className="inline-block h-2 w-2 rounded-full bg-brand-500 animate-ping" />}
+                      {aiStreaming ? (
+                        <span className="inline-block h-2 w-2 rounded-full bg-brand-500 animate-ping" />
+                      ) : (
+                        <span className="rounded bg-brand-100 dark:bg-brand-900/60 px-1 py-0.2 text-[10px] text-brand-700 dark:text-brand-300 font-normal">
+                          已保留
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-1">
                       {!aiStreaming && !aiThinking && (
