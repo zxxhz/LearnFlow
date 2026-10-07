@@ -234,3 +234,7 @@ metadata:
   - **空版本与未发布跳过**：若中间某版本未发布或日志为空，自动智能跳过，杜绝多余空内容或占位符；
   - **弹窗 Markdown 排版**：`UpdateDialog.tsx` 通过 `MarkdownLite` 渲染富文本更新日志，并设最大高度内嵌滚动条，同时顶部显示生效的加速源徽章与「⚡ 极速下载安装包」直链；
 - 版本号三处同步 bump 至 `0.4.25`。
+- **2026-10-08 紧急修复 Tauri v2 Updater 端点协议强约束致桌面闪退（v0.4.26 已发布）**：
+  - **根本原因**：Tauri v2 的 `tauri-plugin-updater` 在反序列化配置时，对所有 `endpoints` 强制校验必须采用 `https://` 协议，遇 `http://` 直接触发 Rust 致命 Panic，由于 Release 采用无控制台 GUI 子系统，表现为毫秒级闪退无任何报错；
+  - **修复措施**：剔除 `desktop/src-tauri/tauri.conf.json` 中配置的本地 `http://` 端点，恢复合规的 GitHub Releases 与 HTTPS 国内加速镜像，极速更新下载仍由 UpdateDialog 「⚡ 极速下载安装包」直接走后端智能优选链路；
+  - **版本更新**：版本号三处同步 bump 至 `0.4.26`，完成全量打包、签名与 GitHub Release 发布。
