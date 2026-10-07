@@ -10,24 +10,34 @@ export function isTauri(): boolean {
 let lastOpenUrl = "";
 let lastOpenTime = 0;
 
-/** 打开外部链接：在 Tauri 桌面壳内委托后端通过系统默认浏览器打开；在普通浏览器中直接 window.open */
-export async function openExternalUrl(url: string): Promise<void> {
+/** 打开外部链接：优先委托后端在操作系统默认浏览器中打开；若失败则兜底使用 window.open */
+export async function openExternalUrl(url: string): Promise<boolean> {
   const now = Date.now();
   if (url === lastOpenUrl && now - lastOpenTime < 1000) {
-    return;
+    return true;
   }
   lastOpenUrl = url;
   lastOpenTime = now;
 
-  if (isTauri()) {
+  let opened = false;
+  try {
+    const res = await api.system.openUrl(url);
+    if (res && res.ok) {
+      opened = true;
+    }
+  } catch (err) {
+    console.warn("api.system.openUrl failed:", err);
+  }
+
+  if (!opened) {
     try {
-      await api.system.openUrl(url);
-      return;
-    } catch {
-      /* 兜底 */
+      window.open(url, "_blank", "noopener,noreferrer");
+      opened = true;
+    } catch (err) {
+      console.warn("window.open failed:", err);
     }
   }
-  window.open(url, "_blank", "noopener,noreferrer");
+  return opened;
 }
 
 export async function tauriSelfUpdate(

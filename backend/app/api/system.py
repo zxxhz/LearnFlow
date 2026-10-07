@@ -80,6 +80,11 @@ async def remove_backup(name: str):
     return {"ok": True}
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 class OpenUrlIn(BaseModel):
     url: str
 
@@ -90,11 +95,21 @@ async def open_url(payload: OpenUrlIn):
     url = payload.url.strip()
     if not (url.startswith("http://") or url.startswith("https://")):
         raise HTTPException(status_code=400, detail="仅允许打开 http/https 链接")
+    import subprocess
+    import sys
     import webbrowser
 
+    # Windows 下优先使用 cmd.exe /c start，能确保唤起默认浏览器并激活前台下载
+    if sys.platform == "win32":
+        try:
+            subprocess.Popen(["cmd.exe", "/c", "start", "", url], shell=False)
+            return {"ok": True}
+        except Exception as e:
+            logger.warning("cmd start 打开链接失败: %s", e)
+
     try:
-        webbrowser.open(url)
-        return {"ok": True}
+        ok = webbrowser.open(url)
+        return {"ok": bool(ok)}
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"打开浏览器失败：{e}") from e
 

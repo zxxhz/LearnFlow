@@ -88,15 +88,16 @@ export default function UpdateDialog({
                 href={update.accelerated_url}
                 target="_blank"
                 rel="noreferrer"
-                onClick={(e) => {
+                onClick={async (e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  openExternalUrl(update.accelerated_url!);
+                  await openExternalUrl(update.accelerated_url!);
+                  notify("已唤起浏览器下载", "正在通过加速镜像下载安装包，请查看您的浏览器下载列表。");
                 }}
                 className="rounded-md bg-blue-600 dark:bg-blue-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 dark:hover:bg-blue-800"
-                title="使用当前最优镜像通道下载完整安装包"
+                title="通过当前最快国内镜像在浏览器中下载完整安装包"
               >
-                ⚡ 极速下载安装包
+                ⚡ 浏览器极速下载
               </a>
             )}
             {update.url && (
@@ -118,9 +119,16 @@ export default function UpdateDialog({
               稍后
             </Button>
           </div>
-          <p className="mt-3 text-[10px] text-gray-400 dark:text-gray-500">
-            一键更新会通过智能测速加速源下载安装包并静默安装重启；亦可直接点击极速下载。
-          </p>
+          <div className="mt-3.5 rounded-lg bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-700/60 p-2.5 text-[11px] text-gray-500 dark:text-gray-400 space-y-1">
+            <div className="flex items-start gap-1.5">
+              <span className="font-semibold text-gray-700 dark:text-gray-300">⬇ 一键更新：</span>
+              <span>软件内自动静默下载、安装并重启，全程无需手动操作。</span>
+            </div>
+            <div className="flex items-start gap-1.5">
+              <span className="font-semibold text-gray-700 dark:text-gray-300">⚡ 浏览器极速下载：</span>
+              <span>调用系统默认浏览器经国内最优镜像下载 <code>.exe</code> 安装包，用于手动覆盖安装（网络受阻时的备用方案）。</span>
+            </div>
+          </div>
         </>
       )}
     </Modal>

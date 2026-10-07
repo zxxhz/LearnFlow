@@ -186,7 +186,13 @@ def set_mirror_selection(mode: str, selected_id: str) -> dict[str, Any]:
     if mode not in ("auto", "manual"):
         mode = "auto"
     _cache["mode"] = mode
-    _cache["selected_id"] = selected_id if mode == "manual" else "auto"
+    if mode == "manual":
+        # 若未指定具体镜像 ID 或误传了 auto，则以当前最快源或官方源作为初始锁定项
+        if not selected_id or selected_id == "auto":
+            selected_id = _cache.get("fastest_id") or "official"
+        _cache["selected_id"] = selected_id
+    else:
+        _cache["selected_id"] = "auto"
     return get_mirrors_status()
 
 

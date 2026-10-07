@@ -36,9 +36,14 @@ export default function DownloadMirrorsSection() {
   });
 
   const handleModeChange = (mode: "auto" | "manual") => {
+    const manualId =
+      status?.selected_id && status.selected_id !== "auto"
+        ? status.selected_id
+        : status?.fastest_id || "official";
+
     selectMutation.mutate({
       mode,
-      selected_id: mode === "manual" ? status?.selected_id || status?.fastest_id || "official" : "auto",
+      selected_id: mode === "manual" ? manualId : "auto",
     });
   };
 
@@ -59,7 +64,7 @@ export default function DownloadMirrorsSection() {
     );
   }
 
-  const isAuto = status?.mode === "auto" || status?.selected_id === "auto";
+  const isAuto = (status?.mode ?? "auto") === "auto";
   const activeId = status?.active_mirror?.id;
 
   return (
@@ -70,8 +75,8 @@ export default function DownloadMirrorsSection() {
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
               下载源测速与智能路由
             </h2>
-            <Badge color="blue" className="text-[11px]">
-              {isAuto ? "自动择优中" : "手动锁定"}
+            <Badge color={isAuto ? "blue" : "amber"} className="text-[11px]">
+              {isAuto ? "🤖 自动择优中" : "✋ 手动锁定中"}
             </Badge>
           </div>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -137,14 +142,12 @@ export default function DownloadMirrorsSection() {
           return (
             <div
               key={item.id}
-              onClick={() => {
-                if (!isAuto) handleSelectMirror(item);
-              }}
-              className={`relative flex flex-col justify-between rounded-lg border p-3 transition-all ${
+              onClick={() => handleSelectMirror(item)}
+              className={`relative flex flex-col justify-between rounded-lg border p-3 transition-all cursor-pointer ${
                 isActive
                   ? "border-brand-500 bg-brand-50/40 dark:bg-brand-950/20 shadow-xs"
                   : "border-gray-200 dark:border-gray-700/80 bg-gray-50/60 dark:bg-gray-800/40 hover:border-gray-300 dark:hover:border-gray-600"
-              } ${!isAuto ? "cursor-pointer" : ""}`}
+              }`}
             >
               <div>
                 <div className="flex items-center justify-between">
@@ -162,7 +165,7 @@ export default function DownloadMirrorsSection() {
                     )}
                     {isActive && (
                       <span className="rounded bg-brand-100 dark:bg-brand-900/50 px-1.5 py-0.5 text-[10px] font-medium text-brand-700 dark:text-brand-300">
-                        使用中
+                        {isAuto ? "使用中" : "已锁定"}
                       </span>
                     )}
                   </div>
@@ -197,22 +200,20 @@ export default function DownloadMirrorsSection() {
                   )}
                 </span>
 
-                {!isAuto && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSelectMirror(item);
-                    }}
-                    className={`rounded px-2 py-0.5 text-[10px] font-medium ${
-                      isActive
-                        ? "bg-brand-600 text-white"
-                        : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600"
-                    }`}
-                  >
-                    {isActive ? "已选用" : "设为当前"}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSelectMirror(item);
+                  }}
+                  className={`rounded px-2 py-0.5 text-[10px] font-medium transition-colors ${
+                    isActive
+                      ? "bg-brand-600 text-white"
+                      : "bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-brand-100 dark:hover:bg-brand-900/60 hover:text-brand-700 dark:hover:text-brand-300"
+                  }`}
+                >
+                  {isActive ? (isAuto ? "当前生效" : "已锁定") : "锁定此源"}
+                </button>
               </div>
             </div>
           );
