@@ -7,6 +7,8 @@ import DataSafetySection from "./DataSafetySection";
 import { Button, Input, Select, Spinner } from "../../components/ui";
 import { HL_COLOR_KEYS, HL_DEFAULTS, HL_LABELS } from "../reader/colors";
 import RuntimeEnvSection from "./RuntimeEnvSection";
+import DownloadMirrorsSection from "./DownloadMirrorsSection";
+import { FontSizeControl } from "../../components/FontSizeControl";
 
 
 const PROVIDER_PRESETS: { label: string; base_url: string; model: string }[] = [
@@ -80,7 +82,23 @@ export default function SettingsPage() {
   });
 
   const savePrefs = useMutation({
-    mutationFn: () => api.settings.update({ preferences: prefs }),
+    mutationFn: () => {
+      if (prefs.course_font_size) {
+        try {
+          localStorage.setItem("learnflow-course-font-size", String(prefs.course_font_size));
+        } catch {
+          // ignore
+        }
+      }
+      if (prefs.drill_font_size) {
+        try {
+          localStorage.setItem("learnflow-drill-font-size", String(prefs.drill_font_size));
+        } catch {
+          // ignore
+        }
+      }
+      return api.settings.update({ preferences: prefs });
+    },
     onSuccess: () => {
       setSaveMsg("已保存");
       queryClient.invalidateQueries({ queryKey: ["settings"] });
@@ -420,6 +438,77 @@ export default function SettingsPage() {
             </div>
           </div>
         </div>
+
+        {/* 字号调节设置（课程阅读与题库刷题独立控制） */}
+        <div className="mt-4 border-t border-gray-100 dark:border-gray-800 pt-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                课程阅读字号
+              </label>
+              <div className="flex items-center gap-2">
+                <FontSizeControl
+                  value={prefs.course_font_size ?? 16}
+                  onChange={(val) => {
+                    const current = prefs.course_font_size ?? 16;
+                    const next = typeof val === "function" ? val(current) : val;
+                    setPrefs({ ...prefs, course_font_size: next });
+                  }}
+                  defaultValue={16}
+                  label="课程"
+                />
+                <span className="text-xs text-gray-400 dark:text-gray-500">默认 16px</span>
+              </div>
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                影响课程阅读页面正文、数学公式、大纲标题与代码块大小。
+              </p>
+              {/* 课程微缩预览 */}
+              <div
+                className="mt-2 rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-850 p-2.5 transition-all text-gray-800 dark:text-gray-200"
+                style={{ fontSize: `${prefs.course_font_size ?? 16}px` }}
+              >
+                <div className="font-semibold text-[1.15em] mb-1">预览：章节段落与公式</div>
+                <div className="leading-relaxed">
+                  欧拉公式 <span className="font-serif italic font-bold">e^{"\\pi i"} + 1 = 0</span> 与微积分定理。
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                题库刷题字号
+              </label>
+              <div className="flex items-center gap-2">
+                <FontSizeControl
+                  value={prefs.drill_font_size ?? 15}
+                  onChange={(val) => {
+                    const current = prefs.drill_font_size ?? 15;
+                    const next = typeof val === "function" ? val(current) : val;
+                    setPrefs({ ...prefs, drill_font_size: next });
+                  }}
+                  defaultValue={15}
+                  label="刷题"
+                />
+                <span className="text-xs text-gray-400 dark:text-gray-500">默认 15px</span>
+              </div>
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                影响题库练习与错题小结中的题干、选项、答案与 AI 深度解析。
+              </p>
+              {/* 刷题微缩预览 */}
+              <div
+                className="mt-2 rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-850 p-2.5 transition-all text-gray-800 dark:text-gray-200"
+                style={{ fontSize: `${prefs.drill_font_size ?? 15}px` }}
+              >
+                <div className="font-medium text-[1.05em] mb-1">第 1 题：求解函数极限与导数。</div>
+                <div className="flex items-center gap-2 text-[0.95em] text-gray-600 dark:text-gray-400">
+                  <span className="rounded bg-brand-600 text-white px-1.5 py-0.5 text-[0.8em] font-bold">A</span>
+                  <span>极限存在且为 1</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <Button className="mt-4" disabled={savePrefs.isPending} onClick={() => savePrefs.mutate()}>
 
           保存偏好
@@ -431,6 +520,9 @@ export default function SettingsPage() {
 
       {/* 数据与安全：备份 / 恢复 / 局域网访问令牌 */}
       <DataSafetySection />
+
+      {/* 下载源测速与智能路由 */}
+      <DownloadMirrorsSection />
 
       {/* 数据 */}
       <section className="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6">

@@ -27,6 +27,7 @@ import type {
   RuntimeComponentName,
   RuntimeStatus,
   UpdateCheckResult,
+  MirrorsStatus,
   BackupItem,
   AccessInfo,
   Quiz,
@@ -129,6 +130,12 @@ export const api = {
     openDataDir: () =>
       request<{ ok: boolean }>("/settings/open-data-dir", { method: "POST" }),
     ollamaModels: () => request<{ models: string[] }>("/settings/llm/ollama/models"),
+    mirrors: {
+      getStatus: () => request<MirrorsStatus>("/settings/mirrors"),
+      speedTest: () => request<MirrorsStatus>("/settings/mirrors/test", { method: "POST" }),
+      select: (body: { mode: "auto" | "manual"; selected_id: string }) =>
+        request<MirrorsStatus>("/settings/mirrors/select", { method: "POST", ...jsonBody(body) }),
+    },
   },
   math: {
     render: (body: { expressions: string; x_min?: number; x_max?: number }) =>

@@ -434,7 +434,10 @@ def _candidate_urls(kind: Component) -> list[str]:
     if kind == "cpp":
         url = (f"https://github.com/niXman/mingw-builds-binaries/releases/"
                f"download/{MINGW_TAG}/{MINGW_ASSET}")
-        return [m + url for m in _GITHUB_MIRRORS]
+        from app.services.download_mirrors import get_ordered_mirror_prefixes
+
+        prefixes = get_ordered_mirror_prefixes()
+        return [m + url for m in prefixes]
     return [
         f"https://www.python.org/ftp/python/{PYTHON_VERSION}/{PYTHON_ASSET}",
         f"https://mirrors.huaweicloud.com/python/{PYTHON_VERSION}/{PYTHON_ASSET}",

@@ -38,18 +38,44 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
   border-radius: 4px;
 }
 
-/* ===== 阅读器排版 ===== */
-.doc-content { @apply text-[15px] leading-7 text-gray-800 dark:text-gray-200; }
-.doc-content h1 { @apply mt-2 mb-5 text-3xl font-bold text-gray-900 dark:text-gray-100; }
-.doc-content h2 { @apply mt-8 mb-4 border-b border-gray-100 dark:border-gray-800 pb-1 text-2xl font-semibold text-gray-900 dark:text-gray-100; }
-.doc-content h3 { @apply mt-6 mb-3 text-xl font-semibold text-gray-900 dark:text-gray-100; }
-.doc-content h4 { @apply mt-4 mb-2 text-lg font-semibold text-gray-800 dark:text-gray-200; }
+/* ===== 阅读器排版（字号由 --course-font-size 驱动，公式、标题、代码相对等比缩放） ===== */
+.reader-content-root {
+  font-size: var(--course-font-size, 16px);
+}
+.doc-content {
+  font-size: var(--course-font-size, 16px);
+  line-height: 1.75;
+  @apply text-gray-800 dark:text-gray-200;
+}
+.doc-content h1 {
+  font-size: 1.85em;
+  line-height: 1.3;
+  @apply mt-2 mb-5 font-bold text-gray-900 dark:text-gray-100;
+}
+.doc-content h2 {
+  font-size: 1.5em;
+  line-height: 1.35;
+  @apply mt-8 mb-4 border-b border-gray-100 dark:border-gray-800 pb-1 font-semibold text-gray-900 dark:text-gray-100;
+}
+.doc-content h3 {
+  font-size: 1.25em;
+  line-height: 1.4;
+  @apply mt-6 mb-3 font-semibold text-gray-900 dark:text-gray-100;
+}
+.doc-content h4 {
+  font-size: 1.1em;
+  line-height: 1.45;
+  @apply mt-4 mb-2 font-semibold text-gray-800 dark:text-gray-200;
+}
 .doc-content p { @apply my-3; }
 .doc-content ul { @apply my-3 list-disc pl-6; }
 .doc-content ol { @apply my-3 list-decimal pl-6; }
 .doc-content li { @apply my-1; }
 .doc-content blockquote { @apply my-4 border-l-4 border-brand-200 dark:border-brand-700 bg-brand-50 dark:bg-brand-900/50 px-4 py-1 text-gray-600 dark:text-gray-400; }
-.doc-content table { @apply my-4 w-full border-collapse text-sm; }
+.doc-content table {
+  font-size: 0.9em;
+  @apply my-4 w-full border-collapse;
+}
 .doc-content th, .doc-content td { @apply border border-gray-200 dark:border-gray-700 px-3 py-1.5 text-left; }
 .doc-content th { @apply bg-gray-50 dark:bg-gray-800/50 font-medium; }
 .doc-content hr { @apply my-6 border-gray-100 dark:border-gray-800; }
@@ -58,9 +84,11 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
 /* KaTeX 深色下保持正文色（默认继承即可，这里显式声明防止外部样式覆盖） */
 .dark .doc-content .katex { color: #e5e7eb; }
 
-/* 代码块容器 */
+/* 代码块容器（根据字号相对等比缩放） */
 .code-block pre {
-  @apply overflow-x-auto rounded-lg bg-[#f6f8fa] p-4 text-[13px] leading-6;
+  font-size: 0.85em;
+  line-height: 1.6;
+  @apply overflow-x-auto rounded-lg bg-[#f6f8fa] p-4;
 }
 .dark .code-block pre { background-color: #0d1117; }
 .code-block pre code { @apply bg-transparent p-0; }
@@ -82,7 +110,9 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
 /* Jupyter 式可编辑代码块：高亮层在下、透明输入层叠在上，两层排版必须逐像素一致 */
 .code-cell pre,
 .code-cell textarea {
-  @apply m-0 border-0 p-4 font-mono text-[13px] leading-6;
+  font-size: 0.85em;
+  line-height: 1.6;
+  @apply m-0 border-0 p-4 font-mono;
   white-space: pre-wrap;
   word-break: break-word;
   tab-size: 4;
@@ -97,6 +127,51 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
 }
 .dark .code-cell textarea { caret-color: #e5e7eb; }
 .code-cell textarea::selection { background-color: rgba(99, 102, 241, 0.22); }
+
+/* ===== 题库刷题排版与字号缩放 ===== */
+.drill-content-root {
+  font-size: var(--drill-font-size, 15px);
+}
+.drill-content-root .drill-question-title {
+  font-size: 1.05em;
+  line-height: 1.6;
+}
+.drill-content-root .drill-option-btn {
+  font-size: 0.95em;
+  line-height: 1.5;
+}
+.drill-content-root .drill-option-badge {
+  font-size: 0.8em;
+  width: 1.5em;
+  height: 1.5em;
+}
+.drill-content-root .drill-result-banner {
+  font-size: 0.95em;
+  line-height: 1.5;
+}
+.drill-content-root .drill-explanation-text {
+  font-size: 0.88em;
+  line-height: 1.6;
+}
+.drill-content-root .drill-ai-box {
+  font-size: 0.9em;
+  line-height: 1.65;
+}
+.drill-content-root .drill-ai-content {
+  font-size: 1em;
+  line-height: 1.7;
+}
+.drill-content-root .drill-ai-content p,
+.drill-content-root .drill-ai-content li {
+  font-size: 1em;
+  line-height: 1.7;
+}
+.drill-content-root .katex-display {
+  @apply my-3 overflow-x-auto py-1;
+}
+.dark .drill-content-root .katex {
+  color: #e5e7eb;
+}
 
 /* 对话消息里的轻量 markdown */
 .msg-md p { @apply my-1.5; }

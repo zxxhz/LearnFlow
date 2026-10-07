@@ -124,6 +124,8 @@ export interface Preferences {
   highlight_colors: Partial<Record<AnnotationColor, string>>;
   auto_highlight?: boolean;
   adhd_mode?: AdhdMode;
+  course_font_size?: number;
+  drill_font_size?: number;
 }
 
 
@@ -342,9 +344,35 @@ export interface UpdateCheckResult {
   current: string;
   latest?: string;
   url?: string;
+  accelerated_url?: string;
+  active_mirror?: string;
   notes?: string;
   repo?: string;
   error?: string;
+}
+
+export interface DownloadMirrorItem {
+  id: string;
+  name: string;
+  prefix: string;
+  desc: string;
+  ok: boolean | null;
+  latency_ms: number | null;
+  error: string | null;
+}
+
+export interface MirrorsStatus {
+  tested_at: number;
+  mode: "auto" | "manual";
+  selected_id: string;
+  fastest_id: string;
+  active_mirror: {
+    id: string;
+    name: string;
+    prefix: string;
+    desc: string;
+  };
+  results: DownloadMirrorItem[];
 }
 
 // ===== 运行环境（代码沙箱工具链检测与便携安装） =====

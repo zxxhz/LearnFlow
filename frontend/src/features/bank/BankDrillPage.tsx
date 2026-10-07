@@ -7,6 +7,8 @@ import MarkdownIt from "markdown-it";
 import renderMathInElement from "katex/contrib/auto-render";
 import { api } from "../../lib/api";
 import { Badge, Button, ErrorText, Select, Spinner } from "../../components/ui";
+import { FontSizeControl } from "../../components/FontSizeControl";
+import { useFontSize } from "../../lib/fontSize";
 import BankQuestionCard, { visibleOptions } from "./BankQuestionCard";
 import BankPromptModal from "./BankPromptModal";
 import type { BankAttemptResult, BankQuestion, BankRound } from "../../lib/types";
@@ -56,6 +58,7 @@ export default function BankDrillPage() {
   const { bankId } = useParams();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { fontSize: drillFontSize, setFontSize: setDrillFontSize } = useFontSize("drill");
 
   const { data: banks, isLoading, error: loadError } = useQuery({
     queryKey: ["banks"],
@@ -166,9 +169,17 @@ export default function BankDrillPage() {
   if (round && idx >= questions.length && questions.length > 0) {
     return (
       <div className="mx-auto max-w-5xl p-8">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-          {round.mode === "wrong" ? "📕 错题重刷 · 小结" : "🎯 随机练习 · 小结"}
-        </h1>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+            {round.mode === "wrong" ? "📕 错题重刷 · 小结" : "🎯 随机练习 · 小结"}
+          </h1>
+          <FontSizeControl
+            value={drillFontSize}
+            onChange={setDrillFontSize}
+            defaultValue={15}
+            label="字号"
+          />
+        </div>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           本轮 {questions.length} 题，答对 <span className="font-bold text-green-600 dark:text-green-400">{roundCorrect}</span> 题，
           答错 <span className="font-bold text-red-600 dark:text-red-400">{roundWrong.length}</span> 题。
@@ -176,7 +187,10 @@ export default function BankDrillPage() {
         </p>
 
         {roundWrong.length > 0 && (
-          <div className="mt-4 space-y-3">
+          <div
+            className="mt-4 space-y-3 drill-content-root"
+            style={{ "--drill-font-size": `${drillFontSize}px` } as React.CSSProperties}
+          >
             <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">本轮错题</h2>
             {roundWrong.map((q) => (
               <WrongQuestionItem
@@ -215,34 +229,45 @@ export default function BankDrillPage() {
   if (round && current) {
     return (
       <div className="mx-auto max-w-5xl p-8">
-      <div className="mb-3 flex items-center gap-2">
-        <Button
-          variant="secondary"
-          onClick={() => navigate("/bank")}
-          title="返回题库列表，本轮进度已保留，下次进入可继续"
-        >
-          ← 退出本轮
-        </Button>
-        <h1 className="min-w-0 flex-1 truncate text-base font-bold text-gray-900 dark:text-gray-100">
-          {round.mode === "wrong" ? "📕 错题重刷" : "🎯 随机练习"} · {bank.name}
-        </h1>
-        <span className="shrink-0 text-xs text-gray-400 dark:text-gray-500">
-          {idx + 1} / {questions.length}
-        </span>
-      </div>
+        <div className="mb-3 flex items-center gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => navigate("/bank")}
+            title="返回题库列表，本轮进度已保留，下次进入可继续"
+          >
+            ← 退出本轮
+          </Button>
+          <h1 className="min-w-0 flex-1 truncate text-base font-bold text-gray-900 dark:text-gray-100">
+            {round.mode === "wrong" ? "📕 错题重刷" : "🎯 随机练习"} · {bank.name}
+          </h1>
+          <FontSizeControl
+            value={drillFontSize}
+            onChange={setDrillFontSize}
+            defaultValue={15}
+            label="字号"
+          />
+          <span className="shrink-0 text-xs text-gray-400 dark:text-gray-500">
+            {idx + 1} / {questions.length}
+          </span>
+        </div>
         <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
           <div
             className="h-full rounded-full bg-brand-500 transition-all"
             style={{ width: `${((idx + (results[current.id] ? 1 : 0)) / questions.length) * 100}%` }}
           />
         </div>
-        <BankQuestionCard
-          key={current.id}
-          question={current}
-          initialAiExplain={aiExplains[current.id] || current.ai_explanation}
-          onAiExplained={(text) => handleAiExplained(current.id, text)}
-          onAnswered={(r) => onAnswered(current.id, r)}
-        />
+        <div
+          className="drill-content-root"
+          style={{ "--drill-font-size": `${drillFontSize}px` } as React.CSSProperties}
+        >
+          <BankQuestionCard
+            key={current.id}
+            question={current}
+            initialAiExplain={aiExplains[current.id] || current.ai_explanation}
+            onAiExplained={(text) => handleAiExplained(current.id, text)}
+            onAnswered={(r) => onAnswered(current.id, r)}
+          />
+        </div>
         <div className="mt-4 flex justify-end">
           {idx < questions.length - 1 ? (
             <Button disabled={!results[current.id]} onClick={() => setIdx(idx + 1)}>
@@ -266,18 +291,26 @@ export default function BankDrillPage() {
         <Link to="/bank" className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300">
           ← 题库列表
         </Link>
-        <button
-          type="button"
-          onClick={() => setPromptOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 py-1 text-xs text-gray-700 dark:text-gray-300 hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-400 transition"
-          title="自定义此题库的 AI 错题解答提示词与润色"
-        >
-          <span>⚙️</span>
-          <span>AI 提示词设置</span>
-          {bank.ai_prompt?.trim() && (
-            <span className="h-1.5 w-1.5 rounded-full bg-brand-500" title="已自定义" />
-          )}
-        </button>
+        <div className="flex items-center gap-2">
+          <FontSizeControl
+            value={drillFontSize}
+            onChange={setDrillFontSize}
+            defaultValue={15}
+            label="刷题字号"
+          />
+          <button
+            type="button"
+            onClick={() => setPromptOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 py-1 text-xs text-gray-700 dark:text-gray-300 hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-400 transition"
+            title="自定义此题库的 AI 错题解答提示词与润色"
+          >
+            <span>⚙️</span>
+            <span>AI 提示词设置</span>
+            {bank.ai_prompt?.trim() && (
+              <span className="h-1.5 w-1.5 rounded-full bg-brand-500" title="已自定义" />
+            )}
+          </button>
+        </div>
       </div>
       <h1 className="mt-1 text-2xl font-bold text-gray-900 dark:text-gray-100">🎯 {bank.name}</h1>
       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">来源：{bank.source_file}</p>
@@ -396,6 +429,22 @@ function WrongQuestionItem({
   const aiStreamRef = useRef<HTMLDivElement>(null);
   const opts = visibleOptions(question);
 
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // 错题卡片题干与选项公式渲染
+  useEffect(() => {
+    if (cardRef.current) {
+      try {
+        renderMathInElement(cardRef.current, {
+          delimiters: KATEX_DELIMITERS,
+          throwOnError: false,
+        });
+      } catch (err) {
+        console.warn("KaTeX render error on wrong item card:", err);
+      }
+    }
+  }, [question.id, question.title, question.options]);
+
   useEffect(() => {
     if (aiStreamRef.current && aiText) {
       try {
@@ -455,7 +504,7 @@ function WrongQuestionItem({
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+    <div ref={cardRef} className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
       <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
         <Badge color={question.qtype === "multi" ? "amber" : question.qtype === "judge" ? "blue" : "gray"}>
           {TYPE_LABEL[question.qtype] ?? question.qtype}
@@ -463,28 +512,28 @@ function WrongQuestionItem({
         {question.difficulty && <span>难度：{question.difficulty}</span>}
         <span className="ml-auto">第 {question.seq} 题</span>
       </div>
-      <p className="mt-2 text-sm leading-relaxed text-gray-900 dark:text-gray-100 font-medium">
+      <p className="drill-question-title mt-2 leading-relaxed text-gray-900 dark:text-gray-100 font-medium">
         {question.title}
       </p>
 
       {/* 选项 */}
-      <div className="mt-2.5 space-y-1">
+      <div className="mt-2.5 space-y-1.5">
         {opts.map((opt) => {
           const isUserPicked = userPicked.includes(opt.letter);
           const isCorrect = correctPicked.includes(opt.letter);
           return (
             <div
               key={opt.letter}
-              className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs ${
+              className={`drill-option-btn flex items-center gap-2.5 rounded-lg border px-3 py-1.5 ${
                 isCorrect
                   ? "border-green-400 dark:border-green-600 bg-green-50/70 dark:bg-green-950/30 text-green-800 dark:text-green-300 font-medium"
                   : isUserPicked
-                  ? "border-red-400 dark:border-red-600 bg-red-50/70 dark:bg-red-950/30 text-red-800 dark:text-red-300"
+                  ? "border-red-400 dark:border-red-600 bg-red-50/70 dark:bg-red-950/30 text-red-800 dark:text-red-300 font-medium"
                   : "border-gray-200 dark:border-gray-700 bg-gray-50/40 dark:bg-gray-800/30 text-gray-600 dark:text-gray-400"
               }`}
             >
               <span
-                className={`flex h-4 w-4 shrink-0 items-center justify-center text-[10px] font-bold rounded ${
+                className={`drill-option-badge flex shrink-0 items-center justify-center font-bold rounded ${
                   isCorrect
                     ? "bg-green-600 text-white"
                     : isUserPicked
@@ -501,12 +550,12 @@ function WrongQuestionItem({
       </div>
 
       {result && (
-        <div className="mt-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 p-2.5 text-xs">
-          <div className="text-red-700 dark:text-red-400 font-medium">
+        <div className="drill-result-banner mt-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 p-2.5">
+          <div className="text-red-700 dark:text-red-400 font-semibold">
             ✗ 你的作答：{result.answer || "未选"} · 正确答案：{result.correct_answer}
           </div>
           {result.explanation && (
-            <p className="mt-1 whitespace-pre-wrap leading-relaxed text-gray-600 dark:text-gray-400">
+            <p className="drill-explanation-text mt-1 whitespace-pre-wrap leading-relaxed text-gray-600 dark:text-gray-400">
               {result.explanation}
             </p>
           )}
@@ -530,7 +579,7 @@ function WrongQuestionItem({
                 </Button>
               </div>
             ) : (
-              <div className="rounded-lg border border-brand-200 dark:border-brand-800 bg-brand-50/50 dark:bg-brand-950/20 p-3 text-xs shadow-sm">
+              <div className="drill-ai-box rounded-lg border border-brand-200 dark:border-brand-800 bg-brand-50/50 dark:bg-brand-950/20 p-3 shadow-sm">
                 <div className="flex items-center justify-between pb-2 border-b border-brand-100 dark:border-brand-900/60">
                   <div className="flex items-center gap-1.5 font-semibold text-brand-800 dark:text-brand-300">
                     <span>🤖 AI 助教错题剖析</span>
@@ -579,7 +628,7 @@ function WrongQuestionItem({
                   <div className="mt-2 text-gray-800 dark:text-gray-200 leading-relaxed overflow-x-auto">
                     <div
                       ref={aiStreamRef}
-                      className="prose prose-sm dark:prose-invert max-w-none text-xs leading-relaxed"
+                      className="drill-ai-content prose prose-sm dark:prose-invert max-w-none leading-relaxed"
                       dangerouslySetInnerHTML={{ __html: md.render(aiText) }}
                     />
                     {aiStreaming && (

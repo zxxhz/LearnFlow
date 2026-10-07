@@ -46,6 +46,22 @@ export default function BankQuestionCard({
   const [error, setError] = useState("");
   const opts = visibleOptions(question);
 
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // 题目题干与选项公式渲染（当切换题目时自动识别渲染）
+  useEffect(() => {
+    if (cardRef.current) {
+      try {
+        renderMathInElement(cardRef.current, {
+          delimiters: KATEX_DELIMITERS,
+          throwOnError: false,
+        });
+      } catch (err) {
+        console.warn("KaTeX card render error:", err);
+      }
+    }
+  }, [question.id, question.title, question.options]);
+
   // AI 错题解答流式状态（优先复用已生成的解析）
   const existingAi = initialAiExplain || question.ai_explanation || "";
   const [aiOpen, setAiOpen] = useState(false);
@@ -130,7 +146,7 @@ export default function BankQuestionCard({
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 transition-all">
+    <div ref={cardRef} className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 transition-all">
       <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
         <Badge color={multi ? "amber" : question.qtype === "judge" ? "blue" : "gray"}>
           {TYPE_LABEL[question.qtype] ?? question.qtype}
@@ -138,7 +154,7 @@ export default function BankQuestionCard({
         {question.difficulty && <span>难度：{question.difficulty}</span>}
         <span className="ml-auto">第 {question.seq} 题</span>
       </div>
-      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-gray-900 dark:text-gray-100">
+      <p className="drill-question-title mt-2 whitespace-pre-wrap font-medium leading-relaxed text-gray-900 dark:text-gray-100">
         {question.title}
       </p>
 
@@ -150,16 +166,16 @@ export default function BankQuestionCard({
               key={opt.letter}
               disabled={!!result || pending}
               onClick={() => toggle(opt.letter)}
-              className={`flex w-full items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-sm transition ${
+              className={`drill-option-btn flex w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left transition ${
                 result && result.answer.includes(opt.letter)
-                  ? "border-green-400 dark:border-green-600 bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-300"
+                  ? "border-green-400 dark:border-green-600 bg-green-50 dark:bg-green-900/30 text-green-800 dark:text-green-300 font-medium"
                   : isPicked
-                    ? "border-brand-500 bg-brand-50 dark:bg-brand-900/30 text-brand-800 dark:text-brand-300"
+                    ? "border-brand-500 bg-brand-50 dark:bg-brand-900/30 text-brand-800 dark:text-brand-300 font-medium"
                     : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 hover:border-gray-300 dark:hover:border-gray-600"
               }`}
             >
               <span
-                className={`flex h-5 w-5 shrink-0 items-center justify-center text-[11px] font-bold ${
+                className={`drill-option-badge flex shrink-0 items-center justify-center font-bold ${
                   multi ? "rounded" : "rounded-full"
                 } ${
                   isPicked
@@ -169,19 +185,19 @@ export default function BankQuestionCard({
               >
                 {opt.letter}
               </span>
-              {opt.text}
+              <span className="flex-1">{opt.text}</span>
             </button>
           );
         })}
       </div>
 
       {result ? (
-        <div className="mt-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 p-3 text-sm">
-          <div className={result.passed ? "text-green-700 dark:text-green-400 font-medium" : "text-red-700 dark:text-red-400 font-medium"}>
+        <div className="drill-result-banner mt-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 p-3">
+          <div className={result.passed ? "text-green-700 dark:text-green-400 font-semibold" : "text-red-700 dark:text-red-400 font-semibold"}>
             {result.passed ? "✓ 回答正确" : `✗ 回答错误 · 正确答案：${result.correct_answer}`}
           </div>
           {result.explanation && (
-            <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed text-gray-600 dark:text-gray-400">
+            <p className="drill-explanation-text mt-1.5 whitespace-pre-wrap leading-relaxed text-gray-600 dark:text-gray-400">
               {result.explanation}
             </p>
           )}
@@ -206,7 +222,7 @@ export default function BankQuestionCard({
                   </Button>
                 </div>
               ) : (
-                <div className="rounded-lg border border-brand-200 dark:border-brand-800 bg-brand-50/50 dark:bg-brand-950/20 p-3 text-xs shadow-sm">
+                <div className="drill-ai-box rounded-lg border border-brand-200 dark:border-brand-800 bg-brand-50/50 dark:bg-brand-950/20 p-3 shadow-sm">
                   <div className="flex items-center justify-between pb-2 border-b border-brand-100 dark:border-brand-900/60">
                     <div className="flex items-center gap-1.5 font-semibold text-brand-800 dark:text-brand-300">
                       <span>🤖 AI 助教错题剖析</span>
@@ -255,7 +271,7 @@ export default function BankQuestionCard({
                     <div className="mt-2 text-gray-800 dark:text-gray-200 leading-relaxed overflow-x-auto">
                       <div
                         ref={aiStreamRef}
-                        className="prose prose-sm dark:prose-invert max-w-none text-xs leading-relaxed"
+                        className="drill-ai-content prose prose-sm dark:prose-invert max-w-none leading-relaxed"
                         dangerouslySetInnerHTML={{ __html: md.render(aiText) }}
                       />
                       {aiStreaming && (

@@ -5,7 +5,8 @@ import subprocess
 import sys
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
@@ -36,6 +37,8 @@ DEFAULT_PREFS = {
         "pink": "#fbcfe8",
     },
     "adhd_mode": "off",
+    "course_font_size": 16,
+    "drill_font_size": 15,
 }
 
 
@@ -161,3 +164,59 @@ async def ollama_models():
     except Exception:  # noqa: BLE001
         raise HTTPException(status_code=404, detail="未检测到本机 Ollama（http://localhost:11434）。请确认已安装并运行 `ollama serve`。") from None
     return {"models": models}
+
+
+class MirrorSelectBody(BaseModel):
+    mode: str = "auto"
+    selected_id: str = "auto"
+
+
+@router.get("/settings/mirrors")
+async def get_mirrors():
+    """获取当前所有下载源信息及测速状态。"""
+    from app.services.download_mirrors import get_mirrors_status
+
+    return get_mirrors_status()
+
+
+@router.post("/settings/mirrors/test")
+async def test_mirrors():
+    """并发对所有下载源（GitHub 官方与各大镜像）进行测速并自动选出最快源。"""
+    from app.services.download_mirrors import run_speed_test
+
+    return await run_speed_test()
+
+
+@router.post("/settings/mirrors/select")
+async def select_mirror(body: MirrorSelectBody):
+    """设置下载源选择模式与指定源（auto 自动最快或 manual 手动指定）。"""
+    from app.services.download_mirrors import set_mirror_selection
+
+    return set_mirror_selection(body.mode, body.selected_id)
+
+
+@router.get("/update/fast-latest.json")
+async def fast_latest_json():
+    """返回动态注入了最快下载源直链的 latest.json，供 Tauri Updater 极速下载。"""
+    import httpx
+    from fastapi.responses import JSONResponse, RedirectResponse
+
+    from app.core.config import settings as app_settings
+    from app.services.download_mirrors import apply_mirror
+
+    repo = (app_settings.github_repo or "zxxhz/LearnFlow").strip("/")
+    url = f"https://github.com/{repo}/releases/latest/download/latest.json"
+    headers = {"User-Agent": "LearnFlow-Updater/1.0"}
+    try:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            platforms = data.get("platforms", {})
+            for plat_info in platforms.values():
+                if isinstance(plat_info, dict) and "url" in plat_info:
+                    plat_info["url"] = apply_mirror(plat_info["url"])
+            return JSONResponse(content=data)
+    except Exception as e:
+        logger.warning("获取 fast-latest.json 失败: %s", e)
+        return RedirectResponse(url)

@@ -37,6 +37,10 @@ class Preferences(BaseModel):
     auto_highlight: bool = True
     # ADHD 阅读辅助模式：off | a | b
     adhd_mode: Literal["off", "a", "b"] = "off"
+    # 课程阅读器字号（px，默认 16，范围 12-28）
+    course_font_size: int = 16
+    # 题库刷题页字号（px，默认 15，范围 12-28）
+    drill_font_size: int = 15
 
     @field_validator("highlight_colors", mode="before")
     @classmethod

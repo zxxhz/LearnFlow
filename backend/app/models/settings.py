@@ -13,6 +13,8 @@ DEFAULT_PREFERENCES = {
     "exercises_per_kp": 3,
     "highlight_colors": DEFAULT_HL_COLORS,
     "adhd_mode": "off",
+    "course_font_size": 16,
+    "drill_font_size": 15,
 }
 
 

@@ -17,6 +17,8 @@ import ExerciseDrawer from "./ExerciseDrawer";
 import { hlColorVars, useHlColors } from "./colors";
 import { useTheme } from "../../lib/theme";
 import { useAdhdMode } from "./adhd";
+import { useFontSize } from "../../lib/fontSize";
+import { FontSizeControl } from "../../components/FontSizeControl";
 
 export default function ReaderPage() {
   const { documentId } = useParams<{ documentId: string }>();
@@ -26,6 +28,7 @@ export default function ReaderPage() {
   const hlColors = useHlColors();
   const { theme, toggle: toggleTheme } = useTheme();
   const { adhdMode, setAdhdMode } = useAdhdMode();
+  const { fontSize: courseFontSize, setFontSize: setCourseFontSize } = useFontSize("course");
 
 
   const contentQuery = useQuery({
@@ -628,6 +631,13 @@ export default function ReaderPage() {
                 {adhdMode === "off" ? "关" : adhdMode === "a" ? "A" : "B"}
               </span>
             </button>
+            {/* 字号调节组件 */}
+            <FontSizeControl
+              value={courseFontSize}
+              onChange={setCourseFontSize}
+              defaultValue={16}
+              label="字号"
+            />
             {doc.source === "imported" ? (
               <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs text-blue-700">
                 导入文档 · 原文保留
@@ -657,7 +667,14 @@ export default function ReaderPage() {
         )}
 
         {/* 文档块 */}
-        <div ref={contentRef} className="pb-24" style={hlColorVars(hlColors)}>
+        <div
+          ref={contentRef}
+          className="pb-24 reader-content-root"
+          style={{
+            ...hlColorVars(hlColors),
+            "--course-font-size": `${courseFontSize}px`,
+          } as React.CSSProperties}
+        >
           {parsed.map((b, i) => {
             const sid = sectionIdOf(i);
             return (
