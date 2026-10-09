@@ -67,3 +67,56 @@ export async function relaunchApp(): Promise<void> {
   const { relaunch } = await import("@tauri-apps/plugin-process");
   await relaunch();
 }
+
+export interface MirrorUpdateProgress {
+  phase: "starting" | "downloading" | "ready" | "installing";
+  percent: number | null;
+  speed_mb?: number;
+  message?: string;
+}
+
+/**
+ * 软件内走国内/自定义镜像源加速极速下载并自动静默安装重启
+ */
+export async function inAppMirrorUpdate(
+  version: string,
+  acceleratedUrl: string | undefined,
+  onProgress: (p: MirrorUpdateProgress) => void
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    api.update.inAppInstallSSE(
+      version,
+      acceleratedUrl,
+      (ev) => {
+        if (ev.type === "start") {
+          onProgress({ phase: "starting", percent: 0, message: ev.message });
+        } else if (ev.type === "progress") {
+          onProgress({
+            phase: "downloading",
+            percent: ev.percent ?? null,
+            speed_mb: ev.speed_mb,
+          });
+        } else if (ev.type === "ready") {
+          onProgress({ phase: "ready", percent: 100, message: ev.message });
+        } else if (ev.type === "installing") {
+          onProgress({ phase: "installing", percent: 100, message: ev.message });
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+        } else if (ev.type === "error") {
+          if (!settled) {
+            settled = true;
+            reject(new Error(ev.detail || "下载安装更新失败"));
+          }
+        }
+      }
+    ).catch((err) => {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
+  });
+}

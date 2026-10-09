@@ -41,7 +41,7 @@ import type {
   LearnerProfile,
   LearnerProfileUpdate,
 } from "./types";
-import { streamSSE } from "./sse";
+import { streamSSE, subscribeSSE } from "./sse";
 
 const BASE = "/api";
 
@@ -155,6 +155,24 @@ export const api = {
       request<UpdateCheckResult>(`/update/check${force ? "?force=1" : ""}`, {
         method: "POST",
       }),
+    inAppInstallSSE: (
+      version: string,
+      url: string | undefined,
+      onEvent: (payload: {
+        type: "start" | "progress" | "retry" | "ready" | "installing" | "error";
+        downloaded?: number;
+        total?: number;
+        percent?: number;
+        speed_mb?: number;
+        message?: string;
+        detail?: string;
+      }) => void,
+      signal?: AbortSignal
+    ) => {
+      const params = new URLSearchParams({ target_version: version });
+      if (url) params.set("url", url);
+      return subscribeSSE(`/update/in-app-install?${params.toString()}`, onEvent, signal);
+    },
   },
   runtime: {
     status: () => request<RuntimeStatus>("/runtime/status"),

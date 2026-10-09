@@ -227,3 +227,139 @@ async def check_update(db: AsyncSession, force: bool = False) -> dict:
 
     _cache.update(checked_at=now, result=result)
     return result
+
+
+def _trigger_silent_installer(installer_path: "Path") -> None:
+    """在后台独立进程中启动 NSIS 静默安装，等待安装完成后重新拉起客户端并清理自身。"""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    # 优先查找当前运行环境所属的 LearnFlow.exe
+    learnflow_exe = ""
+    cur = Path(sys.executable).resolve()
+    for parent in [cur.parent, cur.parent.parent, cur.parent.parent.parent]:
+        candidate = parent / "LearnFlow.exe"
+        if candidate.exists():
+            learnflow_exe = str(candidate)
+            break
+    if not learnflow_exe:
+        appdata = os.environ.get("LOCALAPPDATA", "")
+        if appdata:
+            candidate = Path(appdata) / "Programs" / "LearnFlow" / "LearnFlow.exe"
+            if candidate.exists():
+                learnflow_exe = str(candidate)
+
+    bat_path = installer_path.parent / "silent_install.bat"
+    launch_line = f'start "" "{learnflow_exe}"' if learnflow_exe else ""
+    bat_content = f"""@echo off
+timeout /t 1 /nobreak >nul
+start /wait "" "{installer_path}" /S
+timeout /t 1 /nobreak >nul
+{launch_line}
+del "%~f0"
+"""
+    try:
+        bat_path.write_text(bat_content, encoding="gbk")
+    except Exception:
+        bat_path.write_text(bat_content, encoding="utf-8")
+
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    subprocess.Popen(
+        ["cmd.exe", "/c", str(bat_path)],
+        creationflags=creationflags,
+        close_fds=True,
+    )
+    logger.info("已触发后台静默安装脚本: %s", bat_path)
+
+
+async def stream_download_and_install(target_version: str, direct_url: str | None = None):
+    """通过加速镜像源流式下载最新安装包，向前端实时推送进度，并在完成后以静默模式触发安装。"""
+    import json
+    import tempfile
+    from pathlib import Path
+
+    repo = _effective_repo() or "zxxhz/LearnFlow"
+    clean_v = target_version.lstrip("vV")
+    raw_github_exe = f"https://github.com/{repo}/releases/download/v{clean_v}/LearnFlow_{clean_v}_x64-setup.exe"
+
+    # 确定候选下载 URL 列表（首选用已加速链接或当前最优镜像，随后按测速优先级排序）
+    urls_to_try: list[str] = []
+    if direct_url and direct_url.strip():
+        urls_to_try.append(direct_url.strip())
+
+    active_accelerated = apply_mirror(raw_github_exe)
+    if active_accelerated not in urls_to_try:
+        urls_to_try.append(active_accelerated)
+
+    for prefix in get_ordered_mirror_prefixes():
+        p_url = f"{prefix}{raw_github_exe}" if prefix else raw_github_exe
+        if p_url not in urls_to_try:
+            urls_to_try.append(p_url)
+
+    temp_dir = Path(tempfile.gettempdir()) / "LearnFlow_Update"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    installer_path = temp_dir / f"LearnFlow_{clean_v}_x64-setup.exe"
+
+    headers = {"User-Agent": "LearnFlow-InAppUpdater/1.0"}
+    success = False
+    last_error = ""
+
+    for url in urls_to_try:
+        try:
+            logger.info("尝试从下载源拉取安装包: %s", url)
+            yield f"data: {json.dumps({'type': 'start', 'url': url, 'message': '正在建立加速通道…'}, ensure_ascii=False)}\n\n"
+
+            async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
+                async with client.stream("GET", url, headers=headers) as resp:
+                    if resp.status_code != 200:
+                        raise RuntimeError(f"HTTP {resp.status_code}")
+
+                    total = int(resp.headers.get("content-length", 0))
+                    downloaded = 0
+                    t_last = time.time()
+                    bytes_last = 0
+                    speed_mb = 0.0
+
+                    with open(installer_path, "wb") as f:
+                        async for chunk in resp.aiter_bytes(chunk_size=128 * 1024):
+                            if not chunk:
+                                continue
+                            f.write(chunk)
+                            downloaded += len(chunk)
+
+                            now = time.time()
+                            if now - t_last >= 0.25:
+                                dt = now - t_last
+                                speed_mb = round(((downloaded - bytes_last) / dt) / (1024 * 1024), 2)
+                                t_last = now
+                                bytes_last = downloaded
+                                pct = round((downloaded / total) * 100) if total > 0 else None
+                                yield f"data: {json.dumps({'type': 'progress', 'downloaded': downloaded, 'total': total, 'percent': pct, 'speed_mb': speed_mb}, ensure_ascii=False)}\n\n"
+
+            if installer_path.exists() and installer_path.stat().st_size > 10 * 1024 * 1024:
+                success = True
+                break
+            else:
+                last_error = "下载文件不完整，正在切换备用节点重试…"
+                logger.warning(last_error)
+        except Exception as e:
+            last_error = str(e)
+            logger.warning("下载源 %s 失败: %s，正在切换下一个加速源…", url, e)
+            yield f"data: {json.dumps({'type': 'retry', 'message': '当前线路响应较慢，正在切换下一个加速源…'}, ensure_ascii=False)}\n\n"
+
+    if not success:
+        yield f"data: {json.dumps({'type': 'error', 'detail': f'安装包下载失败：{last_error}'}, ensure_ascii=False)}\n\n"
+        return
+
+    # 下载成功：推送准备安装事件
+    yield f"data: {json.dumps({'type': 'ready', 'percent': 100, 'message': '下载完成，正在静默安装并自动重启应用…'}, ensure_ascii=False)}\n\n"
+
+    # 触发静默安装
+    try:
+        _trigger_silent_installer(installer_path)
+        yield f"data: {json.dumps({'type': 'installing', 'message': '安装程序已接管，即将重启应用'}, ensure_ascii=False)}\n\n"
+    except Exception as e:
+        logger.exception("启动静默安装程序异常: %s", e)
+        yield f"data: {json.dumps({'type': 'error', 'detail': f'启动安装程序失败：{e}'}, ensure_ascii=False)}\n\n"

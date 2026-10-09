@@ -1,31 +1,53 @@
 // 更新弹窗：启动自动检查 / 设置页手动检查发现新版本时弹出（PRD 实现备注 19）
 import { useState } from "react";
 import type { UpdateCheckResult } from "../lib/types";
-import { Button, Modal, Spinner } from "./ui";
-import { isTauri, tauriSelfUpdate, relaunchApp, openExternalUrl } from "../lib/updater";
+import { Button, Modal } from "./ui";
+import { isTauri, inAppMirrorUpdate, tauriSelfUpdate, relaunchApp, openExternalUrl } from "../lib/updater";
 import { notify } from "../lib/notify";
 import MarkdownLite from "./MarkdownLite";
 
-// 应用内自动更新：桌面壳内下载新安装包（带进度）→ 静默安装 → 自动重启；
-// 浏览器/局域网模式不渲染（isTauri 为 false），保留「查看发布页」链接
-function AutoUpdateButton() {
+// 应用内自动更新：优先通过国内/自定义镜像源极速下载安装包并静默安装重启；
+// 浏览器/局域网模式不渲染（isTauri 为 false），保留「查看发布页」与「浏览器极速下载」
+function AutoUpdateButton({ update }: { update: UpdateCheckResult }) {
   const [phase, setPhase] = useState<"idle" | "downloading" | "installing">("idle");
   const [pct, setPct] = useState<number | null>(null);
+  const [speed, setSpeed] = useState<number | null>(null);
 
   if (!isTauri()) return null;
 
   const run = async () => {
     setPhase("downloading");
     setPct(null);
+    setSpeed(null);
+
     try {
-      await tauriSelfUpdate((done, total) => {
-        setPct(total ? Math.min(100, Math.round((done / total) * 100)) : null);
-      });
+      // 1. 优先使用国内/自定义最优加速镜像源进行极速下载与静默安装
+      await inAppMirrorUpdate(
+        update.latest || "",
+        update.accelerated_url,
+        (p) => {
+          if (p.phase === "downloading") {
+            setPct(p.percent);
+            setSpeed(p.speed_mb ?? null);
+          } else if (p.phase === "ready" || p.phase === "installing") {
+            setPhase("installing");
+          }
+        }
+      );
       setPhase("installing");
-      await relaunchApp();
-    } catch {
-      setPhase("idle");
-      notify("更新失败", "自动更新出错，请到发布页手动下载安装包。");
+    } catch (mirrorErr) {
+      console.warn("镜像一键更新失败，尝试回退到官方 updater 直连通道:", mirrorErr);
+      // 2. 备用回退机制：若镜像源出现网络异常，尝试回退到 Tauri 原生直连通道
+      try {
+        await tauriSelfUpdate((done, total) => {
+          setPct(total ? Math.min(100, Math.round((done / total) * 100)) : null);
+        });
+        setPhase("installing");
+        await relaunchApp();
+      } catch (officialErr) {
+        setPhase("idle");
+        notify("自动更新未完成", "请尝试点击右侧「⚡ 浏览器极速下载」或到发布页手动下载。");
+      }
     }
   };
 
@@ -33,11 +55,20 @@ function AutoUpdateButton() {
     <button
       disabled={phase !== "idle"}
       onClick={run}
-      className="rounded-md bg-green-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-800 disabled:opacity-70"
+      className="rounded-md bg-green-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-green-800 disabled:opacity-70 flex items-center gap-1.5 transition"
+      title="通过当前最快国内镜像源在软件内极速更新并自动重启"
     >
-      {phase === "idle" && "⬇ 一键更新"}
-      {phase === "downloading" && (pct !== null ? `下载中 ${pct}%` : "下载中…")}
-      {phase === "installing" && "安装中，即将重启…"}
+      {phase === "idle" && "⬇ 一键更新 (极速)"}
+      {phase === "downloading" && (
+        <>
+          <span className="inline-block h-2 w-2 rounded-full bg-white animate-pulse" />
+          <span>
+            {pct !== null ? `下载中 ${pct}%` : "建立连接中…"}
+            {speed !== null && speed > 0 ? ` (${speed} MB/s)` : ""}
+          </span>
+        </>
+      )}
+      {phase === "installing" && "正在安装，即将自动重启…"}
     </button>
   );
 }
@@ -82,7 +113,7 @@ export default function UpdateDialog({
           ) : null}
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <AutoUpdateButton />
+            <AutoUpdateButton update={update} />
             {update.accelerated_url && (
               <a
                 href={update.accelerated_url}

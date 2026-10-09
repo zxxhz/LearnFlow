@@ -259,3 +259,20 @@ async def fast_latest_json():
     except Exception as e:
         logger.warning("获取 fast-latest.json 失败: %s", e)
         return RedirectResponse(url)
+
+
+@router.get("/update/in-app-install")
+async def in_app_install(target_version: str, url: str | None = None):
+    """通过加速镜像源在软件内流式下载最新安装包并自动静默重启安装。"""
+    from fastapi.responses import StreamingResponse
+    from app.services.update import stream_download_and_install
+
+    return StreamingResponse(
+        stream_download_and_install(target_version, url),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
