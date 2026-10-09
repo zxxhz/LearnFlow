@@ -356,6 +356,7 @@ export interface DownloadMirrorItem {
   name: string;
   prefix: string;
   desc: string;
+  is_custom?: boolean;
   ok: boolean | null;
   latency_ms: number | null;
   error: string | null;

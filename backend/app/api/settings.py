@@ -171,6 +171,12 @@ class MirrorSelectBody(BaseModel):
     selected_id: str = "auto"
 
 
+class CustomMirrorCreateBody(BaseModel):
+    name: str
+    prefix: str
+    desc: str = ""
+
+
 @router.get("/settings/mirrors")
 async def get_mirrors():
     """获取当前所有下载源信息及测速状态。"""
@@ -193,6 +199,28 @@ async def select_mirror(body: MirrorSelectBody):
     from app.services.download_mirrors import set_mirror_selection
 
     return set_mirror_selection(body.mode, body.selected_id)
+
+
+@router.post("/settings/mirrors/custom")
+async def create_custom_mirror(body: CustomMirrorCreateBody):
+    """添加用户自定义镜像源。"""
+    from app.services.download_mirrors import add_custom_mirror
+
+    try:
+        return add_custom_mirror(body.name, body.prefix, body.desc)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.delete("/settings/mirrors/custom/{mirror_id}")
+async def delete_custom_mirror(mirror_id: str):
+    """删除指定的自定义镜像源。"""
+    from app.services.download_mirrors import remove_custom_mirror
+
+    try:
+        return remove_custom_mirror(mirror_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @router.get("/update/fast-latest.json")

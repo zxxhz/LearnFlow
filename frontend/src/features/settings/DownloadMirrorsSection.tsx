@@ -1,13 +1,20 @@
-// 下载源测速与智能路由配置卡片：为应用更新与环境下载测速择优
+// 下载源测速与智能路由配置卡片：为应用更新与环境下载测速择优，支持添加与管理自定义镜像源
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
-import { Badge, Button, Spinner } from "../../components/ui";
+import { Badge, Button, ErrorText, Input, Modal, Spinner } from "../../components/ui";
 import type { DownloadMirrorItem } from "../../lib/types";
 
 export default function DownloadMirrorsSection() {
   const queryClient = useQueryClient();
   const [testingMsg, setTestingMsg] = useState("");
+
+  // 添加自定义镜像源弹窗表单状态
+  const [isAddOpen, setIsAddOpen] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [customPrefix, setCustomPrefix] = useState("");
+  const [customDesc, setCustomDesc] = useState("");
+  const [addError, setAddError] = useState("");
 
   const { data: status, isLoading } = useQuery({
     queryKey: ["settings-mirrors"],
@@ -35,6 +42,36 @@ export default function DownloadMirrorsSection() {
     },
   });
 
+  const addCustomMutation = useMutation({
+    mutationFn: api.settings.mirrors.addCustom,
+    onSuccess: (data) => {
+      queryClient.setQueryData(["settings-mirrors"], data);
+      setIsAddOpen(false);
+      setCustomName("");
+      setCustomPrefix("");
+      setCustomDesc("");
+      setAddError("");
+      setTestingMsg("已成功添加自定义镜像源！");
+      setTimeout(() => setTestingMsg(""), 3500);
+    },
+    onError: (err) => {
+      setAddError((err as Error).message);
+    },
+  });
+
+  const deleteCustomMutation = useMutation({
+    mutationFn: api.settings.mirrors.deleteCustom,
+    onSuccess: (data) => {
+      queryClient.setQueryData(["settings-mirrors"], data);
+      setTestingMsg("已移除该自定义镜像源。");
+      setTimeout(() => setTestingMsg(""), 3500);
+    },
+    onError: (err) => {
+      setTestingMsg(`删除失败: ${(err as Error).message}`);
+      setTimeout(() => setTestingMsg(""), 3500);
+    },
+  });
+
   const handleModeChange = (mode: "auto" | "manual") => {
     const manualId =
       status?.selected_id && status.selected_id !== "auto"
@@ -52,6 +89,41 @@ export default function DownloadMirrorsSection() {
       mode: "manual",
       selected_id: item.id,
     });
+  };
+
+  const handleAddSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setAddError("");
+    const name = customName.trim();
+    let prefix = customPrefix.trim();
+    if (!name) {
+      setAddError("请输入镜像源名称");
+      return;
+    }
+    if (!prefix) {
+      setAddError("请输入镜像加速前缀 URL");
+      return;
+    }
+    if (!prefix.startsWith("http://") && !prefix.startsWith("https://")) {
+      setAddError("镜像地址必须以 http:// 或 https:// 开头");
+      return;
+    }
+    if (!prefix.endsWith("/")) {
+      prefix += "/";
+    }
+
+    addCustomMutation.mutate({
+      name,
+      prefix,
+      desc: customDesc.trim() || undefined,
+    });
+  };
+
+  const handleDeleteCustom = (e: React.MouseEvent, item: DownloadMirrorItem) => {
+    e.stopPropagation();
+    if (window.confirm(`确定要删除自定义镜像「${item.name}」吗？`)) {
+      deleteCustomMutation.mutate(item.id);
+    }
   };
 
   if (isLoading) {
@@ -80,11 +152,22 @@ export default function DownloadMirrorsSection() {
             </Badge>
           </div>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            用于应用更新安装包、MinGW 编译器及 Python 便携运行时的极速下载。支持并发测速并自动切换至最优源。
+            用于应用更新安装包、MinGW 编译器及 Python 便携运行时的极速下载。支持并发测速、添加私有加速源并自动切换至最优源。
           </p>
         </div>
 
         <div className="flex items-center gap-2.5">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setAddError("");
+              setIsAddOpen(true);
+            }}
+            className="text-xs"
+          >
+            ➕ 添加自定义源
+          </Button>
+
           <Button
             variant="secondary"
             disabled={testMutation.isPending}
@@ -138,6 +221,7 @@ export default function DownloadMirrorsSection() {
         {status?.results?.map((item) => {
           const isActive = item.id === activeId;
           const isFastest = item.id === status?.fastest_id && item.ok;
+          const isCustom = Boolean(item.is_custom);
 
           return (
             <div
@@ -153,6 +237,11 @@ export default function DownloadMirrorsSection() {
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
                     {item.name}
+                    {isCustom && (
+                      <span className="rounded bg-purple-100 dark:bg-purple-900/50 px-1 py-0.2 text-[10px] font-normal text-purple-700 dark:text-purple-300">
+                        自定义
+                      </span>
+                    )}
                     {isActive && (
                       <span className="h-2 w-2 rounded-full bg-brand-600 dark:bg-brand-400 animate-pulse" />
                     )}
@@ -168,11 +257,26 @@ export default function DownloadMirrorsSection() {
                         {isAuto ? "使用中" : "已锁定"}
                       </span>
                     )}
+                    {isCustom && (
+                      <button
+                        type="button"
+                        onClick={(e) => handleDeleteCustom(e, item)}
+                        className="ml-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-0.5 transition"
+                        title="删除此自定义镜像源"
+                      >
+                        🗑️
+                      </button>
+                    )}
                   </div>
                 </div>
                 <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400 line-clamp-1">
                   {item.desc}
                 </p>
+                {item.prefix && (
+                  <p className="mt-0.5 font-mono text-[10px] text-gray-400 dark:text-gray-500 truncate" title={item.prefix}>
+                    {item.prefix}
+                  </p>
+                )}
               </div>
 
               <div className="mt-3 flex items-center justify-between text-[11px] border-t border-gray-100 dark:border-gray-700/50 pt-2">
@@ -219,6 +323,80 @@ export default function DownloadMirrorsSection() {
           );
         })}
       </div>
+
+      {/* 添加自定义镜像源弹窗 */}
+      <Modal
+        open={isAddOpen}
+        onClose={() => setIsAddOpen(false)}
+        title="添加自定义下载镜像源"
+      >
+        <form onSubmit={handleAddSubmit} className="space-y-4">
+          <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+            支持添加个人搭建的 GitHub 加速节点或国内自建反向代理（如 Cloudflare Workers、Nginx 反代等）。
+          </p>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+              镜像名称 <span className="text-red-500">*</span>
+            </label>
+            <Input
+              type="text"
+              placeholder="例如：我的香港加速节点、FastGH"
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              required
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+              加速前缀 URL <span className="text-red-500">*</span>
+            </label>
+            <Input
+              type="text"
+              placeholder="例如：https://ghproxy.net/ 或 https://hub.fastgit.xyz/"
+              value={customPrefix}
+              onChange={(e) => setCustomPrefix(e.target.value)}
+              required
+            />
+            <p className="mt-1 text-[11px] text-gray-400 dark:text-gray-500">
+              前缀将拼接在 GitHub 原始下载链接前（如 <code>前缀 + https://github.com/...</code>）。
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+              描述说明（可选）
+            </label>
+            <Input
+              type="text"
+              placeholder="例如：个人自建节点，低延迟高带宽"
+              value={customDesc}
+              onChange={(e) => setCustomDesc(e.target.value)}
+            />
+          </div>
+
+          {addError && <ErrorText>{addError}</ErrorText>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="secondary"
+              type="button"
+              onClick={() => setIsAddOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={addCustomMutation.isPending}
+            >
+              {addCustomMutation.isPending ? <Spinner className="h-3.5 w-3.5" /> : null}
+              确认添加
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </section>
   );
 }

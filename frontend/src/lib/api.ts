@@ -137,6 +137,10 @@ export const api = {
       speedTest: () => request<MirrorsStatus>("/settings/mirrors/test", { method: "POST" }),
       select: (body: { mode: "auto" | "manual"; selected_id: string }) =>
         request<MirrorsStatus>("/settings/mirrors/select", { method: "POST", ...jsonBody(body) }),
+      addCustom: (body: { name: string; prefix: string; desc?: string }) =>
+        request<MirrorsStatus>("/settings/mirrors/custom", { method: "POST", ...jsonBody(body) }),
+      deleteCustom: (id: string) =>
+        request<MirrorsStatus>(`/settings/mirrors/custom/${encodeURIComponent(id)}`, { method: "DELETE" }),
     },
   },
   math: {
