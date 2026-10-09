@@ -179,6 +179,47 @@ def remove_custom_mirror(mirror_id: str) -> dict[str, Any]:
     return get_mirrors_status()
 
 
+def update_custom_mirror(mirror_id: str, name: str, prefix: str, desc: str = "") -> dict[str, Any]:
+    """修改指定的自定义镜像源。"""
+    name = (name or "").strip()
+    prefix = (prefix or "").strip()
+    if not name:
+        raise ValueError("镜像名称不能为空")
+    if not (prefix.startswith("http://") or prefix.startswith("https://")):
+        raise ValueError("镜像地址前缀必须以 http:// 或 https:// 开头")
+    if not prefix.endswith("/"):
+        prefix += "/"
+
+    customs = load_custom_mirrors()
+    target = None
+    for c in customs:
+        if c.get("id") == mirror_id:
+            target = c
+        elif c.get("prefix") == prefix:
+            raise ValueError(f"已存在相同前缀的自定义镜像「{c.get('name')}」")
+
+    if not target:
+        raise ValueError("未找到指定的自定义镜像源")
+
+    target["name"] = name
+    target["prefix"] = prefix
+    if desc is not None:
+        target["desc"] = desc.strip() or "用户自定义 GitHub 加速镜像源"
+
+    save_custom_mirrors(customs)
+
+    # 同步更新缓存中已存在的对应镜像项
+    if _cache.get("results"):
+        for r in _cache["results"]:
+            if r.get("id") == mirror_id:
+                r["name"] = name
+                r["prefix"] = prefix
+                r["desc"] = target["desc"]
+                break
+
+    return get_mirrors_status()
+
+
 async def _probe_mirror(client: httpx.AsyncClient, item: dict[str, Any], test_target: str) -> dict[str, Any]:
     prefix = item["prefix"]
     url = f"{prefix}{test_target}" if prefix else test_target

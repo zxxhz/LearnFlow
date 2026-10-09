@@ -212,6 +212,17 @@ async def create_custom_mirror(body: CustomMirrorCreateBody):
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
+@router.put("/settings/mirrors/custom/{mirror_id}")
+async def update_custom_mirror_api(mirror_id: str, body: CustomMirrorCreateBody):
+    """修改指定的自定义镜像源。"""
+    from app.services.download_mirrors import update_custom_mirror
+
+    try:
+        return update_custom_mirror(mirror_id, body.name, body.prefix, body.desc)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 @router.delete("/settings/mirrors/custom/{mirror_id}")
 async def delete_custom_mirror(mirror_id: str):
     """删除指定的自定义镜像源。"""

@@ -9,12 +9,13 @@ export default function DownloadMirrorsSection() {
   const queryClient = useQueryClient();
   const [testingMsg, setTestingMsg] = useState("");
 
-  // 添加自定义镜像源弹窗表单状态
-  const [isAddOpen, setIsAddOpen] = useState(false);
+  // 添加/修改自定义镜像源弹窗表单状态
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingMirror, setEditingMirror] = useState<DownloadMirrorItem | null>(null);
   const [customName, setCustomName] = useState("");
   const [customPrefix, setCustomPrefix] = useState("");
   const [customDesc, setCustomDesc] = useState("");
-  const [addError, setAddError] = useState("");
+  const [formError, setFormError] = useState("");
 
   const { data: status, isLoading } = useQuery({
     queryKey: ["settings-mirrors"],
@@ -46,16 +47,35 @@ export default function DownloadMirrorsSection() {
     mutationFn: api.settings.mirrors.addCustom,
     onSuccess: (data) => {
       queryClient.setQueryData(["settings-mirrors"], data);
-      setIsAddOpen(false);
+      setIsModalOpen(false);
       setCustomName("");
       setCustomPrefix("");
       setCustomDesc("");
-      setAddError("");
+      setFormError("");
       setTestingMsg("已成功添加自定义镜像源！");
       setTimeout(() => setTestingMsg(""), 3500);
     },
     onError: (err) => {
-      setAddError((err as Error).message);
+      setFormError((err as Error).message);
+    },
+  });
+
+  const updateCustomMutation = useMutation({
+    mutationFn: ({ id, body }: { id: string; body: { name: string; prefix: string; desc?: string } }) =>
+      api.settings.mirrors.updateCustom(id, body),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["settings-mirrors"], data);
+      setIsModalOpen(false);
+      setEditingMirror(null);
+      setCustomName("");
+      setCustomPrefix("");
+      setCustomDesc("");
+      setFormError("");
+      setTestingMsg("已成功更新自定义镜像源！");
+      setTimeout(() => setTestingMsg(""), 3500);
+    },
+    onError: (err) => {
+      setFormError((err as Error).message);
     },
   });
 
@@ -91,32 +111,62 @@ export default function DownloadMirrorsSection() {
     });
   };
 
-  const handleAddSubmit = (e: React.FormEvent) => {
+  const handleOpenAdd = () => {
+    setEditingMirror(null);
+    setCustomName("");
+    setCustomPrefix("");
+    setCustomDesc("");
+    setFormError("");
+    setIsModalOpen(true);
+  };
+
+  const handleOpenEdit = (e: React.MouseEvent, item: DownloadMirrorItem) => {
+    e.stopPropagation();
+    setEditingMirror(item);
+    setCustomName(item.name);
+    setCustomPrefix(item.prefix);
+    setCustomDesc(item.desc || "");
+    setFormError("");
+    setIsModalOpen(true);
+  };
+
+  const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setAddError("");
+    setFormError("");
     const name = customName.trim();
     let prefix = customPrefix.trim();
     if (!name) {
-      setAddError("请输入镜像源名称");
+      setFormError("请输入镜像源名称");
       return;
     }
     if (!prefix) {
-      setAddError("请输入镜像加速前缀 URL");
+      setFormError("请输入镜像加速前缀 URL");
       return;
     }
     if (!prefix.startsWith("http://") && !prefix.startsWith("https://")) {
-      setAddError("镜像地址必须以 http:// 或 https:// 开头");
+      setFormError("镜像地址必须以 http:// 或 https:// 开头");
       return;
     }
     if (!prefix.endsWith("/")) {
       prefix += "/";
     }
 
-    addCustomMutation.mutate({
-      name,
-      prefix,
-      desc: customDesc.trim() || undefined,
-    });
+    if (editingMirror) {
+      updateCustomMutation.mutate({
+        id: editingMirror.id,
+        body: {
+          name,
+          prefix,
+          desc: customDesc.trim() || undefined,
+        },
+      });
+    } else {
+      addCustomMutation.mutate({
+        name,
+        prefix,
+        desc: customDesc.trim() || undefined,
+      });
+    }
   };
 
   const handleDeleteCustom = (e: React.MouseEvent, item: DownloadMirrorItem) => {
@@ -159,10 +209,7 @@ export default function DownloadMirrorsSection() {
         <div className="flex items-center gap-2.5">
           <Button
             variant="secondary"
-            onClick={() => {
-              setAddError("");
-              setIsAddOpen(true);
-            }}
+            onClick={handleOpenAdd}
             className="text-xs"
           >
             ➕ 添加自定义源
@@ -258,14 +305,24 @@ export default function DownloadMirrorsSection() {
                       </span>
                     )}
                     {isCustom && (
-                      <button
-                        type="button"
-                        onClick={(e) => handleDeleteCustom(e, item)}
-                        className="ml-1 text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-0.5 transition"
-                        title="删除此自定义镜像源"
-                      >
-                        🗑️
-                      </button>
+                      <div className="flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={(e) => handleOpenEdit(e, item)}
+                          className="ml-1 text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 p-0.5 transition"
+                          title="修改此自定义镜像源"
+                        >
+                          ✏️
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteCustom(e, item)}
+                          className="text-gray-400 hover:text-red-600 dark:hover:text-red-400 p-0.5 transition"
+                          title="删除此自定义镜像源"
+                        >
+                          🗑️
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -324,15 +381,15 @@ export default function DownloadMirrorsSection() {
         })}
       </div>
 
-      {/* 添加自定义镜像源弹窗 */}
+      {/* 添加/修改自定义镜像源弹窗 */}
       <Modal
-        open={isAddOpen}
-        onClose={() => setIsAddOpen(false)}
-        title="添加自定义下载镜像源"
+        open={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={editingMirror ? "修改自定义镜像源" : "添加自定义下载镜像源"}
       >
-        <form onSubmit={handleAddSubmit} className="space-y-4">
+        <form onSubmit={handleFormSubmit} className="space-y-4">
           <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-            支持添加个人搭建的 GitHub 加速节点或国内自建反向代理（如 Cloudflare Workers、Nginx 反代等）。
+            支持添加或修改个人搭建的 GitHub 加速节点或国内自建反向代理（如 Cloudflare Workers、Nginx 反代等）。
           </p>
 
           <div>
@@ -376,23 +433,25 @@ export default function DownloadMirrorsSection() {
             />
           </div>
 
-          {addError && <ErrorText>{addError}</ErrorText>}
+          {formError && <ErrorText>{formError}</ErrorText>}
 
           <div className="flex justify-end gap-2 pt-2">
             <Button
               variant="secondary"
               type="button"
-              onClick={() => setIsAddOpen(false)}
+              onClick={() => setIsModalOpen(false)}
             >
               取消
             </Button>
             <Button
               variant="primary"
               type="submit"
-              disabled={addCustomMutation.isPending}
+              disabled={addCustomMutation.isPending || updateCustomMutation.isPending}
             >
-              {addCustomMutation.isPending ? <Spinner className="h-3.5 w-3.5" /> : null}
-              确认添加
+              {addCustomMutation.isPending || updateCustomMutation.isPending ? (
+                <Spinner className="h-3.5 w-3.5" />
+              ) : null}
+              {editingMirror ? "保存修改" : "确认添加"}
             </Button>
           </div>
         </form>

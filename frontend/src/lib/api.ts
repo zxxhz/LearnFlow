@@ -139,6 +139,8 @@ export const api = {
         request<MirrorsStatus>("/settings/mirrors/select", { method: "POST", ...jsonBody(body) }),
       addCustom: (body: { name: string; prefix: string; desc?: string }) =>
         request<MirrorsStatus>("/settings/mirrors/custom", { method: "POST", ...jsonBody(body) }),
+      updateCustom: (id: string, body: { name: string; prefix: string; desc?: string }) =>
+        request<MirrorsStatus>(`/settings/mirrors/custom/${encodeURIComponent(id)}`, { method: "PUT", ...jsonBody(body) }),
       deleteCustom: (id: string) =>
         request<MirrorsStatus>(`/settings/mirrors/custom/${encodeURIComponent(id)}`, { method: "DELETE" }),
     },
