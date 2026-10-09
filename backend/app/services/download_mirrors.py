@@ -56,16 +56,51 @@ MIRROR_PRESETS: list[dict[str, Any]] = [
     },
 ]
 
+DEFAULT_TEST_REPO = "zxxhz/LearnFlow"
+
+
+def _selection_path() -> Path:
+    return app_settings.data_dir / "mirror_selection.json"
+
+
+def load_mirror_selection() -> dict[str, str]:
+    """读取用户锁定的下载源策略配置（自动或手动锁定某源），重启后保持生效。"""
+    p = _selection_path()
+    if p.exists():
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                mode = data.get("mode", "auto")
+                selected_id = data.get("selected_id", "auto")
+                if mode in ("auto", "manual"):
+                    return {"mode": mode, "selected_id": selected_id}
+        except Exception as e:
+            logger.warning("读取下载源锁定配置失败: %s", e)
+    return {"mode": "auto", "selected_id": "auto"}
+
+
+def save_mirror_selection(mode: str, selected_id: str) -> None:
+    """持久化保存用户锁定的下载源策略配置。"""
+    try:
+        app_settings.data_dir.mkdir(parents=True, exist_ok=True)
+        _selection_path().write_text(
+            json.dumps({"mode": mode, "selected_id": selected_id}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError as e:
+        logger.warning("保存下载源锁定配置失败: %s", e)
+
+
+_init_sel = load_mirror_selection()
+
 # 状态缓存
 _cache: dict[str, Any] = {
     "tested_at": 0.0,
     "results": [],
-    "mode": "auto",  # 'auto' | 'manual'
-    "selected_id": "auto",
+    "mode": _init_sel["mode"],
+    "selected_id": _init_sel["selected_id"],
     "fastest_id": "official",
 }
-
-DEFAULT_TEST_REPO = "zxxhz/LearnFlow"
 
 
 def _custom_mirrors_path() -> Path:
@@ -166,10 +201,11 @@ def remove_custom_mirror(mirror_id: str) -> dict[str, Any]:
 
     save_custom_mirrors(new_customs)
 
-    # 如果当前手动锁定的正是该被删除的镜像，自动恢复为 auto
+    # 如果当前手动锁定的正是该被删除的镜像，自动恢复为 auto 并持久化保存
     if _cache.get("selected_id") == mirror_id:
         _cache["selected_id"] = "auto"
         _cache["mode"] = "auto"
+        save_mirror_selection("auto", "auto")
     if _cache.get("fastest_id") == mirror_id:
         _cache["fastest_id"] = "official"
 
@@ -341,7 +377,7 @@ def get_ordered_mirror_prefixes() -> list[str]:
 
 
 def set_mirror_selection(mode: str, selected_id: str) -> dict[str, Any]:
-    """设置下载源选择策略：'auto'（自动使用最快）或 'manual' + 指定 id。"""
+    """设置下载源选择策略：'auto'（自动使用最快）或 'manual' + 指定 id。持久化保存，重启有效。"""
     if mode not in ("auto", "manual"):
         mode = "auto"
     _cache["mode"] = mode
@@ -352,6 +388,8 @@ def set_mirror_selection(mode: str, selected_id: str) -> dict[str, Any]:
         _cache["selected_id"] = selected_id
     else:
         _cache["selected_id"] = "auto"
+
+    save_mirror_selection(_cache["mode"], _cache["selected_id"])
     return get_mirrors_status()
 
 
