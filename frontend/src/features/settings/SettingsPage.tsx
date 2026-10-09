@@ -406,11 +406,11 @@ export default function SettingsPage() {
               <option value="b">B（鼠标移入聚焦高亮）</option>
             </Select>
             <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-              A 为开启后文章内每一段使用不同的背景颜色（段落周围带圆角）；B 为开启后鼠标移到段落区域即显示聚焦背景色，切换时具备流畅动效。
+              A 为开启后文章内每一段使用 12 种柔和护眼底色循环交替（段落周围带圆角边框，防串行效果显著）；B 为开启后鼠标移到段落区域即显示聚焦背景色，切换时具备流畅动效。
             </p>
             {/* 实时微缩预览 */}
             <div className="mt-2.5 rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50/60 dark:bg-gray-850 p-2.5 text-xs text-gray-600 dark:text-gray-400">
-              <span className="text-[11px] text-gray-400 dark:text-gray-500">效果预览：</span>
+              <span className="text-[11px] text-gray-400 dark:text-gray-500">效果预览（含 12 色循环演示）：</span>
               <div className="mt-1.5 space-y-1.5">
                 <div
                   className={`px-3 py-1.5 ${
@@ -433,6 +433,17 @@ export default function SettingsPage() {
                   }`}
                 >
                   第 2 段示例：{prefs.adhd_mode === "b" ? "将鼠标移动到这里试试聚焦动效" : "交替柔和底色防止阅读串行。"}
+                </div>
+                <div
+                  className={`px-3 py-1.5 ${
+                    prefs.adhd_mode === "a"
+                      ? "adhd-para adhd-color-6"
+                      : prefs.adhd_mode === "b"
+                      ? "adhd-para adhd-mode-b"
+                      : "rounded bg-white dark:bg-gray-800"
+                  }`}
+                >
+                  第 3 段示例：色彩丰富舒适，兼顾对比度与暗黑模式护眼。
                 </div>
               </div>
             </div>

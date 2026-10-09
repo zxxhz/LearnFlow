@@ -220,7 +220,7 @@ export default function BlockView({
   const adhdClass = useMemo(() => {
     if (!isContentBlock || adhdMode === "off") return "";
     if (adhdMode === "a") {
-      return `adhd-para adhd-color-${(pIndex ?? 0) % 6} px-4 py-3 my-2.5`;
+      return `adhd-para adhd-color-${(pIndex ?? 0) % 12} px-4 py-3 my-2.5`;
     }
     if (adhdMode === "b") {
       return "adhd-para adhd-mode-b px-4 py-3 my-2.5";

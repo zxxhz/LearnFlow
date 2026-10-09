@@ -223,21 +223,33 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
 }
 
 
-/* 模式 A：6 色柔和循环护眼调色板（浅色模式） */
-.adhd-color-0 { background-color: rgba(224, 242, 254, 0.7); border-color: rgba(186, 230, 253, 0.65); }
-.adhd-color-1 { background-color: rgba(220, 252, 231, 0.7); border-color: rgba(187, 247, 208, 0.65); }
-.adhd-color-2 { background-color: rgba(254, 243, 199, 0.7); border-color: rgba(253, 230, 138, 0.65); }
-.adhd-color-3 { background-color: rgba(243, 232, 255, 0.7); border-color: rgba(233, 213, 255, 0.65); }
-.adhd-color-4 { background-color: rgba(255, 228, 230, 0.7); border-color: rgba(254, 205, 211, 0.65); }
-.adhd-color-5 { background-color: rgba(204, 251, 241, 0.7); border-color: rgba(153, 246, 228, 0.65); }
+/* 模式 A：12 色柔和循环护眼调色板（浅色模式） */
+.adhd-color-0 { background-color: rgba(219, 234, 254, 0.8); border-color: rgba(147, 197, 253, 0.75); }
+.adhd-color-1 { background-color: rgba(209, 250, 229, 0.8); border-color: rgba(110, 231, 183, 0.75); }
+.adhd-color-2 { background-color: rgba(254, 243, 199, 0.8); border-color: rgba(252, 211, 77, 0.75); }
+.adhd-color-3 { background-color: rgba(243, 232, 255, 0.8); border-color: rgba(216, 180, 254, 0.75); }
+.adhd-color-4 { background-color: rgba(255, 228, 230, 0.8); border-color: rgba(253, 164, 175, 0.75); }
+.adhd-color-5 { background-color: rgba(204, 251, 241, 0.8); border-color: rgba(94, 234, 212, 0.75); }
+.adhd-color-6 { background-color: rgba(255, 237, 213, 0.8); border-color: rgba(253, 186, 116, 0.75); }
+.adhd-color-7 { background-color: rgba(224, 231, 255, 0.8); border-color: rgba(165, 180, 252, 0.75); }
+.adhd-color-8 { background-color: rgba(236, 252, 203, 0.8); border-color: rgba(190, 242, 100, 0.75); }
+.adhd-color-9 { background-color: rgba(250, 232, 255, 0.8); border-color: rgba(240, 171, 252, 0.75); }
+.adhd-color-10 { background-color: rgba(207, 250, 254, 0.8); border-color: rgba(103, 232, 249, 0.75); }
+.adhd-color-11 { background-color: rgba(254, 240, 218, 0.82); border-color: rgba(245, 158, 11, 0.55); }
 
-/* 模式 A：深色模式（低饱和度，温和不刺眼） */
-.dark .adhd-color-0 { background-color: rgba(30, 58, 138, 0.25); border-color: rgba(59, 130, 246, 0.25); }
-.dark .adhd-color-1 { background-color: rgba(6, 78, 59, 0.25); border-color: rgba(34, 197, 94, 0.25); }
-.dark .adhd-color-2 { background-color: rgba(120, 53, 15, 0.25); border-color: rgba(234, 179, 8, 0.25); }
-.dark .adhd-color-3 { background-color: rgba(88, 28, 135, 0.25); border-color: rgba(168, 85, 247, 0.25); }
-.dark .adhd-color-4 { background-color: rgba(136, 19, 55, 0.25); border-color: rgba(244, 63, 94, 0.25); }
-.dark .adhd-color-5 { background-color: rgba(19, 78, 74, 0.25); border-color: rgba(20, 184, 166, 0.25); }
+/* 模式 A：深色模式（12 色低饱和度温润调色板，温和不刺眼） */
+.dark .adhd-color-0 { background-color: rgba(30, 58, 138, 0.32); border-color: rgba(59, 130, 246, 0.35); }
+.dark .adhd-color-1 { background-color: rgba(6, 78, 59, 0.32); border-color: rgba(34, 197, 94, 0.35); }
+.dark .adhd-color-2 { background-color: rgba(120, 53, 15, 0.32); border-color: rgba(234, 179, 8, 0.35); }
+.dark .adhd-color-3 { background-color: rgba(88, 28, 135, 0.32); border-color: rgba(168, 85, 247, 0.35); }
+.dark .adhd-color-4 { background-color: rgba(136, 19, 55, 0.32); border-color: rgba(244, 63, 94, 0.35); }
+.dark .adhd-color-5 { background-color: rgba(19, 78, 74, 0.32); border-color: rgba(20, 184, 166, 0.35); }
+.dark .adhd-color-6 { background-color: rgba(124, 45, 18, 0.32); border-color: rgba(249, 115, 22, 0.35); }
+.dark .adhd-color-7 { background-color: rgba(49, 46, 129, 0.32); border-color: rgba(99, 102, 241, 0.35); }
+.dark .adhd-color-8 { background-color: rgba(54, 83, 20, 0.32); border-color: rgba(132, 204, 22, 0.35); }
+.dark .adhd-color-9 { background-color: rgba(112, 26, 117, 0.32); border-color: rgba(217, 70, 239, 0.35); }
+.dark .adhd-color-10 { background-color: rgba(22, 78, 99, 0.32); border-color: rgba(6, 182, 212, 0.35); }
+.dark .adhd-color-11 { background-color: rgba(113, 63, 18, 0.32); border-color: rgba(217, 119, 6, 0.35); }
 
 /* 模式 B：悬停聚焦聚光灯动效 */
 .adhd-mode-b {
