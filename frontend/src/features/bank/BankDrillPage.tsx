@@ -459,13 +459,16 @@ function WrongQuestionItem({
   }, [aiText]);
 
   const userPicked = useMemo(() => {
-    if (!result?.answer) return [];
-    return result.answer.split("").filter(Boolean);
+    // 优先使用实际作答字段 user_answer，兼容历史仅有 answer 的场景（判断题/单选等）
+    const ans = result?.user_answer ?? result?.answer;
+    if (!ans) return [];
+    return ans.split(/[,、]/).map((x) => x.trim()).filter(Boolean);
   }, [result]);
 
   const correctPicked = useMemo(() => {
-    if (!result?.correct_answer) return [];
-    return result.correct_answer.split("").filter(Boolean);
+    // 正确答案高亮取题目的标准答案字母串（answer 如 "A" 或 "A,C"）
+    if (!result?.answer) return [];
+    return result.answer.split(/[,、]/).map((x) => x.trim()).filter(Boolean);
   }, [result]);
 
   async function startAiExplain() {
@@ -552,7 +555,7 @@ function WrongQuestionItem({
       {result && (
         <div className="drill-result-banner mt-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 p-2.5">
           <div className="text-red-700 dark:text-red-400 font-semibold">
-            ✗ 你的作答：{result.answer || "未选"} · 正确答案：{result.correct_answer}
+            ✗ 你的作答：{result.user_answer ? result.user_answer.replace(/,/g, "、") : "未选"} · 正确答案：{result.correct_answer}
           </div>
           {result.explanation && (
             <p className="drill-explanation-text mt-1 whitespace-pre-wrap leading-relaxed text-gray-600 dark:text-gray-400">

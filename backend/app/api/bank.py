@@ -189,10 +189,11 @@ async def submit_attempt(
     if q is None:
         raise HTTPException(status_code=404, detail="题目不存在")
     passed = bank_service.judge_answer(q.qtype, q.answer, body.content)
+    user_ans = ",".join(x.strip().upper() for x in body.content if x and x.strip())
     attempt = BankAttempt(
         bank_id=q.bank_id,
         question_id=q.id,
-        content=",".join(x.strip().upper() for x in body.content if x and x.strip()),
+        content=user_ans,
         passed=passed,
     )
     db.add(attempt)
@@ -200,6 +201,7 @@ async def submit_attempt(
     return BankAttemptResult(
         attempt_id=attempt.id,
         passed=passed,
+        user_answer=user_ans,
         answer=q.answer,
         correct_answer=bank_service.format_correct_answer(q),
         answer_raw=q.answer_raw,

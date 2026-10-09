@@ -46,6 +46,7 @@ class BankWrongQuestionOut(BankQuestionOut):
 class BankAttemptResult(BaseModel):
     attempt_id: str
     passed: bool
+    user_answer: str = ""  # 用户的作答内容（如 "C" / "A,C"），小结与复盘使用
     answer: str  # 字母串（"A" / "A,C"），供前端高亮正确项
     correct_answer: str  # 展示串（判断题 正确/错误，多选顿号连接）
     answer_raw: str

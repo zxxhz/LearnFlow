@@ -465,6 +465,7 @@ export interface BankWrongQuestion extends BankQuestion {
 export interface BankAttemptResult {
   attempt_id: string;
   passed: boolean;
+  user_answer?: string;
   answer: string;
   correct_answer: string;
   answer_raw: string;
