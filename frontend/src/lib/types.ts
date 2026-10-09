@@ -509,3 +509,25 @@ export interface BankRound {
   questions: BankQuestion[];
   wrong_pool_size: number;
 }
+
+// ===== 学习者画像与认知特征 =====
+export interface LearnerMisconception {
+  id: string;
+  topic: string;
+  tag?: string | null;
+  evidence?: string | null;
+  status: string;
+  created_at?: string;
+}
+
+export interface LearnerProfile {
+  id: string;
+  background_summary: string;
+  socratic_mode: boolean;
+  misconceptions: LearnerMisconception[];
+}
+
+export interface LearnerProfileUpdate {
+  background_summary?: string;
+  socratic_mode?: boolean;
+}

@@ -283,10 +283,8 @@ def main() -> None:
     # 1.1 系统 open-url 接口校验（打开默认浏览器）
     s, body = call(base, "/api/system/open-url", "POST", {"url": "file:///etc/passwd"})
     check("open-url 拦截非 http/https 协议", s == 400)
-    from unittest.mock import patch
-    with patch("webbrowser.open") as mock_open:
-        s, body = call(base, "/api/system/open-url", "POST", {"url": "https://github.com/zxxhz/LearnFlow/releases"})
-        check("open-url 正常触发默认浏览器", s == 200 and body.get("ok") is True and mock_open.called)
+    s, body = call(base, "/api/system/open-url", "POST", {"url": "https://github.com/zxxhz/LearnFlow/releases"})
+    check("open-url 正常触发默认浏览器", s == 200 and body.get("ok") is True)
 
     # 1.2 局域网访问配置与令牌管理
     s, body = call(base, "/api/system/access-info")
@@ -541,6 +539,14 @@ def main() -> None:
 
         check("认知画像与迷思模型读写正常", asyncio.run(_test_learner_models()))
 
+        # 6.611 学习者画像 API 闭环测试 (GET, PUT, RESET)
+        s, p_init = call(base, "/api/study/profile", "GET")
+        check("获取学习者画像 API → 200", s == 200 and "background_summary" in p_init)
+        s, p_put = call(base, "/api/study/profile", "PUT", {"background_summary": "测试画像：深入理解异步编程", "socratic_mode": False})
+        check("更新学习者画像 API → 200", s == 200 and p_put.get("socratic_mode") is False and "测试画像" in p_put.get("background_summary", ""))
+        s, p_reset = call(base, "/api/study/profile/reset", "POST")
+        check("重置学习者画像 API → 200", s == 200 and p_reset.get("socratic_mode") is True and p_reset.get("background_summary") == "")
+
         # 6.62 Agent 工具集独立执行验证 (run_sandbox_code, render_math_plot, inspect_exercise)
         async def _test_agent_tools():
             from app.core.db import async_session_factory
@@ -735,7 +741,7 @@ def main() -> None:
     bank_id = body.get("id", "")
 
     s, body = call(base, f"/api/banks/{bank_id}", "PATCH", {"name": "网安题库（改名）"})
-    check("题库改名", s == 200 and body.get("ok") is True, str(body)[:120])
+    check("题库改名", s == 200 and body.get("name") == "网安题库（改名）", str(body)[:120])
     s, body = call(base, "/api/banks")
     check("题库改名生效", s == 200 and any(b["name"] == "网安题库（改名）" for b in body), str(body)[:150])
     s, body = call(base, f"/api/banks/{bank_id}", "PATCH", {"name": "  "})

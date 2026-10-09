@@ -27,6 +27,7 @@ from app.services.generation.highlight import create_auto_highlights
 from app.services.exercise import delete_kp_exercises, purge_document_exercises
 from app.services.llm import create_adapter_from_settings
 from app.services.llm.errors import LLMError
+from app.services.profile import format_profile_for_prompt
 from app.services.prompt import render_prompt
 from app.services.prefs import get_preferences
 
@@ -102,6 +103,7 @@ async def run_chapter(
         or "（这是第一章）"
     )
     prefs = await get_preferences(db)
+    profile_text = await format_profile_for_prompt(db)
     prompt = render_prompt(
         "chapter_doc",
         INDEX=str(doc.chapter_index),
@@ -110,6 +112,7 @@ async def run_chapter(
         CHAPTER_TITLE=doc.title,
         CHAPTER_POINTS=points_text,
         PREV_SUMMARIES=prev_summaries,
+        LEARNER_PROFILE=profile_text,
         LENGTH=str(int(prefs.get("chapter_length", 3000))),
     )
     if instruction:

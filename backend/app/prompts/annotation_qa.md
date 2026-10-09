@@ -4,6 +4,7 @@
 课程：[[COURSE_TITLE]]
 章节：[[DOC_TITLE]]（本章摘要：[[DOC_SUMMARY]]）
 [[NAV_SUMMARIES]]
+[[LEARNER_PROFILE]]
 
 ## 学生划线的内容
 [[EXACT]]

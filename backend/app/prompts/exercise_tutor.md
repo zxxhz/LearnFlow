@@ -3,6 +3,7 @@
 ## 知识点
 标题：[[KP_TITLE]]
 摘要：[[KP_SUMMARY]]
+[[LEARNER_PROFILE]]
 
 ## 题目要求
 [[TASK_MD]]

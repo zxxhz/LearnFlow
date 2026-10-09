@@ -2,6 +2,7 @@
 
 ## 课程信息
 课程：[[COURSE_TITLE]]（主题：[[COURSE_TOPIC]]）
+[[LEARNER_PROFILE]]
 
 ## 本章标题
 [[CHAPTER_TITLE]]

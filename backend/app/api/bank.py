@@ -2,9 +2,9 @@
 
 独立于课程体系；答案只在提交后由后端下发，抽轮列表永不含 answer/explanation。
 """
-import logging
-
+import asyncio
 import json
+import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -33,6 +33,10 @@ from app.schemas.bank import (
 from app.services import bank as bank_service
 from app.services.bank import BankParseError
 from app.services.llm import create_adapter_from_settings
+from app.services.profile import (
+    extract_and_update_learner_profile,
+    format_profile_for_prompt,
+)
 from app.services.llm.errors import LLMError
 
 logger = logging.getLogger(__name__)
@@ -268,7 +272,10 @@ async def ai_explain_question(
     if q is None:
         raise HTTPException(status_code=404, detail="题目不存在")
     bank = await _bank_or_404(db, q.bank_id)
-    messages = bank_service.build_explain_messages(bank, q, body.picked)
+    profile_text = await format_profile_for_prompt(db)
+    messages = bank_service.build_explain_messages(
+        bank, q, body.picked, profile_text=profile_text
+    )
     adapter = await create_adapter_from_settings(db, scene="chat")
     deltas = await adapter.chat(messages, stream=True)
 
@@ -299,6 +306,16 @@ async def ai_explain_question(
                         await save_db.commit()
             except Exception as se:
                 logger.warning(f"Failed to persist question ai_explanation: {se}")
+
+            # 异步提炼错题特征到学习者画像
+            question_context = f"题库：{bank.name}；题目：{q.title}；错误作答：{'、'.join(body.picked)}"
+            asyncio.create_task(
+                extract_and_update_learner_profile(
+                    async_session_factory,
+                    context=question_context,
+                    interaction=f"AI 解析重点：{full_text[:300]}",
+                )
+            )
 
         yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
 

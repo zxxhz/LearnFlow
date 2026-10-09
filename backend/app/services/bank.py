@@ -334,9 +334,14 @@ DEFAULT_BANK_AI_PROMPT = """你是一位资深、启发式且富有耐心的金�
 
 
 def build_explain_messages(
-    bank: QuestionBank, question: BankQuestion, picked_letters: list[str]
+    bank: QuestionBank,
+    question: BankQuestion,
+    picked_letters: list[str],
+    profile_text: str = "",
 ) -> list[dict]:
     sys_prompt = (bank.ai_prompt or "").strip() or DEFAULT_BANK_AI_PROMPT
+    if profile_text and profile_text.strip():
+        sys_prompt = f"{sys_prompt}\n\n{profile_text.strip()}"
 
     options = json.loads(question.options) if question.options else []
     LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"]

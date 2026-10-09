@@ -9,6 +9,7 @@ import { HL_COLOR_KEYS, HL_DEFAULTS, HL_LABELS } from "../reader/colors";
 import RuntimeEnvSection from "./RuntimeEnvSection";
 import DownloadMirrorsSection from "./DownloadMirrorsSection";
 import { FontSizeControl } from "../../components/FontSizeControl";
+import { LearnerProfileSection } from "./LearnerProfileSection";
 
 
 const PROVIDER_PRESETS: { label: string; base_url: string; model: string }[] = [
@@ -525,6 +526,9 @@ export default function SettingsPage() {
           保存偏好
         </Button>
       </section>
+
+      {/* 学习者画像与认知档案（AI 动态提炼与因材施教） */}
+      <LearnerProfileSection />
 
       {/* 代码运行环境（沙箱工具链检测 + 一键便携安装） */}
       <RuntimeEnvSection />

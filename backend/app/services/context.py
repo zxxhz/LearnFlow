@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Annotation, Conversation, Course, Document, Message, Section
+from app.services.profile import format_profile_for_prompt
 from app.services.prompt import render_prompt
 from app.services.sections_text import get_section_text
 
@@ -43,12 +44,14 @@ async def build_annotation_messages(
             label = "上一章" if offset == -1 else "下一章"
             neighbors.append(f"{label}《{n.title}》摘要：{n.summary}")
 
+    profile_text = await format_profile_for_prompt(db)
     system = render_prompt(
         "annotation_qa",
         COURSE_TITLE=course.title,
         DOC_TITLE=document.title + (f"（位于：{heading}）" if heading else ""),
         DOC_SUMMARY=document.summary or "（无摘要）",
         NAV_SUMMARIES="\n".join(neighbors) or "（无）",
+        LEARNER_PROFILE=profile_text,
         EXACT=ann.exact,
         SECTION_TEXT=section_text or "（原文缺失，请基于划线内容回答）",
     )

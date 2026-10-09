@@ -38,6 +38,8 @@ import type {
   BankRound,
   BankStats,
   BankWrongQuestion,
+  LearnerProfile,
+  LearnerProfileUpdate,
 } from "./types";
 import { streamSSE } from "./sse";
 
@@ -399,6 +401,23 @@ export const api = {
       onEvent: (payload: any) => void,
       signal?: AbortSignal
     ) => streamSSE("/tutor/diagnose", body, onEvent, signal),
+  },
+  profile: {
+    get: () => request<LearnerProfile>("/study/profile"),
+    update: (data: LearnerProfileUpdate) =>
+      request<LearnerProfile>("/study/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+    deleteMisconception: (id: string) =>
+      request<LearnerProfile>(`/study/profile/misconceptions/${id}`, {
+        method: "DELETE",
+      }),
+    reset: () =>
+      request<LearnerProfile>("/study/profile/reset", {
+        method: "POST",
+      }),
   },
 };
 

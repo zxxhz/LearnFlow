@@ -5,6 +5,7 @@
 
 ## 学习者基础
 [[LEVEL]]
+[[LEARNER_PROFILE]]
 
 ## 范围与期望
 [[SCOPE]]

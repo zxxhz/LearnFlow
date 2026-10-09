@@ -1,10 +1,12 @@
 """助教伴学服务（Agent 观察与引导）：针对练习作答与卡点提供启发式诊断，严格不泄露完整代码。"""
+import asyncio
 import json
 import logging
 from typing import AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import async_session_factory
 from app.models import Exercise, KnowledgePoint
 from app.models.exercise import EXERCISE_CODE
 from app.services.agent_tools import stream_agent_with_tools
@@ -12,6 +14,10 @@ from app.services.execution.runner import run_code
 from app.services.exercise import normalize_output
 from app.services.llm.base import LLMAdapter
 from app.services.llm.errors import LLMError
+from app.services.profile import (
+    extract_and_update_learner_profile,
+    format_profile_for_prompt,
+)
 from app.services.prompt import render_prompt
 
 
@@ -68,6 +74,7 @@ async def stream_exercise_diagnosis(
             "指出核心思维卡点，并抛出 1 个关键反问或反例，引导学生自己推导出修复方案。"
         )
 
+    profile_text = await format_profile_for_prompt(db)
     system = render_prompt(
         "exercise_tutor",
         KP_TITLE=kp_title,
@@ -79,6 +86,7 @@ async def stream_exercise_diagnosis(
         EXEC_STATUS=exec_status,
         EXEC_OUTPUT=exec_output_str,
         USER_QUESTION_SECTION=user_question_sec,
+        LEARNER_PROFILE=profile_text,
         MODE_INSTRUCTIONS=mode_instructions,
     )
 
@@ -92,8 +100,11 @@ async def stream_exercise_diagnosis(
         db=db,
     )
 
+    tutor_replies: list[str] = []
     try:
         async for evt in agent_stream:
+            if isinstance(evt, dict) and evt.get("type") == "delta":
+                tutor_replies.append(evt.get("text", ""))
             yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
     except LLMError as e:
         yield f"data: {json.dumps({'type': 'error', 'detail': e.message}, ensure_ascii=False)}\n\n"
@@ -102,4 +113,14 @@ async def stream_exercise_diagnosis(
         logger.exception("助教诊断流异常")
         yield f"data: {json.dumps({'type': 'error', 'detail': '助教服务暂时不可用，请稍后再试。'}, ensure_ascii=False)}\n\n"
         return
+
+    # 助教伴学指导结束后，异步提炼学生的练习理解盲区
+    reply_summary = "".join(tutor_replies)[:300]
+    asyncio.create_task(
+        extract_and_update_learner_profile(
+            async_session_factory,
+            context=f"练习题：{exercise.title}；知识点：{kp_title}；学生作答片段：{content[:200]}",
+            interaction=f"学生提问：{question}\n助教启发指导：{reply_summary}",
+        )
+    )
 
