@@ -1,4 +1,5 @@
 """系统 API：备份/恢复 + 局域网访问信息（平板场景）。"""
+import os
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -95,6 +96,8 @@ async def open_url(payload: OpenUrlIn):
     url = payload.url.strip()
     if not (url.startswith("http://") or url.startswith("https://")):
         raise HTTPException(status_code=400, detail="仅允许打开 http/https 链接")
+    if os.environ.get("APP_SMOKE_TEST") == "1":
+        return {"ok": True}
     import subprocess
     import sys
     import webbrowser

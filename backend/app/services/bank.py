@@ -257,6 +257,8 @@ async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
         latest[a.question_id] = a
 
     wrong_ids = {qid for qid, a in latest.items() if not a.passed}
+    attempted_ids = set(latest.keys())
+    new_count = len([q for q in questions if q.id not in attempted_ids])
     by_type: dict[str, dict] = {}
     for q in questions:
         slot = by_type.setdefault(q.qtype, {"total": 0, "wrong": 0})
@@ -269,6 +271,7 @@ async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
     return {
         "question_count": len(questions),
         "answered": len(latest),
+        "new_count": new_count,
         "attempts": total_attempts,
         "correct": sum(1 for a in latest.values() if a.passed),
         "accuracy": round(correct_attempts / total_attempts * 100, 1) if total_attempts else 0,
@@ -277,32 +280,80 @@ async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
     }
 
 
+def _question_dedup_key(q: BankQuestion) -> tuple:
+    """提取题目内容归一化指纹，用于识别完全相同的题目。"""
+    norm_title = " ".join((q.title or "").split())
+    norm_opts = ()
+    if q.qtype != QUESTION_JUDGE and q.options:
+        try:
+            raw_opts = json.loads(q.options)
+            if isinstance(raw_opts, list):
+                norm_opts = tuple(" ".join(str(o).split()) for o in raw_opts if str(o).strip())
+        except Exception:
+            norm_opts = (" ".join(q.options.split()),)
+    return (q.qtype, norm_title, norm_opts)
+
+
+def _dedup_question_list(questions: list[BankQuestion]) -> list[BankQuestion]:
+    """对题目列表按内容指纹去重，保留首次出现的题目，保证同一套题内无重复题。"""
+    seen = set()
+    unique = []
+    for q in questions:
+        key = _question_dedup_key(q)
+        if key not in seen:
+            seen.add(key)
+            unique.append(q)
+    return unique
+
+
 async def draw_round(
     db: AsyncSession, bank: QuestionBank, mode: str, size: int
 ) -> tuple[list[BankQuestion], int]:
-    """抽一轮题：(题目列表, 错题池大小)。mode = random | wrong。"""
+    """抽一轮题：(题目列表, 当前模式候选池大小)。
+
+    模式说明：
+    - "new": 做新题模式（仅包含从未作答过的新题）
+    - "wrong": 错题重刷模式（仅包含当前错题池中的题目）
+    - "all" / "random": 做题模式（全量题库随机抽取，含新题与复习题）
+
+    去重保障：
+    同一套题内部通过 _dedup_question_list 严格去重，绝不出现完全相同的重复题目。
+    """
+    all_questions = (
+        await db.scalars(
+            select(BankQuestion)
+            .where(BankQuestion.bank_id == bank.id)
+            .order_by(BankQuestion.seq)
+        )
+    ).all()
+
     if mode == "wrong":
         wrong_ids = await wrong_question_ids(db, bank.id)
-        pool_size = len(wrong_ids)
-        id_set = set(wrong_ids[:size]) if size else set(wrong_ids)
-        questions = (
-            await db.scalars(
-                select(BankQuestion)
-                .where(BankQuestion.bank_id == bank.id)
-                .order_by(BankQuestion.seq)
-            )
-        ).all()
-        picked = [q for q in questions if q.id in id_set]
+        wrong_id_set = set(wrong_ids)
+        wrong_candidates = [q for q in all_questions if q.id in wrong_id_set]
+        unique_candidates = _dedup_question_list(wrong_candidates)
+    elif mode == "new":
+        latest = await latest_attempts(db, bank.id)
+        attempted_ids = set(latest.keys())
+        attempted_keys = {_question_dedup_key(q) for q in all_questions if q.id in attempted_ids}
+        new_candidates = [
+            q for q in all_questions
+            if q.id not in attempted_ids and _question_dedup_key(q) not in attempted_keys
+        ]
+        unique_candidates = _dedup_question_list(new_candidates)
+    else:  # "all" or "random" 做题模式
+        unique_candidates = _dedup_question_list(all_questions)
+
+    pool_size = len(unique_candidates)
+    if not unique_candidates:
+        return [], 0
+
+    if size and pool_size > size:
+        picked = random.sample(unique_candidates, size)
     else:
-        all_questions = (
-            await db.scalars(
-                select(BankQuestion)
-                .where(BankQuestion.bank_id == bank.id)
-                .order_by(BankQuestion.seq)
-            )
-        ).all()
-        pool_size = len(all_questions)
-        picked = random.sample(all_questions, min(size, len(all_questions)))
+        picked = list(unique_candidates)
+        random.shuffle(picked)
+
     return picked, pool_size
 
 

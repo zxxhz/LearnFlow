@@ -57,6 +57,7 @@ class BankAttemptResult(BaseModel):
 class BankStatsOut(BaseModel):
     question_count: int
     answered: int  # 答过（有作答记录）的题数
+    new_count: int = 0  # 未作答的新题数
     attempts: int  # 作答流水总数
     correct: int  # 最近一次作答正确的题数
     accuracy: float  # 全部流水的累计正确率（%）
@@ -115,7 +116,7 @@ class BankOut(BaseModel):
 
 
 class BankRoundRequest(BaseModel):
-    mode: str = Field(default="random", pattern="^(random|wrong)$")
+    mode: str = Field(default="all", pattern="^(all|random|new|wrong)$")
     size: int = Field(default=20, ge=1, le=100)
 
 

@@ -477,6 +477,7 @@ export interface BankAttemptResult {
 export interface BankStats {
   question_count: number;
   answered: number;
+  new_count?: number;
   attempts: number;
   correct: number;
   accuracy: number;
@@ -507,7 +508,7 @@ export interface BankAnalysis {
 
 export interface BankRound {
   bank_id: string;
-  mode: "random" | "wrong";
+  mode: "new" | "all" | "random" | "wrong";
   questions: BankQuestion[];
   wrong_pool_size: number;
 }

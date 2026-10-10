@@ -114,7 +114,7 @@ export default function BankDrillPage() {
   };
 
   const start = useMutation({
-    mutationFn: (mode: "random" | "wrong") => api.banks.round(bankId!, mode, size),
+    mutationFn: (mode: "new" | "all" | "random" | "wrong") => api.banks.round(bankId!, mode, size),
     onSuccess: (r) => {
       setRound(r);
       setIdx(0);
@@ -171,7 +171,11 @@ export default function BankDrillPage() {
       <div className="mx-auto max-w-5xl p-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
-            {round.mode === "wrong" ? "📕 错题重刷 · 小结" : "🎯 随机练习 · 小结"}
+            {round.mode === "wrong"
+              ? "📕 错题重刷 · 小结"
+              : round.mode === "new"
+              ? "🆕 做新题 · 小结"
+              : "🎯 做题模式 · 小结"}
           </h1>
           <FontSizeControl
             value={drillFontSize}
@@ -183,7 +187,8 @@ export default function BankDrillPage() {
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           本轮 {questions.length} 题，答对 <span className="font-bold text-green-600 dark:text-green-400">{roundCorrect}</span> 题，
           答错 <span className="font-bold text-red-600 dark:text-red-400">{roundWrong.length}</span> 题。
-          {round.mode === "random" && roundWrong.length > 0 && " 答错的题已进入错题池，可在错题重刷里巩固。"}
+          {round.mode === "new" && " 做对的题已计入已答，答错的已自动进入错题池。"}
+          {round.mode !== "wrong" && round.mode !== "new" && roundWrong.length > 0 && " 答错的题已进入错题池，可在错题重刷里巩固。"}
         </p>
 
         {roundWrong.length > 0 && (
@@ -238,7 +243,11 @@ export default function BankDrillPage() {
             ← 退出本轮
           </Button>
           <h1 className="min-w-0 flex-1 truncate text-base font-bold text-gray-900 dark:text-gray-100">
-            {round.mode === "wrong" ? "📕 错题重刷" : "🎯 随机练习"} · {bank.name}
+            {round.mode === "wrong"
+              ? "📕 错题重刷"
+              : round.mode === "new"
+              ? "🆕 做新题模式"
+              : "🎯 做题模式"} · {bank.name}
           </h1>
           <FontSizeControl
             value={drillFontSize}
@@ -332,62 +341,147 @@ export default function BankDrillPage() {
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="题库总题数" value={String(s.question_count)} />
-        <StatCard label="已答（题）" value={String(s.answered)} />
-        <StatCard label="累计正确率" value={`${s.accuracy}%`} />
-        <StatCard
-          label="错题池"
-          value={String(s.wrong_count)}
-          tone={s.wrong_count > 0 ? "red" : undefined}
-        />
-      </div>
-
-      <div className="mt-6 space-y-3">
-        <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+      {draft && !draftFinished && (
+        <div className="mt-4 rounded-xl border border-brand-200 dark:border-brand-800 bg-brand-50/60 dark:bg-brand-900/20 p-4">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex-1">
-              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">🎯 随机练习</h2>
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                ↩ 上次刷到第 {Math.min(draft.idx + 1, draft.round.questions.length)} /{" "}
+                {draft.round.questions.length} 题
+              </h2>
               <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                从全部 {s.question_count} 题里随机抽一轮，答错自动进错题池。
+                已作答 {Object.keys(draft.results).length} 题，进度已保留；开始新一轮会覆盖它。
               </p>
             </div>
-            <Select
-              value={size}
-              onChange={(e) => setSize(Number(e.target.value))}
-              className="!w-28"
-            >
-              {SIZES.map((n) => (
-                <option key={n} value={n}>
-                  每轮 {n} 题
-                </option>
-              ))}
-            </Select>
-            <Button disabled={start.isPending} onClick={() => start.mutate("random")}>
-              {start.isPending ? <Spinner className="h-3.5 w-3.5" /> : null} 开始
-            </Button>
+            <Button onClick={resumeDraft}>继续刷题 →</Button>
           </div>
         </div>
+      )}
 
-        <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex-1">
-              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">📕 错题重刷</h2>
-              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                错题池 {s.wrong_count} 题；重刷答对即出池。
-              </p>
+      {(() => {
+        const newCount = s.new_count ?? Math.max(0, s.question_count - s.answered);
+        return (
+          <>
+            <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+              <StatCard label="题库总题数" value={String(s.question_count)} />
+              <StatCard
+                label="未做新题"
+                value={String(newCount)}
+                tone={newCount > 0 ? "brand" : undefined}
+              />
+              <StatCard label="已答题数" value={String(s.answered)} />
+              <StatCard label="累计正确率" value={`${s.accuracy}%`} />
+              <StatCard
+                label="错题池"
+                value={String(s.wrong_count)}
+                tone={s.wrong_count > 0 ? "red" : undefined}
+              />
             </div>
-            <Button
-              variant="secondary"
-              disabled={start.isPending || s.wrong_count === 0}
-              onClick={() => start.mutate("wrong")}
-            >
-              开始
-            </Button>
-          </div>
-        </div>
-        <ErrorText>{startError}</ErrorText>
-      </div>
+
+            <div className="mt-6 space-y-3">
+              {/* 做新题模式 */}
+              <div className="rounded-xl border border-brand-200/80 dark:border-brand-900/60 bg-brand-50/20 dark:bg-brand-950/20 p-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                        🆕 做新题模式
+                      </h2>
+                      <span className="rounded-full bg-brand-100 dark:bg-brand-900/60 px-2 py-0.5 text-[11px] font-medium text-brand-700 dark:text-brand-300">
+                        仅全新题 · 题题不重
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      只从剩余 {newCount} 道未作答的新题中抽取，同一套题内绝无重复题目，做一题少一题。
+                    </p>
+                  </div>
+                  <Select
+                    value={size}
+                    onChange={(e) => setSize(Number(e.target.value))}
+                    className="!w-28"
+                  >
+                    {SIZES.map((n) => (
+                      <option key={n} value={n}>
+                        每轮 {n} 题
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    disabled={start.isPending || newCount === 0}
+                    onClick={() => start.mutate("new")}
+                  >
+                    {start.isPending ? <Spinner className="h-3.5 w-3.5" /> : null} 开始做新题
+                  </Button>
+                </div>
+              </div>
+
+              {/* 做题模式（全量题库） */}
+              <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                        🎯 做题模式
+                      </h2>
+                      <span className="rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-[11px] font-medium text-gray-600 dark:text-gray-400">
+                        全量综合 · 严格去重
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      从全部 {s.question_count} 题中随机抽取（新题与做过的题均有），同一套题内严格去重绝不重复。
+                    </p>
+                  </div>
+                  <Select
+                    value={size}
+                    onChange={(e) => setSize(Number(e.target.value))}
+                    className="!w-28"
+                  >
+                    {SIZES.map((n) => (
+                      <option key={n} value={n}>
+                        每轮 {n} 题
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    variant="secondary"
+                    disabled={start.isPending || s.question_count === 0}
+                    onClick={() => start.mutate("all")}
+                  >
+                    {start.isPending ? <Spinner className="h-3.5 w-3.5" /> : null} 开始做题
+                  </Button>
+                </div>
+              </div>
+
+              {/* 错题重刷 */}
+              <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                        📕 错题重刷
+                      </h2>
+                      <span className="rounded-full bg-red-50 dark:bg-red-950/60 px-2 py-0.5 text-[11px] font-medium text-red-600 dark:text-red-400">
+                        专项攻坚
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                      错题池 {s.wrong_count} 题；重刷答对即刻移出活跃错题池。
+                    </p>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    disabled={start.isPending || s.wrong_count === 0}
+                    onClick={() => start.mutate("wrong")}
+                  >
+                    开始重刷
+                  </Button>
+                </div>
+              </div>
+              <ErrorText>{startError}</ErrorText>
+            </div>
+          </>
+        );
+      })()}
 
       <BankPromptModal
         open={promptOpen}
@@ -398,10 +492,16 @@ export default function BankDrillPage() {
   );
 }
 
-function StatCard({ label, value, tone }: { label: string; value: string; tone?: "red" }) {
+function StatCard({ label, value, tone }: { label: string; value: string; tone?: "red" | "brand" }) {
+  const toneClass =
+    tone === "red"
+      ? "text-red-600 dark:text-red-400"
+      : tone === "brand"
+      ? "text-brand-600 dark:text-brand-400"
+      : "text-gray-900 dark:text-gray-100";
   return (
     <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3">
-      <div className={`text-lg font-bold ${tone === "red" ? "text-red-600 dark:text-red-400" : "text-gray-900 dark:text-gray-100"}`}>
+      <div className={`text-lg font-bold ${toneClass}`}>
         {value}
       </div>
       <div className="mt-0.5 text-xs text-gray-400 dark:text-gray-500">{label}</div>

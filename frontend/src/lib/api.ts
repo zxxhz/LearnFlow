@@ -332,7 +332,7 @@ export const api = {
     },
     list: () => request<Bank[]>("/banks"),
     stats: (id: string) => request<BankStats>(`/banks/${id}/stats`),
-    round: (id: string, mode: "random" | "wrong", size: number) =>
+    round: (id: string, mode: "new" | "all" | "random" | "wrong", size: number) =>
       request<BankRound>(`/banks/${id}/round`, {
         method: "POST",
         ...jsonBody({ mode, size }),

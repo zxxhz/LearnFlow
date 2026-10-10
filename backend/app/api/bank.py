@@ -165,19 +165,20 @@ async def draw_round(
     bank_id: str, body: BankRoundRequest, db: AsyncSession = Depends(get_db)
 ):
     bank = await _bank_or_404(db, bank_id)
-    questions, wrong_pool = await bank_service.draw_round(db, bank, body.mode, body.size)
+    questions, pool_size = await bank_service.draw_round(db, bank, body.mode, body.size)
     if not questions:
-        detail = (
-            f"错题池为空（共 {bank.question_count} 题）"
-            if body.mode == "wrong"
-            else "题库为空"
-        )
+        if body.mode == "wrong":
+            detail = f"错题池为空（共 {bank.question_count} 题）"
+        elif body.mode == "new":
+            detail = f"新题已全部刷完（题库共 {bank.question_count} 题均已作答过，可选择【做题模式】综合复习）"
+        else:
+            detail = "题库为空"
         raise HTTPException(status_code=400, detail=detail)
     return BankRoundOut(
         bank_id=bank.id,
         mode=body.mode,
         questions=[_question_out(q) for q in questions],
-        wrong_pool_size=wrong_pool,
+        wrong_pool_size=pool_size,
     )
 
 

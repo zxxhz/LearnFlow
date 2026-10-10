@@ -5,10 +5,12 @@
 """
 import asyncio
 import json
+import os
 import sys
 import threading
 import time
 
+os.environ["APP_SMOKE_TEST"] = "1"
 sys.stdout.reconfigure(encoding="utf-8")
 import urllib.error
 import urllib.request
@@ -737,7 +739,7 @@ def main() -> None:
     check("题库 analyze 非 xls/xlsx → 400", s == 400, str(body)[:120])
 
     s, body = call_multipart(base, "/api/banks/import", {}, [("file", "test_bank.xlsx", bank_bytes)])
-    check("题库 import 成功", s == 200 and body["question_count"] == 11 and body["stats"]["answered"] == 0, json.dumps(body, ensure_ascii=False)[:200])
+    check("题库 import 成功", s == 200 and body["question_count"] == 11 and body["stats"]["answered"] == 0 and body["stats"]["new_count"] == 11, json.dumps(body, ensure_ascii=False)[:200])
     bank_id = body.get("id", "")
 
     s, body = call(base, f"/api/banks/{bank_id}", "PATCH", {"name": "网安题库（改名）"})
@@ -747,12 +749,24 @@ def main() -> None:
     s, body = call(base, f"/api/banks/{bank_id}", "PATCH", {"name": "  "})
     check("题库改名为空 → 4xx", s in (400, 422), str(body)[:120])
 
-    s, body = call(base, f"/api/banks/{bank_id}/round", "POST", {"mode": "random", "size": 10})
-    check("抽轮 10 题", s == 200 and len(body["questions"]) == 10, str(body)[:150])
+    # 1. 抽「做题模式 / all」10 题，验证同一套题内绝无重复题目（ID与题干均唯一）
+    s, body = call(base, f"/api/banks/{bank_id}/round", "POST", {"mode": "all", "size": 10})
+    check("做题模式抽 10 题", s == 200 and len(body["questions"]) == 10, str(body)[:150])
     if s == 200:
+        q_ids = [q["id"] for q in body["questions"]]
+        q_titles = [q["title"] for q in body["questions"]]
+        check("做题模式同一套题内无重复题", len(q_ids) == len(set(q_ids)) and len(q_titles) == len(set(q_titles)))
         check("抽轮题目不泄答案", all("answer" not in q and "explanation" not in q and "answer_raw" not in q for q in body["questions"]))
+
+    # 2. 抽「做新题模式 / new」10 题，初始状态 11 道均为新题，验证无重复
+    s, body = call(base, f"/api/banks/{bank_id}/round", "POST", {"mode": "new", "size": 10})
+    check("做新题模式抽 10 题", s == 200 and len(body["questions"]) == 10, str(body)[:150])
+    if s == 200:
+        new_q_ids = [q["id"] for q in body["questions"]]
+        check("做新题模式同一套题内无重复题", len(new_q_ids) == len(set(new_q_ids)))
+
     # 判分断言用全量轮（11 题），避免随机抽 10/11 漏掉特定题导致 flaky
-    s, body = call(base, f"/api/banks/{bank_id}/round", "POST", {"mode": "random", "size": 11})
+    s, body = call(base, f"/api/banks/{bank_id}/round", "POST", {"mode": "all", "size": 11})
     if s == 200:
         qs = {q["seq"]: q for q in body["questions"]}
         single_q = qs[1]  # 单选1 → B
@@ -764,6 +778,11 @@ def main() -> None:
     check("多选少选 → 未通过", s == 200 and body["passed"] is False and body["correct_answer"] == "A、C", str(body)[:150])
     s, body = call(base, "/api/banks/attempts", "POST", {"question_id": judge_q["id"], "content": ["A"]})
     check("判断答对 → passed", s == 200 and body["passed"] is True and body["correct_answer"] == "正确", str(body)[:150])
+
+    # 3. 作答 3 题后，做新题模式池容量应减少为 8 题，且抽新题绝不包含已作答过的题
+    s, body = call(base, f"/api/banks/{bank_id}/round", "POST", {"mode": "new", "size": 20})
+    answered_3_ids = {single_q["id"], multi_q["id"], judge_q["id"]}
+    check("做新题模式仅抽未做新题", s == 200 and len(body["questions"]) == 8 and all(q["id"] not in answered_3_ids for q in body["questions"]))
 
     s, body = call(base, f"/api/banks/{bank_id}/wrong")
     check("错题池只含答错的题", s == 200 and len(body) == 1 and body[0]["seq"] == 6, str(body)[:150])
@@ -778,8 +797,8 @@ def main() -> None:
 
     s, body = call(base, f"/api/banks/{bank_id}/stats")
     check(
-        "统计：answered=3 / attempts=4 / accuracy=75%",
-        s == 200 and body["answered"] == 3 and body["attempts"] == 4 and body["accuracy"] == 75.0,
+        "统计：answered=3 / new_count=8 / attempts=4 / accuracy=75%",
+        s == 200 and body["answered"] == 3 and body.get("new_count") == 8 and body["attempts"] == 4 and body["accuracy"] == 75.0,
         str(body)[:150],
     )
 
