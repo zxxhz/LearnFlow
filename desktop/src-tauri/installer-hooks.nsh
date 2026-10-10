@@ -4,9 +4,11 @@
 ; 因此在安装/卸载动作前预杀 LearnFlow 相关进程；进程不存在时 taskkill 报错无害，忽略即可。
 
 !macro NSIS_HOOK_PREINSTALL
-  nsExec::Exec 'taskkill /F /T /IM learnflow-backend.exe'
+  nsExec::Exec 'taskkill /F /T /IM learnflow-desktop.exe'
   Pop $0
   nsExec::Exec 'taskkill /F /T /IM LearnFlow.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM learnflow-backend.exe'
   Pop $0
   Sleep 500
 !macroend
@@ -18,9 +20,11 @@
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
-  nsExec::Exec 'taskkill /F /T /IM learnflow-backend.exe'
+  nsExec::Exec 'taskkill /F /T /IM learnflow-desktop.exe'
   Pop $0
   nsExec::Exec 'taskkill /F /T /IM LearnFlow.exe'
+  Pop $0
+  nsExec::Exec 'taskkill /F /T /IM learnflow-backend.exe'
   Pop $0
   Sleep 500
 !macroend

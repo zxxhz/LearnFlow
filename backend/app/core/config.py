@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 应用版本（更新检查的唯一版本源；发布时与 tauri.conf.json / package.json 一同 bump，见 PRD 实现备注 15）
-APP_VERSION = "0.4.34"
+APP_VERSION = "0.4.35"
 
 
 

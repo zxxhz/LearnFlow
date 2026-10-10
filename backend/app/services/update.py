@@ -229,34 +229,69 @@ async def check_update(db: AsyncSession, force: bool = False) -> dict:
     return result
 
 
+def _find_learnflow_desktop_exe() -> str:
+    """查找 LearnFlow 桌面端主程序（learnflow-desktop.exe）的绝对路径。"""
+    import os
+    import sys
+    from pathlib import Path
+
+    names = ["learnflow-desktop.exe", "LearnFlow.exe"]
+
+    # 1. 优先从当前可执行文件（如 .../LearnFlow/backend/learnflow-backend.exe）的父级目录查找
+    cur = Path(sys.executable).resolve()
+    for parent in [cur.parent, cur.parent.parent, cur.parent.parent.parent]:
+        for name in names:
+            candidate = parent / name
+            if candidate.exists():
+                return str(candidate)
+
+    # 2. 查找 LOCALAPPDATA 与 ProgramFiles 常见安装目录
+    search_dirs: list[Path] = []
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    if local_appdata:
+        search_dirs.extend([
+            Path(local_appdata) / "LearnFlow",
+            Path(local_appdata) / "Programs" / "LearnFlow",
+        ])
+    prog_files = os.environ.get("ProgramFiles", "")
+    if prog_files:
+        search_dirs.append(Path(prog_files) / "LearnFlow")
+    prog_files_x86 = os.environ.get("ProgramFiles(x86)", "")
+    if prog_files_x86:
+        search_dirs.append(Path(prog_files_x86) / "LearnFlow")
+
+    for d in search_dirs:
+        for name in names:
+            candidate = d / name
+            if candidate.exists():
+                return str(candidate)
+
+    return ""
+
+
 def _trigger_silent_installer(installer_path: "Path") -> None:
-    """在后台独立进程中启动 NSIS 静默安装，等待安装完成后重新拉起客户端并清理自身。"""
+    """在后台独立进程中启动 NSIS 静默安装，杀掉旧进程释放文件锁，安装完成后拉起新版客户端。"""
     import os
     import subprocess
     import sys
     from pathlib import Path
 
-    # 优先查找当前运行环境所属的 LearnFlow.exe
-    learnflow_exe = ""
-    cur = Path(sys.executable).resolve()
-    for parent in [cur.parent, cur.parent.parent, cur.parent.parent.parent]:
-        candidate = parent / "LearnFlow.exe"
-        if candidate.exists():
-            learnflow_exe = str(candidate)
-            break
-    if not learnflow_exe:
-        appdata = os.environ.get("LOCALAPPDATA", "")
-        if appdata:
-            candidate = Path(appdata) / "Programs" / "LearnFlow" / "LearnFlow.exe"
-            if candidate.exists():
-                learnflow_exe = str(candidate)
-
+    learnflow_exe = _find_learnflow_desktop_exe()
     bat_path = installer_path.parent / "silent_install.bat"
     launch_line = f'start "" "{learnflow_exe}"' if learnflow_exe else ""
+
     bat_content = f"""@echo off
+rem 等待 1 秒以确保当前网络响应发送完毕
 timeout /t 1 /nobreak >nul
+rem 主动终止旧版本前端壳与后端，释放所有文件占用
+taskkill /F /T /IM learnflow-desktop.exe >nul 2>&1
+taskkill /F /T /IM LearnFlow.exe >nul 2>&1
+taskkill /F /T /IM learnflow-backend.exe >nul 2>&1
+timeout /t 1 /nobreak >nul
+rem 启动静默安装并等待安装结束
 start /wait "" "{installer_path}" /S
 timeout /t 1 /nobreak >nul
+rem 自动拉起新版本主程序
 {launch_line}
 del "%~f0"
 """
@@ -271,7 +306,7 @@ del "%~f0"
         creationflags=creationflags,
         close_fds=True,
     )
-    logger.info("已触发后台静默安装脚本: %s", bat_path)
+    logger.info("已触发后台静默安装脚本（主程序路径: %s）: %s", learnflow_exe, bat_path)
 
 
 async def stream_download_and_install(target_version: str, direct_url: str | None = None):
