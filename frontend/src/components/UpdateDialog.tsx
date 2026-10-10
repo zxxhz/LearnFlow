@@ -68,7 +68,7 @@ function AutoUpdateButton({ update }: { update: UpdateCheckResult }) {
           </span>
         </>
       )}
-      {phase === "installing" && "正在安装，即将自动重启…"}
+      {phase === "installing" && "下载完成，正在打开新安装包…"}
     </button>
   );
 }

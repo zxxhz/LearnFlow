@@ -269,44 +269,38 @@ def _find_learnflow_desktop_exe() -> str:
     return ""
 
 
-def _trigger_silent_installer(installer_path: "Path") -> None:
-    """在后台独立进程中启动 NSIS 静默安装，杀掉旧进程释放文件锁，安装完成后拉起新版客户端。"""
+def _launch_installer_and_exit(installer_path: "Path") -> None:
+    """唤起已下载的最新安装包界面并平稳退出当前旧版本进程，彻底释放文件锁。"""
     import os
-    import subprocess
     import sys
+    import threading
+    import time
     from pathlib import Path
 
-    learnflow_exe = _find_learnflow_desktop_exe()
-    bat_path = installer_path.parent / "silent_install.bat"
-    launch_line = f'start "" "{learnflow_exe}"' if learnflow_exe else ""
+    installer_str = str(installer_path.resolve())
+    logger.info("准备唤起新版本安装程序: %s", installer_str)
 
-    bat_content = f"""@echo off
-rem 等待 1 秒以确保当前网络响应发送完毕
-timeout /t 1 /nobreak >nul
-rem 主动终止旧版本前端壳与后端，释放所有文件占用
-taskkill /F /T /IM learnflow-desktop.exe >nul 2>&1
-taskkill /F /T /IM LearnFlow.exe >nul 2>&1
-taskkill /F /T /IM learnflow-backend.exe >nul 2>&1
-timeout /t 1 /nobreak >nul
-rem 启动静默安装并等待安装结束
-start /wait "" "{installer_path}" /S
-timeout /t 1 /nobreak >nul
-rem 自动拉起新版本主程序
-{launch_line}
-del "%~f0"
-"""
+    # 1. 使用 Windows 系统外壳独立打开安装包（脱离当前进程树，兼容 UAC 提权）
     try:
-        bat_path.write_text(bat_content, encoding="gbk")
-    except Exception:
-        bat_path.write_text(bat_content, encoding="utf-8")
+        os.startfile(installer_str)
+    except Exception as e:
+        logger.warning("os.startfile 唤起失败，尝试调用 explorer.exe: %s", e)
+        import subprocess
+        subprocess.Popen(["explorer.exe", installer_str])
 
-    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    subprocess.Popen(
-        ["cmd.exe", "/c", str(bat_path)],
-        creationflags=creationflags,
-        close_fds=True,
-    )
-    logger.info("已触发后台静默安装脚本（主程序路径: %s）: %s", learnflow_exe, bat_path)
+    # 2. 延迟 1.5 秒后主动终止旧版本前端壳与后端，释放所有文件占用
+    def _delayed_exit():
+        time.sleep(1.5)
+        import subprocess
+        if sys.platform == "win32":
+            subprocess.run("taskkill /F /IM learnflow-desktop.exe >nul 2>&1", shell=True)
+            subprocess.run("taskkill /F /IM LearnFlow.exe >nul 2>&1", shell=True)
+            subprocess.run("taskkill /F /IM learnflow-backend.exe >nul 2>&1", shell=True)
+        sys.exit(0)
+
+    t = threading.Thread(target=_delayed_exit, daemon=True)
+    t.start()
+    logger.info("已启动安装向导并安排旧进程退出: %s", installer_str)
 
 
 async def stream_download_and_install(target_version: str, direct_url: str | None = None):
@@ -389,12 +383,12 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
         return
 
     # 下载成功：推送准备安装事件
-    yield f"data: {json.dumps({'type': 'ready', 'percent': 100, 'message': '下载完成，正在静默安装并自动重启应用…'}, ensure_ascii=False)}\n\n"
+    yield f"data: {json.dumps({'type': 'ready', 'percent': 100, 'message': '下载完成，正在打开新安装包…'}, ensure_ascii=False)}\n\n"
 
-    # 触发静默安装
+    # 唤起安装包并安排安全退出
     try:
-        _trigger_silent_installer(installer_path)
-        yield f"data: {json.dumps({'type': 'installing', 'message': '安装程序已接管，即将重启应用'}, ensure_ascii=False)}\n\n"
+        _launch_installer_and_exit(installer_path)
+        yield f"data: {json.dumps({'type': 'installing', 'message': '新安装包已启动，旧客户端即将关闭…'}, ensure_ascii=False)}\n\n"
     except Exception as e:
-        logger.exception("启动静默安装程序异常: %s", e)
+        logger.exception("启动安装程序异常: %s", e)
         yield f"data: {json.dumps({'type': 'error', 'detail': f'启动安装程序失败：{e}'}, ensure_ascii=False)}\n\n"
