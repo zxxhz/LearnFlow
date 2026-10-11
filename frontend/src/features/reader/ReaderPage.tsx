@@ -124,6 +124,7 @@ export default function ReaderPage() {
   const [exerciseOpen, setExerciseOpen] = useState(false);
   const [isClosingExercise, setIsClosingExercise] = useState(false);
   const [exerciseFocus, setExerciseFocus] = useState<string | null>(null);
+  const [isExerciseFullscreen, setIsExerciseFullscreen] = useState(false);
   const [reAnchoring, setReAnchoring] = useState<Annotation | null>(null);
   const [flashSection, setFlashSection] = useState<string | null>(null);
   const [regenOpen, setRegenOpen] = useState(false);
@@ -217,6 +218,7 @@ export default function ReaderPage() {
       setExerciseOpen(false);
       setExerciseFocus(null);
       setIsClosingExercise(false);
+      setIsExerciseFullscreen(false);
     }, 300);
   }, []);
 
@@ -460,7 +462,13 @@ export default function ReaderPage() {
   const orphanCount = annotations.filter((a) => a.status === "orphan").length;
 
   return (
-    <div className="flex h-full w-full bg-white dark:bg-gray-900 overflow-hidden">
+    <div
+      className="flex h-full w-full bg-white dark:bg-gray-900 overflow-hidden"
+      style={{
+        ...hlColorVars(hlColors),
+        "--course-font-size": `${courseFontSize}px`,
+      } as React.CSSProperties}
+    >
       {/* 目录：桌面左侧栏；固定不随文章滑动，支持丝滑折叠展开 */}
       <aside
         className={`hidden h-full w-72 shrink-0 flex-col border-r border-gray-100 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-800/40 md:flex transition-all duration-300 ease-in-out ${
@@ -533,10 +541,10 @@ export default function ReaderPage() {
         </div>
       </aside>
 
-      {/* 正文主区域：独立纵向滚动，右侧面板打开时平滑向左避让，关闭时丝滑复原 */}
+      {/* 正文主区域：独立纵向滚动，右侧面板打开时平滑向左避让，关闭或全屏时丝滑复原 */}
       <main
         className={`flex-1 h-full overflow-y-auto min-w-0 transition-all duration-300 ease-out ${
-          isRightPanelOpen ? "md:mr-[420px]" : "mr-0"
+          isRightPanelOpen && !isExerciseFullscreen ? "md:mr-[420px]" : "mr-0"
         }`}
       >
         <div className="relative mx-auto w-full max-w-3xl px-4 py-8 md:px-10">
@@ -738,14 +746,17 @@ export default function ReaderPage() {
       {/* 知识点抽屉：统一右侧 420px 滑入动效与正文平移避让 */}
       {kpOpen && (
         <div
-          className={`fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl sm:w-[420px] transition-transform duration-300 ease-out transform ${
+          className={`fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl sm:w-[420px] transition-transform duration-300 ease-out transform drawer-content-root ${
             !isClosingKp ? "translate-x-0" : "translate-x-full"
           }`}
+          style={{
+            "--course-font-size": `${courseFontSize}px`,
+          } as React.CSSProperties}
         >
-          <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3">
+          <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3 shrink-0">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">💡 本章知识点</span>
-              <span className="rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-xs text-gray-500 dark:text-gray-400">
+              <span className="drawer-title font-semibold text-gray-900 dark:text-gray-100">💡 本章知识点</span>
+              <span className="rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-[0.8em] text-gray-500 dark:text-gray-400">
                 {activeKps.length}
               </span>
             </div>
@@ -758,7 +769,7 @@ export default function ReaderPage() {
             </button>
           </div>
           {activeKps.length === 0 ? (
-            <p className="py-12 text-center text-xs text-gray-400 dark:text-gray-500">（本章暂无拆解出的知识点）</p>
+            <p className="py-12 text-center text-[0.88em] text-gray-400 dark:text-gray-500">（本章暂无拆解出的知识点）</p>
           ) : (
             <div className="flex-1 space-y-3 overflow-y-auto p-4">
               {activeKps.map((kp) => (
@@ -767,10 +778,10 @@ export default function ReaderPage() {
                   className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-3.5 shadow-sm hover:border-gray-300 dark:hover:border-gray-600 transition-colors"
                 >
                   <div className="flex items-center justify-between">
-                    <div className="text-sm font-semibold text-gray-800 dark:text-gray-200">{kp.title}</div>
+                    <div className="drawer-item-title font-semibold text-gray-800 dark:text-gray-200">{kp.title}</div>
                     <Button
                       variant="ghost"
-                      className="text-xs text-brand-600 dark:text-brand-400 hover:text-brand-700"
+                      className="drawer-btn text-brand-600 dark:text-brand-400 hover:text-brand-700 !px-2 !py-0.5 text-xs"
                       onClick={() => {
                         closeKp();
                         openExercise(kp.id);
@@ -779,7 +790,7 @@ export default function ReaderPage() {
                       🎮 关联闯关
                     </Button>
                   </div>
-                  <p className="mt-1.5 text-xs text-gray-600 dark:text-gray-400 leading-relaxed">{kp.summary}</p>
+                  <p className="mt-1.5 drawer-item-sub text-gray-600 dark:text-gray-400 leading-relaxed">{kp.summary}</p>
                 </div>
               ))}
             </div>
@@ -796,6 +807,9 @@ export default function ReaderPage() {
           focusKpId={exerciseFocus}
           closing={isClosingExercise}
           onClose={closeExercise}
+          fontSize={courseFontSize}
+          onFontSizeChange={setCourseFontSize}
+          onFullscreenChange={setIsExerciseFullscreen}
         />
       )}
 
@@ -836,6 +850,7 @@ export default function ReaderPage() {
             }
           }}
           onClose={closeDrawer}
+          fontSize={courseFontSize}
         />
       )}
 
@@ -848,6 +863,7 @@ export default function ReaderPage() {
           closing={isClosingCard}
           onClose={closeAnnotation}
           onJump={(a) => jumpTo(a.section_id, a.id)}
+          fontSize={courseFontSize}
         />
       )}
 

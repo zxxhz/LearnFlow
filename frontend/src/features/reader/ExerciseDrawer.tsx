@@ -5,6 +5,8 @@ import { api } from "../../lib/api";
 import type { Exercise, KnowledgePoint } from "../../lib/types";
 import { Button, Select, Spinner } from "../../components/ui";
 import ExerciseCard from "./ExerciseCard";
+import FontSizeControl from "../../components/FontSizeControl";
+import { useFontSize } from "../../lib/fontSize";
 
 interface Props {
   documentId: string;
@@ -13,6 +15,9 @@ interface Props {
   focusKpId: string | null;
   closing?: boolean;
   onClose: () => void;
+  fontSize?: number;
+  onFontSizeChange?: (size: number) => void;
+  onFullscreenChange?: (isFullscreen: boolean) => void;
 }
 
 export default function ExerciseDrawer({
@@ -22,9 +27,36 @@ export default function ExerciseDrawer({
   focusKpId,
   closing = false,
   onClose,
+  fontSize: propFontSize,
+  onFontSizeChange,
+  onFullscreenChange,
 }: Props) {
   const queryClient = useQueryClient();
   const [mounted, setMounted] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const { fontSize: fallbackFontSize, setFontSize: fallbackSetFontSize } = useFontSize("course");
+  const currentFontSize = propFontSize ?? fallbackFontSize;
+  const handleFontSizeChange = onFontSizeChange ?? fallbackSetFontSize;
+
+  useEffect(() => {
+    onFullscreenChange?.(isFullscreen);
+  }, [isFullscreen, onFullscreenChange]);
+
+  // Esc 键优先退出全屏，若非全屏则关闭抽屉
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (isFullscreen) {
+          setIsFullscreen(false);
+        } else {
+          onClose();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFullscreen, onClose]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -141,18 +173,33 @@ export default function ExerciseDrawer({
 
   return (
     <div
-      className={`fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl sm:w-[420px] transition-transform duration-300 ease-out transform ${
+      className={`fixed right-0 top-0 z-40 flex h-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl transition-all duration-300 ease-in-out transform exercise-drawer-root drawer-content-root ${
+        isFullscreen
+          ? "w-full left-0 right-0 sm:w-full"
+          : "w-full sm:w-[480px] md:w-[500px]"
+      } ${
         isVisible ? "translate-x-0" : "translate-x-full"
       }`}
+      style={{
+        "--course-font-size": `${currentFontSize}px`,
+      } as React.CSSProperties}
     >
-      <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">🎮 闯关练习{total > 0 && `（${total}）`}</span>
+      <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3 shrink-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+            🎮 闯关练习{total > 0 && `（${total}）`}
+          </span>
           <span className="text-[11px] rounded bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 px-1.5 py-0.5 text-amber-700 dark:text-amber-300 font-medium">
             💡 助教伴学
           </span>
           {ladder.length > 0 && (
-            <span className={`text-xs font-medium ${cleared === ladder.length ? "text-green-600 dark:text-green-400" : "text-gray-400 dark:text-gray-500"}`}>
+            <span
+              className={`text-xs font-medium ${
+                cleared === ladder.length
+                  ? "text-green-600 dark:text-green-400"
+                  : "text-gray-400 dark:text-gray-500"
+              }`}
+            >
               已通关 {cleared}/{ladder.length} 关
             </span>
           )}
@@ -166,11 +213,37 @@ export default function ExerciseDrawer({
             </Button>
           )}
         </div>
-        <button className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300" onClick={onClose}>
-          ✕
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <FontSizeControl
+            value={currentFontSize}
+            onChange={handleFontSizeChange}
+            defaultValue={16}
+            label="字号"
+          />
+          <button
+            type="button"
+            onClick={() => setIsFullscreen((v) => !v)}
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 transition"
+            title={isFullscreen ? "还原侧边抽屉 (Esc)" : "全屏展开做题 (Esc退出)"}
+          >
+            <span className="text-sm">{isFullscreen ? "⤡" : "⤢"}</span>
+            <span className="hidden sm:inline font-medium">{isFullscreen ? "还原" : "全屏"}</span>
+          </button>
+          <button
+            className="ml-1 flex h-7 w-7 items-center justify-center rounded-md text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600 dark:hover:text-gray-300 transition"
+            onClick={onClose}
+            title="关闭"
+          >
+            ✕
+          </button>
+        </div>
       </div>
-      <div ref={listRef} className="flex-1 space-y-4 overflow-auto p-3">
+      <div ref={listRef} className="flex-1 overflow-y-auto">
+        <div
+          className={`mx-auto transition-all duration-300 ${
+            isFullscreen ? "max-w-4xl px-6 py-6 space-y-6" : "w-full p-3.5 space-y-4"
+          }`}
+        >
         {quizMode && kps.length > 0 && (
           <div className="space-y-3 rounded-xl border border-brand-200 dark:border-brand-700 bg-brand-50 dark:bg-brand-900/40 p-3">
             <div className="flex items-center justify-between">
@@ -292,6 +365,7 @@ export default function ExerciseDrawer({
             </div>
           );
         })}
+        </div>
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ import type { Annotation, AnnotationColor, ChatSSEEvent } from "../../lib/types"
 import { Button, ConfirmDialog, Spinner, Textarea } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
 import { HL_COLOR_KEYS, useHlColors } from "./colors";
+import { useFontSize } from "../../lib/fontSize";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 const KATEX_DELIMITERS = [
@@ -22,6 +23,7 @@ interface Props {
   closing?: boolean;
   onClose: () => void;
   onJump: (a: Annotation) => void;
+  fontSize?: number;
 }
 
 export default function AnnotationCard({
@@ -30,9 +32,12 @@ export default function AnnotationCard({
   closing = false,
   onClose,
   onJump,
+  fontSize: propFontSize,
 }: Props) {
   const queryClient = useQueryClient();
   const hlColors = useHlColors();
+  const { fontSize: fallbackFontSize } = useFontSize("course");
+  const currentFontSize = propFontSize ?? fallbackFontSize;
   const [mounted, setMounted] = useState(false);
   const [input, setInput] = useState("");
   // 本地临时/乐观消息（用户刚发出的问题与刚完成的回复，避免等网络回包闪烁）
@@ -187,20 +192,23 @@ export default function AnnotationCard({
 
   return (
     <div
-      className={`fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl sm:w-[420px] transition-transform duration-300 ease-out transform ${
+      className={`fixed right-0 top-0 z-40 flex h-full w-full flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl sm:w-[420px] transition-transform duration-300 ease-out transform drawer-content-root ${
         isVisible ? "translate-x-0" : "translate-x-full"
       }`}
+      style={{
+        "--course-font-size": `${currentFontSize}px`,
+      } as React.CSSProperties}
     >
       {/* 头部：颜色切换与关闭 */}
-      <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3">
+      <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3 shrink-0">
         <div className="flex items-center gap-2">
           <span
             className="h-3.5 w-3.5 rounded-full shadow-sm"
             style={{ backgroundColor: hlColors[currentColor] }}
           />
-          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">划线提问</span>
+          <span className="drawer-title font-semibold text-gray-900 dark:text-gray-100">划线提问</span>
           {annotation.status === "orphan" && (
-            <span className="rounded-full bg-red-100 dark:bg-red-900/40 px-2 py-0.5 text-[10px] text-red-600 dark:text-red-400">
+            <span className="rounded-full bg-red-100 dark:bg-red-900/40 px-2 py-0.5 text-[0.75em] text-red-600 dark:text-red-400">
               原文已变更
             </span>
           )}
@@ -234,11 +242,11 @@ export default function AnnotationCard({
             className="w-1 shrink-0 rounded"
             style={{ backgroundColor: hlColors[currentColor] }}
           />
-          <p className="line-clamp-6 flex-1 text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
+          <p className="line-clamp-6 flex-1 text-[0.95em] text-gray-600 dark:text-gray-300 leading-relaxed">
             {annotation.exact}
           </p>
         </div>
-        <div className="mt-2 flex items-center gap-1 text-xs">
+        <div className="mt-2 flex items-center gap-1 text-[0.85em]">
           <Button variant="ghost" className="text-xs" onClick={() => onJump(annotation)}>
             📍 定位原文
           </Button>
@@ -260,6 +268,7 @@ export default function AnnotationCard({
               value={noteDraft}
               onChange={(e) => setNoteDraft(e.target.value)}
               placeholder="私有备注（不进入对话）"
+              className="text-[0.9em]"
             />
             <div className="mt-1 text-right">
               <Button
@@ -292,9 +301,11 @@ export default function AnnotationCard({
                 }`}
               >
                 {m.role === "user" ? (
-                  <p className="whitespace-pre-wrap text-sm break-words">{m.content}</p>
+                  <p className="whitespace-pre-wrap text-[0.95em] break-words leading-relaxed">{m.content}</p>
                 ) : (
-                  <MarkdownLite text={m.content} />
+                  <div className="text-[0.95em] leading-relaxed">
+                    <MarkdownLite text={m.content} />
+                  </div>
                 )}
               </div>
             </div>
@@ -304,7 +315,7 @@ export default function AnnotationCard({
         {/* AI 思考中动效 */}
         {isThinking && (
           <div className="flex justify-start">
-            <div className="flex items-center gap-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 px-3.5 py-2 text-xs text-gray-500 dark:text-gray-400">
+            <div className="flex items-center gap-2 rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 px-3.5 py-2 text-[0.85em] text-gray-500 dark:text-gray-400">
               <div className="flex items-center space-x-1">
                 <span className="h-1.5 w-1.5 rounded-full bg-brand-500 animate-bounce" style={{ animationDelay: "0ms" }} />
                 <span className="h-1.5 w-1.5 rounded-full bg-brand-500 animate-bounce" style={{ animationDelay: "150ms" }} />
@@ -320,7 +331,7 @@ export default function AnnotationCard({
           <div className="flex justify-start">
             <div
               ref={streamRef}
-              className="msg-md max-w-[90%] rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 px-3.5 py-2 text-sm text-gray-800 dark:text-gray-200 shadow-sm"
+              className="msg-md max-w-[90%] rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 px-3.5 py-2 text-[0.95em] text-gray-800 dark:text-gray-200 shadow-sm"
             >
               <div dangerouslySetInnerHTML={{ __html: md.render(streaming) }} />
               <span className="inline-block h-3.5 w-1.5 ml-0.5 align-middle bg-brand-500 animate-pulse rounded-sm" />
@@ -329,7 +340,7 @@ export default function AnnotationCard({
         )}
 
         {streamErr && (
-          <div className="rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 p-2 text-center text-xs text-red-600 dark:text-red-400">
+          <div className="rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 p-2 text-center text-[0.85em] text-red-600 dark:text-red-400">
             {streamErr}
           </div>
         )}
@@ -337,7 +348,7 @@ export default function AnnotationCard({
       </div>
 
       {/* 输入区 */}
-      <div className="border-t border-gray-100 dark:border-gray-800 p-3 bg-white dark:bg-gray-900">
+      <div className="border-t border-gray-100 dark:border-gray-800 p-3 bg-white dark:bg-gray-900 shrink-0">
         <Textarea
           rows={2}
           value={input}
@@ -350,9 +361,10 @@ export default function AnnotationCard({
           }}
           placeholder="就划线内容提问…（Enter 发送，Shift+Enter 换行）"
           disabled={!!streaming || isThinking}
+          className="text-[0.92em]"
         />
         <div className="mt-2 flex items-center justify-between">
-          <span className="text-[11px] text-gray-400 dark:text-gray-500">
+          <span className="text-[0.8em] text-gray-400 dark:text-gray-500">
             Enter 发送 / Shift+Enter 换行
           </span>
           <Button disabled={!input.trim() || !!streaming || isThinking} onClick={send}>

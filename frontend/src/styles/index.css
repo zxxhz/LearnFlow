@@ -173,13 +173,88 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
   color: #e5e7eb;
 }
 
-/* 对话消息里的轻量 markdown */
-.msg-md p { @apply my-1.5; }
-.msg-md ul { @apply my-1.5 list-disc pl-5; }
-.msg-md ol { @apply my-1.5 list-decimal pl-5; }
-.msg-md pre { @apply my-2 overflow-x-auto rounded-md bg-gray-900 p-3 text-xs text-gray-100; }
-.msg-md code { @apply rounded bg-gray-100 dark:bg-gray-800 px-1 py-0.5 text-[13px]; }
-.msg-md pre code { @apply bg-transparent p-0 text-inherit; }
+/* ===== 右侧抽屉通用排版与字号等比缩放 ===== */
+.drawer-content-root {
+  font-size: var(--course-font-size, 16px);
+}
+.drawer-content-root .drawer-title {
+  font-size: 1.05em;
+  line-height: 1.5;
+}
+.drawer-content-root .drawer-desc {
+  font-size: 0.9em;
+  line-height: 1.6;
+}
+.drawer-content-root .drawer-item-title {
+  font-size: 1em;
+  line-height: 1.5;
+}
+.drawer-content-root .drawer-item-sub {
+  font-size: 0.88em;
+  line-height: 1.55;
+}
+.drawer-content-root .drawer-meta {
+  font-size: 0.8em;
+}
+.drawer-content-root .drawer-btn {
+  font-size: 0.85em;
+}
+
+/* ===== 闯关练习排版与字号等比缩放体系 ===== */
+.exercise-drawer-root {
+  font-size: var(--course-font-size, 16px);
+}
+.exercise-drawer-root .exercise-card-root {
+  font-size: 1em;
+}
+.exercise-drawer-root .exercise-card-title {
+  font-size: 1.05em;
+  line-height: 1.5;
+}
+.exercise-drawer-root .exercise-task-md {
+  font-size: 0.95em;
+  line-height: 1.65;
+}
+.exercise-drawer-root .exercise-hint-box {
+  font-size: 0.9em;
+  line-height: 1.55;
+}
+.exercise-drawer-root .exercise-code-editor {
+  font-size: 0.88em;
+  line-height: 1.55;
+}
+.exercise-drawer-root .exercise-terminal-box {
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+.exercise-drawer-root .exercise-option-btn {
+  font-size: 0.95em;
+  line-height: 1.5;
+}
+.exercise-drawer-root .exercise-input-box {
+  font-size: 0.95em;
+  line-height: 1.5;
+}
+.exercise-drawer-root .exercise-tutor-box {
+  font-size: 0.9em;
+  line-height: 1.6;
+}
+.exercise-drawer-root .exercise-result-banner {
+  font-size: 0.95em;
+  line-height: 1.5;
+}
+
+/* 对话消息里的轻量 markdown（相对当前字号等比缩放） */
+.msg-md {
+  font-size: 1em;
+  line-height: 1.65;
+}
+.msg-md p { @apply my-1.5; font-size: 1em; }
+.msg-md ul { @apply my-1.5 list-disc pl-5; font-size: 1em; }
+.msg-md ol { @apply my-1.5 list-decimal pl-5; font-size: 1em; }
+.msg-md pre { @apply my-2 overflow-x-auto rounded-md bg-gray-900 p-3 text-gray-100; font-size: 0.88em; }
+.msg-md code { @apply rounded bg-gray-100 dark:bg-gray-800 px-1 py-0.5; font-size: 0.9em; }
+.msg-md pre code { @apply bg-transparent p-0 text-inherit; font-size: inherit; }
 .msg-md .katex-display { @apply overflow-x-auto; }
 
 /* 滚动条美化 */
