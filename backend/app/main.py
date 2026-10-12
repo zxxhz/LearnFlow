@@ -43,11 +43,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db()
 
     from app.sample_course import seed_sample_course
+    from app.services.mindmap import seed_sample_mindmap
     from app.services.search import backfill_fts
 
     async with _db_session() as db:
         await backfill_fts(db)  # 老库升级回填全文索引
         await seed_sample_course(db)  # 首跑示例课程（无 LLM 也能体验）
+        await seed_sample_mindmap(db)  # 首跑示例思维导图（开箱即用体验导图画布与 Agent）
     # 恢复上次中断的生成任务（PRD FR-1.3 断点续生成）
     with contextlib.suppress(ImportError):
         from app.services.generation.pipeline import resume_pending_generations

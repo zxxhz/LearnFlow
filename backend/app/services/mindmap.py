@@ -801,3 +801,152 @@ async def stream_node_qa(
             yield {"type": "delta", "text": chunk}
 
     yield {"type": "done"}
+
+
+async def seed_sample_mindmap(db: AsyncSession) -> None:
+    """初次启动播种示例思维导图（若库中没有任何导图且未播种过）。"""
+    from app.core.config import settings
+
+    flag_file = settings.DATA_DIR / ".sample_mindmap_seeded"
+    if flag_file.exists():
+        return
+
+    # 检查数据库是否已有导图
+    stmt = select(MindMap).limit(1)
+    res = await db.execute(stmt)
+    if res.scalars().first():
+        try:
+            flag_file.touch(exist_ok=True)
+        except OSError:
+            pass
+        return
+
+    sample_tree = {
+        "id": "node_root",
+        "title": "计算机系统与现代软件架构",
+        "summary": "从底层硬件底座到上层分布式软件工程的完整知识图谱",
+        "detail": "# 计算机系统与现代软件架构全景\n\n本导图是 LearnFlow 预置的示例思维导图，涵盖计算机体系、操作系统、网络传输与软件架构核心基石。\n\n你可以：\n- 点击任意节点在右侧抽屉查看或生成详细知识剖析\n- 打开「🧠 伴学 Agent」下达自然语言指令增删改导图\n- 点击节点悬浮的「＋」或「🗑️」自由拓展定制",
+        "collapsed": False,
+        "children": [
+            {
+                "id": new_node_id(),
+                "title": "计算机体系底座",
+                "summary": "硬件与体系结构基石",
+                "detail": "计算机体系结构关注硬件组件的组织和互连，构成了所有软件系统运行的物理底座。",
+                "collapsed": False,
+                "children": [
+                    {
+                        "id": new_node_id(),
+                        "title": "CPU流水线与乱序执行",
+                        "summary": "指令级并行与分支预测",
+                        "detail": "### CPU 流水线\n现代处理器通过将指令执行拆分为取指、译码、执行、访存、写回等多级流水线，配合分支预测器与乱序执行引擎，大幅提升每时钟周期指令数（IPC）。",
+                        "children": [],
+                    },
+                    {
+                        "id": new_node_id(),
+                        "title": "多级缓存体系与局部性",
+                        "summary": "L1/L2/L3 与时间/空间局部性",
+                        "detail": "### 内存层次体系\n利用时间局部性和空间局部性原理，现代 CPU 构筑了寄存器、L1、L2、L3 高速缓存与主存的层次结构，以缓解主存访问延迟的物理瓶颈。",
+                        "children": [],
+                    },
+                    {
+                        "id": new_node_id(),
+                        "title": "虚拟内存与页表机制",
+                        "summary": "地址翻译与TLB快表",
+                        "detail": "### 虚拟内存\n通过 MMU（内存管理单元）将进程的虚拟地址映射至物理内存页，实现内存空间隔离、安全保护与惰性按需换页机制。",
+                        "children": [],
+                    },
+                ],
+            },
+            {
+                "id": new_node_id(),
+                "title": "操作系统核心",
+                "summary": "资源管理与抽象调度",
+                "detail": "操作系统作为底层硬件与上层应用之间的软件中介，承担 CPU 调度、内存隔离与设备抽象三大支柱。",
+                "collapsed": False,
+                "children": [
+                    {
+                        "id": new_node_id(),
+                        "title": "进程与线程并发模型",
+                        "summary": "上下文切换与状态机",
+                        "detail": "### 进程与线程\n- **进程**：资源分配与保护的独立基本单位。\n- **线程**：CPU 调度与指令执行的最小单位，共享所属进程的堆区与代码段，拥有独立的栈和寄存器上下文。",
+                        "children": [],
+                    },
+                    {
+                        "id": new_node_id(),
+                        "title": "进程间通信机制",
+                        "summary": "管道、共享内存与消息队列",
+                        "detail": "### IPC 机制\n涵盖匿名管道、命名管道、UNIX域套接字、共享内存与信号量同步，其中共享内存拥有极高的吞吐性能但需要锁配合。",
+                        "children": [],
+                    },
+                    {
+                        "id": new_node_id(),
+                        "title": "虚拟文件系统与PageCache",
+                        "summary": "VFS与脏页回写",
+                        "detail": "### VFS 与页缓存\nLinux 通过 VFS 为各种文件系统提供统一 API，结合内核 PageCache 缓存磁盘块，大幅减少机械磁盘或闪存的物理 I/O 次数。",
+                        "children": [],
+                    },
+                ],
+            },
+            {
+                "id": new_node_id(),
+                "title": "网络协议与通信",
+                "summary": "端到端可靠互联",
+                "detail": "网络协议栈负责异构网络节点间的数据封装、路由寻址与端到端可靠性保证。",
+                "collapsed": False,
+                "children": [
+                    {
+                        "id": new_node_id(),
+                        "title": "TCP可靠传输机制",
+                        "summary": "三次握手、滑动窗口与拥塞控制",
+                        "detail": "### TCP 核心机制\n基于序列号、确认应答、超时重传、滑动窗口流量控制以及慢启动/拥塞避免机制，提供面向连接的字节流可靠传输保障。",
+                        "children": [],
+                    },
+                    {
+                        "id": new_node_id(),
+                        "title": "HTTP应用层协议演进",
+                        "summary": "HTTP/1.1管道、HTTP/2多路复用与HTTP/3",
+                        "detail": "### HTTP 协议演进\n- HTTP/1.1：长连接与文本报文\n- HTTP/2：二进制分帧与单一连接多路复用\n- HTTP/3：基于 UDP 的 QUIC 协议，从根本上解决 TCP 线头阻塞问题",
+                        "children": [],
+                    },
+                ],
+            },
+            {
+                "id": new_node_id(),
+                "title": "现代分布式架构",
+                "summary": "高可用与扩展性设计",
+                "detail": "应对海量请求与海量数据的高并发架构设计原则与中间件技术栈。",
+                "collapsed": False,
+                "children": [
+                    {
+                        "id": new_node_id(),
+                        "title": "分层缓存与一致性",
+                        "summary": "本地缓存、Redis与双写一致策略",
+                        "detail": "### 缓存架构\n使用分布式缓存抗住读流量，配合 Cache-Aside（旁路缓存）与延迟双删保证数据最终一致性。",
+                        "children": [],
+                    },
+                    {
+                        "id": new_node_id(),
+                        "title": "异步解耦与消息队列",
+                        "summary": "削峰填谷与发布订阅",
+                        "detail": "### 消息队列\n通过 Kafka / RocketMQ 实现系统间强解耦、大促流量削峰填谷，以及跨服务事件驱动最终一致性事务。",
+                        "children": [],
+                    },
+                ],
+            },
+        ],
+    }
+
+    sample_map = MindMap(
+        title="计算机系统与现代软件架构",
+        topic="计算机科学与软件工程",
+        root=sample_tree,
+        settings={"layout": "lr", "zoom": 1},
+    )
+    db.add(sample_map)
+    await db.commit()
+    try:
+        flag_file.touch(exist_ok=True)
+    except OSError:
+        pass
+
