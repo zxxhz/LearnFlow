@@ -807,7 +807,7 @@ async def seed_sample_mindmap(db: AsyncSession) -> None:
     """初次启动播种示例思维导图（若库中没有任何导图且未播种过）。"""
     from app.core.config import settings
 
-    flag_file = settings.DATA_DIR / ".sample_mindmap_seeded"
+    flag_file = settings.data_dir / ".sample_mindmap_seeded"
     if flag_file.exists():
         return
 
