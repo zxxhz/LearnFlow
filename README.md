@@ -1,268 +1,173 @@
-<h1 align="center">LearnFlow</h1>
+<div align="center">
 
-<p align="center">
-  <strong>本地运行、注重隐私的 Agentic AI 伴学与高效刷题系统</strong>
-</p>
+# LearnFlow
 
-<p align="center">
-  <a href="https://github.com/zxxhz/LearnFlow/releases"><img src="https://img.shields.io/github/v/release/zxxhz/LearnFlow?style=flat-square&color=2563eb" alt="GitHub release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/zxxhz/LearnFlow?style=flat-square&color=blue" alt="License" /></a>
-  <a href="https://github.com/zxxhz/LearnFlow/stargazers"><img src="https://img.shields.io/github/stars/zxxhz/LearnFlow?style=flat-square&color=eab308" alt="GitHub stars" /></a>
-  <a href="https://github.com/zxxhz/LearnFlow/issues"><img src="https://img.shields.io/github/issues/zxxhz/LearnFlow?style=flat-square" alt="GitHub issues" /></a>
-  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
-  <img src="https://img.shields.io/badge/React-18-20232A?style=flat-square&logo=react&logoColor=61DAFB" alt="React" />
-  <img src="https://img.shields.io/badge/Tauri-v2-24C8DB?style=flat-square&logo=tauri&logoColor=white" alt="Tauri" />
-</p>
+本地运行的 AI 伴学与个人知识库工具
 
-<p align="center">
-  <a href="https://github.com/zxxhz/LearnFlow/releases">下载安装包</a> ·
-  <a href="docs/PRD.md">产品设计文档</a> ·
-  <a href="#快速开始">快速开始</a> ·
-  <a href="https://github.com/zxxhz/LearnFlow/issues">反馈问题</a>
-</p>
+[![Release][release-shield]][release-url]
+[![Stars][stars-shield]][stars-url]
+[![Issues][issues-shield]][issues-url]
 
----
+[下载安装包](https://github.com/zxxhz/LearnFlow/releases) · [产品设计文档](docs/PRD.md) · [反馈问题](https://github.com/zxxhz/LearnFlow/issues)
 
-## 背景与设计理念
+</div>
 
-在自学编程语言（如 C++、Python）和高等数学等强逻辑学科时，传统的自学流程常存在三大断层：**教程零散不成体系**、**阅读疑问散落无法回溯**、**缺少真实从零写代码的客观判题闭环**。而普通的 AI 对话助手往往扮演“答题器”，卡壳时直接剧透完整答案，容易让人陷入“看懂了但写不出”的“假懂”陷阱。
+输入想学的科目（如 C++ 进阶、离散数学、网络安全），AI 生成大纲并逐章撰写讲义。也可以导入自己的 Markdown 笔记或题库表格。阅读时可随时划线提问，做题卡关时有带工具调用（代码沙箱实测、函数绘图）的伴学助教启发提示；另外内置了独立思维导图画布、多题型刷题、代码手写闯关与因材施教的学习者认知画像。
 
-**LearnFlow** 旨在打破这些壁垒：系统从单纯的单向问答（Chat）进化为具备**感知诊断、动态工具链调用（Tool Calling）、学习者认知建模**的真正 Agentic 伴学智能体，为自学者构建“**编撰体系讲义 ➔ 沉浸精读研讨 ➔ 链式闯关练习 ➔ 启发助教引导 ➔ 题库极速刷题 ➔ 错题定向清零**”的完整闭环。
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│   学 ──── 输入目标 → 大纲协同确认 → 逐章流式生成讲义 → 沉浸阅读器  │
-│   │        自动划重点提炼核心定义，沉浸式双栏排版 + ADHD 护眼模式 │
-│   │ 遇到疑问：划线 → 弹出研讨卡片（平滑避让）→ 多轮原位持久化对话 │
-│   ↓                                                             │
-│                                                                 │
-│   练 ──── 链式闯关：由浅入深解锁，渐进提示 + 目标输出常显       │
-│   │        无骨架从零手写代码 / 数学表达式                      │
-│   │        本地受限沙箱真实运行 / SymPy 代数等价客观判题        │
-│   ↓                                                             │
-│                                                                 │
-│   伴 ──── 遇阻召唤启发式助教：苏格拉底式诊断思维盲区与漏洞      │
-│   │        助教自主调用 Tool Calling 工具链（沙箱/绘图/透视）    │
-│   ↓        持久化沉淀学习者认知画像与易错模式模型               │
-│                                                                 │
-│   刷 ──── 练习错题自动进错题本，集中攻坚直至重刷通过出池        │
-│            独立题库模块：Excel 批量秒级导入 → 随机组卷 → 错题专练 │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-## 功能特性
-
-- **🤖 启发式伴学 Agent** — 卡壳时提供苏格拉底式启发引导，自主循环调用本地沙箱实测、函数绘图与关卡透视工具链，杜绝直接剧透，沉淀学习者认知画像与易错模式。
-- **⚔️ 链式代码与代数闯关** — 知识点关卡由浅入深链式顺序解锁；无预填骨架逼迫从零手写代码；提供渐进式折叠提示；内置 SymPy 代数等价判题引擎客观判定数学表达式。
-- **🎯 独立题库刷题模块** — 独立于课程体系的刷题引擎，支持 Excel（`.xls` / `.xlsx`）批量秒级导入单选、多选与判断题，支持 10/20/50 题极速随机组卷与专属动态错题池。
-- **📚 沉浸式阅读与 ADHD 模式** — 生成讲义自动提炼划重点；阅读页自动隐藏全局侧栏转换为左侧完整目录树与右侧正文双栏布局；专设 ADHD 辅助模式（段落交替护眼色块 / 悬停动态聚焦）；划线提问卡片与正文平滑避让。
-- **🖥️ 本地隔离沙箱与高数绘图** — 内置 Python 隔离环境与 C++ 编译沙箱（10 秒强制限时、256MB 内存 Job Object 约束）；支持一键安装便携编译器；内置 ` ```plot ` 代码块一键绘制高清函数曲线。
-- **📱 局域网访问与 PWA 跨端支持** — 遵循最小暴露原则默认关闭局域网，设置页一键开启并配备高强度令牌保护；全站支持 PWA，可在平板（iPad）或手机上一键添加到主屏幕体验原生 App 级沉浸交互。
-- **🔒 纯本地数据主权与纯净打包** — 全部数据落盘于本地 SQLite（WAL 高性能模式）与 Markdown 文本；设置页一键打包 zip 备份与无损热还原；四层长效防御彻底剔除 Matplotlib 示例图片防相册泄漏。
+所有数据完全存放在本地，支持接入各大兼容 OpenAI 协议的模型（DeepSeek、智谱、Moonshot、OpenAI、Gemini 等）或本地部署的 Ollama。
 
 <details>
-<summary>点击展开查看详尽功能说明</summary>
+<summary>目录</summary>
 
-### 🤖 启发式伴学 Agent（Tutor）
-- **启发式诊断感知**：闯关失败或执行报错时，卡片即刻浮现「💡 呼叫助教启发诊断」。助教精准定位代码与逻辑偏差，循循善诱，支持多轮流式（SSE）追问。
-- **动态工具链闭环（Tool Calling）**：助教具备工具自主调用循环（Agent Loop），在辅导时可主动调用沙箱实测代码猜想（`run_sandbox_code`）、动态调用 SymPy 绘制函数图像（`render_math_plot`）、透视关卡测试用例与标准边界（`inspect_exercise`），前端实时呈现动态执行卡片动效；对不支持 Function Calling 的模型具备平滑纯文本降级保护。
-- **学习者认知画像建模**：数据库持久化建档学习者档案（`learner_profiles`：先验知识、认知风格、引导偏好）与认知漏洞（`learner_misconceptions`：易错模式、错误证据、修复状态）；支持「💡 启发」与「📖 直答」双模态自由切换。
-
-### ⚔️ 链式闯关练习与代数/代码判定
-- **知识点链式解锁**：同一知识点下的关卡按由浅入深的通关链路编排，前一关通过方可解锁下一关（通关状态永久记录）。
-- **从零手写与渐进提示**：每关呈现明确任务、目标输出常显，不提供现成代码骨架，倒逼学习者从零动手敲代码，真实标准输出（stdout）对比判定；配套 2-3 条渐进式提示（Hints，默认显露第 1 条，攻坚卡壳时按需展开）；通关后方可查看参考实现（Reference Code）。
-- **SymPy 代数等价判题引擎**：新增 `math` 练习题型，利用符号代数化简判定 `simplify(u - e) == 0`，支持乘法交换律、同类项合并、指数展开等客观数学等价性验证。
-- **错题自动进池与随堂小测**：做错题目自动纳入错题本，重刷通过后自动移出；支持跨知识点随机抽题组合「随堂小测」测试出分；存量选择/填空/概念题作为支线保留。
-
-### 🎯 独立题库刷题模块
-- **Excel 批量极速导入**：独立于课程体系的刷题引擎，支持 `.xls` 与 `.xlsx` 格式秒级导入单选、多选、判断题。
-- **卡片式组卷刷题**：自由选择 10 / 20 / 50 题/轮极速随机组卷，作答即时打分与解析。
-- **动态错题池机制**：作答记录追加存储，以每道题最新一次作答状态自动派生错题池，支持错题专项重刷，攻坚通过即时出池。
-- **题库管理**：卡片式展现，支持一键重命名、题型分布统计与独立管理。
-
-### 📚 沉浸式阅读、自动划重点与 ADHD 模式
-- **结构化体系讲义**：输入科目与目标，AI 生成多级大纲（支持自由增删调整），逐章流式生成详实讲义，配备 LaTeX 公式与代码高亮；提示词全面去 AI 机械味，结合核心痛点与生活化比喻自然展开；支持断点续写与单章重新生成。
-- **课程生成自动划重点**：生成或重生成章节时，AI 自动在元数据中提炼 3–6 处核心定义、黄金法则或避坑要害，生成时**自动划重点高亮**并精确锚定在讲义正文中（无重叠）；新建课程确认页与单章重生成弹窗支持自由勾选，设置页提供全局默认偏好开关。
-- **沉浸式双栏阅读**：进入阅读页自动隐藏全局主导航栏，呈现左侧完整目录树（全课程章节列表与当前章小节定位、深浅主题切换、返回首页与课程详情）与右侧正文双栏布局；移动端与窄屏自适应目录浮层。
-- **划线多轮研讨与平移避让**：阅读讲义划选文字/公式/代码段，即时唤起对话卡片多轮探讨；卡片支持平滑滑入/滑出动效，展开时正文区域平滑平移避让视线，关闭时平滑复原；划线高亮与对话内容完全持久化存储，重开文档位置不丢。
-- **ADHD 辅助阅读模式**：针对长篇高密度文本阅读，提供专为注意力打造的辅助阅读模式：
-  - **模式 A（段落交替护眼色块）**：正文各段落应用 6 色柔和护眼调色板并加圆角包裹，段落边界一目了然；
-  - **模式 B（悬停动态高亮跟随）**：鼠标移入段落时光标所在段落悬浮高亮、微位移与阴影聚焦；
-  - 设置页提供全局偏好设置与微缩预览，阅读页顶部操作栏提供 `🧠 ADHD: 关/A/B` 快捷药丸切换。
-- **全书问答与全局检索**：课程页直接面向整门讲义全文检索拼装上下文提问；支持基于 SQLite FTS5 的跨课程毫秒级全文检索与高亮直达。
-- **Markdown 笔记导入**：支持导入个人 Markdown 笔记，自动根据标题层级无损切章，支持课程随时重命名。
-
-### 🖥️ 代码运行沙箱与函数绘图
-- **多语言隔离沙箱**：内置 Python（`-I -B` 隔离模式，仅标准库）与 C++（系统编译器或便携版）沙箱；Windows Job Object 限制 256MB 内存，10 秒强制限时杀进程树，独立临时目录，历史执行结果全持久化。
-- **应用内一键便携安装**：设置页「代码运行环境」自动探测环境；缺 C++ 编译器（GCC 14.2.0）或 Python 时可一键后台静默下载便携版，支持国内镜像择优、断点续传与 SHA-256 哈希校验，不修改系统环境变量与注册表。
-- **动态函数绘图**：讲义支持 ` ```plot ` 代码块，每行一个函数表达式，SymPy + Matplotlib 自动绘制高清函数图像，多函数叠加对比与奇点自动断线。
-
-### 📱 局域网访问与 PWA 支持
-- **原生设置开关**：遵循最小暴露原则，局域网访问默认保持关闭；在设置页「数据与安全」提供直观平滑的「局域网访问」Switch 开关，按需一键开启并自动生成带有安全令牌的访问地址。
-- **安全访问令牌（Token Guard）**：局域网访问自动启用令牌校验保护，避免未经授权的设备访问本地服务与沙箱，静态资源白名单免阻拦。
-- **全景 PWA 支持**：配置 Web App Manifest、全尺寸自适应图标与专属 Service Worker，手机、平板或电脑浏览器均可「添加到主屏幕」化身独立轻量应用使用，支持缓存加速与离线降级。
-
-### 📊 掌握度仪表盘与本地备份
-- **多维学情追踪**：基于闯关练习真实通过率的知识点掌握度评分（0-100）、近 30 天学习热力图分布、累计阅读时长统计、按场景细分的 Token 消耗看板。
-- **纯本地数据主权**：所有学习记录与配置存储于本地 `app.db`（SQLite WAL 模式）与 `courses/`（纯 Markdown 文件）；设置页提供一键打包生成 zip 备份与无损恢复。
-
-### 🎨 桌面端体验与纯净运行
-- **Tauri v2 架构**：轻量独立窗口、托盘常驻（左键单击/双击即刻唤起主窗口）、关闭窗口自动最小化；启动时自动清理历史残留注册表项。
-- **居中 UpdateDialog 弹窗**：应用启动静默检测新版本，居中弹窗展示版本日志；支持 minisign 验签一键升级与平滑重启；多层防抖与默认系统浏览器安全唤起。
-- **纯净打包与防相册泄漏**：四层长效防御（Spec 过滤、构建保底、NSIS 安装器升级自清理）彻底剔除 Matplotlib 示例图片与 GUI 图标，杜绝 Windows 照片应用索引污染相册；保留纯无头 Agg + SVG 矢量绘图。
-- **界面统一与防折行细节**：全局统一 5xl 居中容器与滚动条稳定槽位消除页面切换跳动；课程卡片徽标单行防折行；侧栏导航层级激活态统一高亮；深色模式全面适配不透明画布与系统原生控件跟随；NSIS 钩子自动清理残留进程杜绝安装文件锁定。
+- [核心功能](#核心功能)
+  - [1. 课程生成与讲义阅读](#1-课程生成与讲义阅读)
+  - [2. 知识点代码闯关与数学判题](#2-知识点代码闯关与数学判题)
+  - [3. 伴学 Agent 与启发式助教](#3-伴学-agent-与启发式助教)
+  - [4. 题库刷题模块](#4-题库刷题模块)
+  - [5. 思维导图与知识图谱](#5-思维导图与知识图谱)
+  - [6. 学习者画像与因材施教](#6-学习者画像与因材施教)
+  - [7. 代码与函数绘图沙箱](#7-代码与函数绘图沙箱)
+- [安装与运行](#安装与运行)
+- [局域网访问与 PWA](#局域网访问与-pwa)
+- [客户端内置更新与镜像加速](#客户端内置更新与镜像加速)
+- [数据存储与备份](#数据存储与备份)
+- [路线图](#路线图)
+- [技术栈](#技术栈)
 
 </details>
 
----
+## 核心功能
 
-## 快速开始
+### 1. 课程生成与讲义阅读
+- **大纲生成与单章控制**：输入目标生成大纲树，支持手动调整章节顺序与标题；逐章异步流式生成讲义，支持中途断点续传与单章独立重生成。
+- **自有笔记导入**：支持直接导入外部 Markdown 笔记，自动根据标题层级拆解章节，原文完整保留不擅自改写。
+- **自动划重点**：生成讲义时可选由模型自动提取核心定义与避坑要害（3~6 处），浏览器 DOM 精确对齐高亮并关联独立标注卡片。
+- **划线提问与正文平移动效**：划选任意文本即刻弹出提问卡片与 AI 对话，右侧面板展开时正文平滑向左自适应避让，关闭后自动复位；高亮与对话持久化存储。
+- **ADHD 辅助阅读模式**：
+  - 模式 A：12 种柔和马卡龙护眼色在正文段落、列表、引用块间循环交替，降低长文视觉疲劳；
+  - 模式 B：鼠标悬停聚焦段落高亮并带微位移反馈。
+- **独立字号调节**：课程与刷题支持独立 13px–24px 步进微调，正文文字、代码块与 KaTeX 数学公式（`$...$` 与 `$$...$$`）采用 `em` 相对比例等比自适应缩放。
+- **侧边栏折叠与独立滚动**：支持快捷键 <kbd>Ctrl</kbd> + <kbd>B</kbd>（Mac 下 <kbd>Cmd</kbd> + <kbd>B</kbd>）收起左侧大纲树，正文独立展开全宽；左侧目录树独立滚动，不随右侧正文滚出视口。
 
-### 桌面安装包运行（开箱即用 · 推荐）
+### 2. 知识点代码闯关与数学判题
+- **代码闯关链**：每个知识点生成全代码闯关任务，无骨架从零手写代码，前一关通过才解锁下一关；支持渐进式提示（默认给思路提示，卡关可逐级展开），全部通关后才展示参考实现。
+- **数学代数等价判题**：针对公式与数学题，基于 SymPy `simplify(u - e) == 0` 进行代数等价性自动判题，自动识别乘法交换律、幂次展开与化简表达式。
+- **全屏交互抽屉**：闯关抽屉支持「⤢ 全屏」展开，在宽屏居中视野下编写代码与查看输出，支持与课程正文字号联动调节。
+- **错题本**：闯关未通过的任务自动沉淀至独立错题本，方便后续针对性重练。
 
-1. 从 [Releases](https://github.com/zxxhz/LearnFlow/releases) 下载最新版的 `LearnFlow_x.x.x_x64-setup.exe` 双击安装；
-2. 首次启动会自动内置一门「C++ 指针入门」示例课，无需配置即可直接体验阅读、划线、代码沙箱与闯关练习；
-3. 进入「设置」配置模型（支持 OpenAI 兼容格式，填入 base_url、API Key 与模型名，点击「测试连接」验证）。页面顶部提供 GLM / DeepSeek / OpenAI / Moonshot / Ollama / Gemini 快捷预设；
-4. 支持将生成大纲讲义（generation）与对话伴学助教（chat）分别配置不同模型。
+### 3. 伴学 Agent 与启发式助教
+- **双模态引导**：做题受阻时可呼叫助教，支持「💡 启发引导」（苏格拉底式反问、指出思路偏差、不直接给答案）与「📖 直答解析」两种模式自由切换。
+- **Tool Calling 动态工具链**：助教集成自主工具调用闭环，可自主调用后端沙箱执行代码验证结果（`run_sandbox_code`）、动态绘制函数图像辅助几何理解（`render_math_plot`）或透视当前关卡状态（`inspect_exercise`），前端实时透传工具执行状态。
 
-### 源码运行与开发
+### 4. 题库刷题模块
+- **表格题库导入**：支持导入 `.xlsx` / `.xls` 格式的题库表格（单选、多选、判断等题型），题干与选项完整支持 Markdown 与 KaTeX 数学公式。
+- **做新题与模考模式**：
+  - 做新题模式：只抽从未作答过的题目，攻坚刷穿全库，做一题少一题，看板实时统计未做新题数；
+  - 做题模式：全库随机抽题模拟自测；
+  - 同套题内容严格指纹去重，杜绝单轮内出现雷同题。
+- **错题 AI 流式深度解答**：答错时一键唤起 AI 深度解析，包含错因诊断、核心考点、逐项辨析与举一反三；解析结果自动落库持久化，进入小结页或重刷时 0ms 秒开展示，无需重复消耗 Token。
+- **题库级专属提示词**：每个题库可单独配置答疑与命题专属 Prompt（留空自动使用内置启发式名师提示词），支持在配置弹窗内点击「AI 润色提示词」一键原地优化。
 
-需具备 Python 3.11+（推荐 [uv](https://docs.astral.sh/uv/) 管理）与 Node 18+：
+### 5. 思维导图与知识图谱
+- **自研原生渲染画布**：基于 React + SVG 贝塞尔曲线开发的层级树渲染引擎，无需重型第三方依赖；支持鼠标滚轮自由缩放（0.3x~2.5x）、画布平移拖拽、全屏居中与分支节点折叠/展开。
+- **AI 画像生成与双向导入导出**：支持根据用户学习背景一键生成多级导图；支持 Markdown 大纲或 JSON 格式的双向导入与导出。
+- **Agent 自然语言交互式控图**：侧边悬浮面板支持自然语言指令交互（如“在 XX 节点下拆解 3 个关键子项”、“删掉废弃分支”），由 Agent 通过结构化工具实时操作内存树并同步画布。
+- **节点详情抽屉与专属知识问答**：点击任意节点平滑滑出详情抽屉，展示面包屑路径；支持调用 AI 一键深度剖析底层原理、直观类比与易混淆盲区，支持围绕当前节点的上下文多轮追问。
+
+### 6. 学习者画像与因材施教
+- **认知画像持久化**：建立 `LearnerProfile`（技术背景、先验知识栈、引导偏好）与 `LearnerMisconception`（易错模式、高频概念盲区、掌握状态）。
+- **全链路 Prompt 注入**：大纲设计、章节教材撰写、划线问答、伴学助教诊断及错题解析 5 大关键链路均自动注入当前画像上下文。
+- **异步后台自动演进**：在划线问答、助教诊断与错题解析完成后，系统后台异步提炼用户的思维盲区并持续演进认知档案；设置页支持可视化查看、手动修改背景与一键重置。
+
+### 7. 代码与函数绘图沙箱
+- **力扣式代码块编辑与执行**：讲义内的 ` ```python ` 与 ` ```cpp ` 代码块右上角带有运行按钮，支持在正文中直接修改代码并运行测试，支持重开回显历史结果与一键重置回初始代码。
+- **执行安全隔离**：单次运行限时 10 秒（超时自动终止进程树）、内存上限 256MB（Windows Job Object）、stdin 关闭、一次性临时工作目录；Python 使用随包内置隔离环境，C++ 依赖本机 g++/clang++。
+- **高数函数图像绘制**：` ```plot ` 代码块一键解析函数表达式并渲染高清矢量 SVG 图像，支持多函数同图对比与奇点自动断线（如 `sin(x)/x`）。
+
+## 安装与运行
+
+### 方式一：下载安装包（推荐，开箱即用）
+从 [Releases](https://github.com/zxxhz/LearnFlow/releases) 下载 `LearnFlow_x.x.x_x64-setup.exe` 安装运行。
+- 安装包已内置 Python 运行环境与核心依赖，**电脑无需安装 Python 或 Node.js**；
+- 只有运行文档里的 C++ 代码块需要本机装有 `g++`（如 [MinGW-w64](https://www.mingw-w64.org/)）并加入环境变量 PATH。
+
+### 方式二：从源码运行
+依赖环境：Python 3.11+（使用 [uv](https://docs.astral.sh/uv/) 管理）与 Node.js 18+（构建前端）：
 
 ```bash
-# 1. 克隆仓库
-git clone https://github.com/zxxhz/LearnFlow.git
-cd LearnFlow
-
-# 2. 构建前端产物（输出至 backend/app/static）
+# 1. 构建前端（产物输出至 backend/app/static）
 cd frontend && npm install && npm run build && cd ..
 
-# 3. 启动后端（自动同步依赖并建库）
+# 2. 启动服务（首次会自动 uv sync 安装依赖并初始化数据库）
 cd backend && uv run python -m app.main
 ```
 
-服务就绪后浏览器访问 `http://127.0.0.1:8420` 即可使用。
+启动后浏览器会自动打开 `http://127.0.0.1:8420`。
 
-#### 本地开发模式（前后端热重载）
+### 模型配置
+打开客户端「设置」页配置大语言模型：
+- 协议：标准 OpenAI 兼容协议（填写 Base URL、API Key 与模型名称，支持一键点击「测试连接」）；
+- 顶部预设：内置智谱 GLM、DeepSeek、OpenAI、Moonshot、Ollama、Gemini 等一键配置预设；
+- 场景分工：支持为「通用生成」与「对话问答」单独指定不同模型（例如生成大纲用高吞吐量模型，伴学诊断用强推理模型）；
+- 完全离线运行：本机安装 [Ollama](https://ollama.com/) 并拉取模型（如 `ollama pull qwen2.5:7b`），设置中选择「Ollama 本地」预设即可无外网完全离线运行。
+
+### 桌面开发与打包（Tauri）
+`desktop/` 目录下提供基于 Tauri 的轻量级桌面外壳（支持独立窗口、系统托盘常驻与生命周期管理）：
 
 ```bash
-# 终端 1：启动后端开发服务（:8420）
-cd backend && uv run uvicorn app.main:app --reload
+# 1. 打包后端独立可执行文件
+cd backend && uv sync && uv run python scripts/build_backend.py
 
-# 终端 2：启动前端开发服务（:5173，自动代理 /api）
-cd frontend && npm run dev
+# 2. 桌面客户端调试与构建
+cd desktop
+npm install
+npx tauri dev     # 开发调试模式
+npx tauri build   # 构建 Windows NSIS 安装包（产物位于 src-tauri/target/release/bundle/）
 ```
 
----
+## 局域网访问与 PWA
 
-## 使用指南
+- **局域网访问**：在设置页「局域网访问」中直接开启开关，控制台与设置页均会展示本机局域网访问链接及安全访问令牌（Token）；平板或手机连入同一 Wi-Fi 后即可在浏览器中使用。
+- **PWA 桌面化体验**：移动端或平板浏览器访问局域网地址时，可点击浏览器菜单「添加到主屏幕」或「安装应用」，获得全屏无边框的独立 Native 体验，离线资源由内置 Service Worker 自动托管。
+- **远程访问**：在异地网络下建议配合 [Tailscale](https://tailscale.com/) 使用（两端登录同账号，通过 Tailscale 分配的 IP 访问即可享受端到端加密），无需开放公网端口。
 
-### 1. 启发式助教与工具调用
+## 客户端内置更新与镜像加速
 
-- **呼叫助教**：在闯关练习中提交代码或表达式失败时，关卡卡片底部会自动浮现「💡 呼叫助教启发诊断」及追问输入框；
-- **启发引导 vs 直答**：卡片支持自由切换「💡 启发引导」与「📖 详细直答」双模式；
-- **查看工具执行**：助教在分析时会动态调用工具（如提交精简用例至沙箱验证、调用 SymPy 画图），前端会以动态卡片实时呈现工具执行过程。
+客户端启动时会自动静默检测 GitHub Releases，发现新版本会在设置页和弹窗中提示：
+- **全链路镜像测速与智能路由**：内置国内各大主流 GitHub 加速镜像并发测速模块（GH-Proxy, GHFast, Moeyy 等），支持「🚀 自动择优（哪个快用哪个）」或手动指定锁定镜像；
+- **自定义加速源**：支持用户在设置中添加自己的私有加速源，并支持原地编辑与测速；
+- **一键极速更新**：在更新弹窗中点击「一键自动更新」，系统通过当前最优加速节点流式拉取安装包，实时展示下载进度与网络测速，下载完毕后平滑唤起安装程序。
 
-### 2. 题库 Excel 导入与随机刷题
+## 数据存储与备份
 
-- **导入题库**：点击左侧导航「🎯 题库刷题」➔「导入题库」，选择 `.xls` 或 `.xlsx` 格式的题库表格文件（支持题干、选项 A-H、答案、解析与难度），秒级解析入库；
-- **抽题速刷**：在题库卡片点击「开始刷题」，自由选择 10 / 20 / 50 题进行随机组卷，卡片式作答并即时客观判分；
-- **错题专项**：做错的题目自动汇总至题库「错题重刷」池，针对薄弱点定向攻坚，重刷通过后自动移出。
+应用数据完全存储于本地，开箱自包含：
+- **源码模式**：所有数据存放于 `backend/data/` 目录；
+- **打包安装版**：数据存放于系统应用数据目录（Windows 下为 `%APPDATA%\com.learnflow.desktop\`）；
+- **核心文件**：
+  - `app.db`：SQLite 数据库（采用 WAL 模式），包含所有课程结构、高亮标注、对话历史、闯关记录、题库题目与作答、思维导图树以及学习者画像；
+  - `courses/`：课程正文与版本历史，采用纯 Markdown 文件保存，便于使用 Git 或外部工具检索；
+  - 设置页提供「打开数据目录」按钮，直接备份该目录即可完成完整数据迁移。
 
-### 3. 局域网访问与跨端 PWA
+## 路线图
 
-LearnFlow 后端默认仅监听本地回环；若需在同一 Wi-Fi 下使用平板或手机伴学：
+- [ ] PDF 格式教材/讲义自动解析与切章导入
+- [ ] 题库全真模拟考试与限时交卷模式
+- [ ] 知识图谱跨课程全局概念关联网络
 
-1. 打开应用进入「设置」➔「数据与安全」➔ 开启「局域网访问」Switch 开关；
-2. 界面会显示局域网访问地址（如 `http://192.168.1.100:8420/?token=...`），点击「复制链接」；
-3. 将链接发送至平板（iPad）或手机浏览器打开，即可通过访问令牌鉴权直接使用；
-4. **添加到主屏幕**：在 iPad Safari 中点击「分享」➔「添加到主屏幕」，或在 Android Chrome 中点击菜单 ➔「安装应用」，即可享受全屏无地址栏打扰的独立 PWA 体验。
-
-### 4. 代码运行环境与便携工具链
-
-- 讲义与练习中的代码块右上角设有「▶ 运行」按钮：Python 使用内置隔离解释器执行；C++ 调用本机 `g++` / `clang++` 编译执行；
-- **一键便携安装**：若本机未安装 C++ 编译器，可在运行报错面板或设置页「代码运行环境」中点击「一键安装」，后台自动静默下载并解压免配置的 niXman MinGW-w64 (GCC 14.2.0) 便携版，不污染系统环境变量与注册表。
-
----
-
-## 配置说明
-
-所有全局配置均可在应用内「设置」页直观调整，亦可在 `backend/` 下创建 `.env` 文件覆盖：
-
-| 环境变量 | 默认值 | 说明 |
-| --- | --- | --- |
-| `APP_HOST` | `0.0.0.0` | 后端监听地址（受安全守卫保护） |
-| `APP_PORT` | `8420` | 后端服务端口 |
-| `APP_DATA_DIR` | `data` | 数据存储目录（桌面版默认落至 `%APPDATA%\com.learnflow.desktop\`） |
-| `APP_OPEN_BROWSER` | `true` | 源码启动时是否自动打开浏览器 |
-| `APP_GITHUB_REPO` | `zxxhz/LearnFlow` | GitHub 仓库路径（用于更新检查） |
-
-### 纯本地数据与备份
-
-所有学习数据完全保留在用户本地掌控中：
-- `app.db`：SQLite 数据库（WAL 模式），记录课程元数据、作答记录、错题池、对话历史与认知档案；
-- `courses/`：纯 Markdown 课程讲义原文（`current.md` 及版本快照），原生适配 Git 版本管控；
-- 设置页「数据与安全」提供**一键打包备份**为 zip 压缩包，可随时下载并支持一键恢复。
-
----
+欢迎在 [Issues](https://github.com/zxxhz/LearnFlow/issues) 提出使用反馈与功能建议。
 
 ## 技术栈
 
-<p align="center">
-  <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
-  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
-  <img src="https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite" />
-  <img src="https://img.shields.io/badge/React_18-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React" />
-  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/TailwindCSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white" alt="TailwindCSS" />
-  <img src="https://img.shields.io/badge/Tauri_v2-24C8DB?style=for-the-badge&logo=tauri&logoColor=white" alt="Tauri" />
-</p>
+- **后端**：Python 3.11+ / FastAPI / SQLAlchemy 2.0 (Async) / SQLite (WAL) / SymPy (代数化简与等价判题) / Matplotlib (无头矢量 SVG 绘图) / PyInstaller
+- **前端**：React 18 / TypeScript / Vite / TailwindCSS / Lucide Icons
+- **解析与排版**：markdown-it / KaTeX / Shiki 代码高亮 / diff-match-patch (划线模糊容错重锚定)
+- **桌面与移动端**：Tauri v2 (Rust) / NSIS / PWA (Service Worker + Web App Manifest)
+- **AI 架构**：OpenAI 兼容协议客户端 / Server-Sent Events (SSE) 毫秒级打字机流式输出 / Agent Tool Calling 闭环
 
-| 模块 | 技术选型 | 关键职责 |
-| --- | --- | --- |
-| **后端核心** | FastAPI · SQLAlchemy 2.0 (asyncio) · SQLite | 高并发异步接口、WAL 模式高性能存储、FTS5 全文索引 |
-| **符号计算与绘图** | SymPy 1.14 · Matplotlib (Agg) | 符号代数等价判题、数学公式解析、高清矢量函数图像绘制 |
-| **文件与工具链** | markdown-it-py · xlrd · openpyxl · py7zr | 题库 Excel 秒级解析、便携工具链静默解压 |
-| **前端架构** | React 18 · TypeScript · Vite · TailwindCSS | 单页应用架构、组件化响应式布局、深色模式跟随 |
-| **状态与通信** | Zustand · TanStack Query · SSE (`fetch-event-source`) | 客户端状态流转、服务端数据缓存、打字机流式推送 |
-| **文本与渲染** | markdown-it · KaTeX · Shiki · diff-match-patch | 讲义解析、数学公式排版、双主题代码高亮、划线模糊锚定 |
-| **跨端与桌面** | Tauri v2 · Rust · Web App Manifest · Service Worker | 托盘常驻桌面客户端、系统级更新验签、全端 PWA 离线支持 |
-
----
-
-## 路线图与演进
-
-- [x] 独立题库刷题模块与 Excel 批量导入（v0.3.0）
-- [x] 练习系统全面闯关化、链式解锁与从零手写代码（v0.4.0）
-- [x] 启发式伴学 Agent：感知诊断、Tool Calling 动态工具链、认知画像、代数等价判题（v0.4.7）
-- [x] 原生局域网访问开关与访问令牌安全守卫（v0.4.7）
-- [x] 全端 PWA 支持与离线加速（v0.4.9）
-- [x] 课程生成自动划重点与可选配置（v0.4.15–v0.4.16）
-- [x] ADHD 辅助阅读模式与沉浸式双栏阅读架构（v0.4.17–v0.4.18）
-- [x] 划线提问卡片动效与正文平移避让联动（v0.4.18）
-- [ ] 向量检索增强长课程宏观提问与答疑（计划中）
-- [ ] 题库错题自动关联讲义知识点并由 Agent 深度析因（计划中）
-
----
-
-## 参与贡献
-
-欢迎通过提交 Issue 或 Pull Request 参与项目建设：
-
-1. **Fork** 本仓库；
-2. 创建您的特性分支：`git checkout -b feature/AmazingFeature`；
-3. 提交您的修改：`git commit -m 'feat: Add some AmazingFeature'`；
-4. 推送至远程分支：`git push origin feature/AmazingFeature`；
-5. 发起 **Pull Request**。
-
-若在使用中发现任何问题或有改进建议，欢迎提交 [GitHub Issues](https://github.com/zxxhz/LearnFlow/issues)。
-
----
-
-## 许可证
-
-本项目基于 [MIT 许可证](LICENSE) 开源。
-
-Copyright © 2026 [LearnFlow Contributors](https://github.com/zxxhz/LearnFlow).
+<!-- shields -->
+[release-shield]: https://img.shields.io/github/v/release/zxxhz/LearnFlow?style=for-the-badge
+[stars-shield]: https://img.shields.io/github/stars/zxxhz/LearnFlow?style=for-the-badge
+[issues-shield]: https://img.shields.io/github/issues/zxxhz/LearnFlow?style=for-the-badge
+[release-url]: https://github.com/zxxhz/LearnFlow/releases
+[stars-url]: https://github.com/zxxhz/LearnFlow/stargazers
+[issues-url]: https://github.com/zxxhz/LearnFlow/issues
