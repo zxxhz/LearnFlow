@@ -350,10 +350,6 @@ export default function MindMapListPage() {
             />
           </div>
 
-          <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 p-2.5 text-[11px] text-amber-800 dark:text-amber-300">
-            💡 伴学规范保障：自动应用杜绝「冒号键值对」的精炼概念命名规则，并融合你的学习者画像与易错认知盲区生成。
-          </div>
-
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={() => setGenOpen(false)}>
               取消

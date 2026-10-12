@@ -69,7 +69,9 @@ export default function MindMapCanvasPage() {
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
+  const [isClosingDetail, setIsClosingDetail] = useState(false);
   const [agentPanelOpen, setAgentPanelOpen] = useState(false);
+  const [isClosingAgent, setIsClosingAgent] = useState(false);
 
   // 本地树状态缓存，支持秒级即时操作与防抖保存
   const [treeData, setTreeData] = useState<MindMapNode | null>(null);
@@ -229,6 +231,74 @@ export default function MindMapCanvasPage() {
     [saveTreeDebounced]
   );
 
+  // 节点详情抽屉与 Agent 面板的平滑开启/关闭控制
+  const closeDetailDrawer = useCallback(() => {
+    setIsClosingDetail(true);
+    setTimeout(() => {
+      setDetailDrawerOpen(false);
+      setIsClosingDetail(false);
+    }, 300);
+  }, []);
+
+  const openDetailDrawer = useCallback(
+    (nodeId: string) => {
+      if (agentPanelOpen && !isClosingAgent) {
+        setIsClosingAgent(true);
+        setTimeout(() => {
+          setAgentPanelOpen(false);
+          setIsClosingAgent(false);
+        }, 300);
+      }
+      setSelectedNodeId(nodeId);
+      setIsClosingDetail(false);
+      setDetailDrawerOpen(true);
+    },
+    [agentPanelOpen, isClosingAgent]
+  );
+
+  const openAgent = useCallback(() => {
+    if (detailDrawerOpen && !isClosingDetail) {
+      setIsClosingDetail(true);
+      setTimeout(() => {
+        setDetailDrawerOpen(false);
+        setIsClosingDetail(false);
+      }, 300);
+    }
+    setIsClosingAgent(false);
+    setAgentPanelOpen(true);
+  }, [detailDrawerOpen, isClosingDetail]);
+
+  const closeAgent = useCallback(() => {
+    setIsClosingAgent(true);
+    setTimeout(() => {
+      setAgentPanelOpen(false);
+      setIsClosingAgent(false);
+    }, 300);
+  }, []);
+
+  // Esc 键优先退出抽屉或 Agent 面板
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (agentPanelOpen && !isClosingAgent) {
+          closeAgent();
+        } else if (detailDrawerOpen && !isClosingDetail) {
+          closeDetailDrawer();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [agentPanelOpen, isClosingAgent, detailDrawerOpen, isClosingDetail, closeAgent, closeDetailDrawer]);
+
+  // 当右侧 Agent 面板或详情抽屉展开时，思维导图整体同步平移向左偏移以留出右侧空间
+  const sideShift =
+    agentPanelOpen && !isClosingAgent
+      ? -190
+      : detailDrawerOpen && !isClosingDetail
+      ? -210
+      : 0;
+
   // ============================================================================
   // 原生自左向右 (Left-to-Right) 层级树布局计算
   // ============================================================================
@@ -344,9 +414,11 @@ export default function MindMapCanvasPage() {
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
 
-      // 以鼠标光标为锚点平滑缩放
+      // 以鼠标光标为锚点平滑缩放（包含当前侧边同步偏移）
+      const currentX = pan.x + sideShift;
+      const newCurrentX = mouseX - (mouseX - currentX) * (newZoom / zoom);
       setPan({
-        x: mouseX - (mouseX - pan.x) * (newZoom / zoom),
+        x: newCurrentX - sideShift,
         y: mouseY - (mouseY - pan.y) * (newZoom / zoom),
       });
       setZoom(newZoom);
@@ -401,8 +473,16 @@ export default function MindMapCanvasPage() {
 
   return (
     <div className="relative flex h-full w-full select-none overflow-hidden bg-gray-50/60 dark:bg-gray-950">
-      {/* 画布主工作区 */}
-      <div className="relative flex-1 h-full min-w-0 overflow-hidden flex flex-col">
+      {/* 画布主工作区：当右侧 Agent 面板或详情抽屉滑出时平滑向左避让，关闭时丝滑复原 */}
+      <div
+        className={`relative flex-1 h-full min-w-0 overflow-hidden flex flex-col transition-all duration-300 ease-out ${
+          agentPanelOpen && !isClosingAgent
+            ? "mr-0 md:mr-[420px]"
+            : detailDrawerOpen && !isClosingDetail
+            ? "mr-0 md:mr-[500px]"
+            : "mr-0"
+        }`}
+      >
         {/* 顶部悬浮控制条 */}
         <header className="z-20 flex items-center justify-between border-b border-gray-200/80 dark:border-gray-800 bg-white/90 dark:bg-gray-900/90 px-4 py-2.5 backdrop-blur shadow-2xs shrink-0">
           <div className="flex items-center gap-3">
@@ -446,11 +526,14 @@ export default function MindMapCanvasPage() {
             <button
               type="button"
               onClick={() => {
-                setAgentPanelOpen((v) => !v);
-                if (detailDrawerOpen) setDetailDrawerOpen(false);
+                if (agentPanelOpen && !isClosingAgent) {
+                  closeAgent();
+                } else {
+                  openAgent();
+                }
               }}
               className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold shadow-2xs transition ${
-                agentPanelOpen
+                agentPanelOpen && !isClosingAgent
                   ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-950/50 dark:text-brand-300"
                   : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:border-brand-400"
               }`}
@@ -476,11 +559,13 @@ export default function MindMapCanvasPage() {
             backgroundSize: "24px 24px",
           }}
         >
-          {/* 画布缩放与平移变换根 */}
+          {/* 画布缩放与平移变换根：拖拽时无延迟 instant，Agent 打开/收起与重置时 300ms 丝滑过渡 */}
           <div
-            className="absolute origin-top-left transition-transform duration-75 ease-out"
+            className={`absolute origin-top-left ${
+              isDragging ? "transition-none" : "transition-transform duration-300 ease-out"
+            }`}
             style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transform: `translate(${pan.x + sideShift}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: "0 0",
             }}
           >
@@ -520,8 +605,7 @@ export default function MindMapCanvasPage() {
                   key={p.node.id}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setSelectedNodeId(p.node.id);
-                    setDetailDrawerOpen(true);
+                    openDetailDrawer(p.node.id);
                   }}
                   className={`mindmap-node-card group absolute flex items-center justify-between rounded-xl transition-all select-none cursor-pointer ${
                     isRoot
@@ -668,7 +752,8 @@ export default function MindMapCanvasPage() {
           mindmapId={mapDetail.id}
           rootNode={treeData}
           nodeId={selectedNode.id}
-          onClose={() => setDetailDrawerOpen(false)}
+          closing={isClosingDetail}
+          onClose={closeDetailDrawer}
           onNodeUpdate={updateTreeNode}
         />
       )}
@@ -678,11 +763,12 @@ export default function MindMapCanvasPage() {
         <MindMapAgentPanel
           mindmapId={mapDetail.id}
           selectedNode={selectedNode}
+          closing={isClosingAgent}
           onTreeUpdate={(newTree) => {
             setTreeData(newTree);
             saveTreeDebounced(newTree);
           }}
-          onClose={() => setAgentPanelOpen(false)}
+          onClose={closeAgent}
         />
       )}
 

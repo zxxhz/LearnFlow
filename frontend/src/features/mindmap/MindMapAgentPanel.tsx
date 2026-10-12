@@ -9,6 +9,7 @@ interface Props {
   mindmapId: string;
   selectedNode: MindMapNode | null;
   onTreeUpdate: (newTree: MindMapNode) => void;
+  closing?: boolean;
   onClose: () => void;
 }
 
@@ -23,8 +24,16 @@ export default function MindMapAgentPanel({
   mindmapId,
   selectedNode,
   onTreeUpdate,
+  closing = false,
   onClose,
 }: Props) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setMounted(true), 20);
+    return () => clearTimeout(t);
+  }, []);
+
   const [messages, setMessages] = useState<MessageItem[]>([
     {
       id: "init",
@@ -150,8 +159,14 @@ export default function MindMapAgentPanel({
     return `⚙️ Agent 优化了导图结构`;
   };
 
+  const isVisible = mounted && !closing;
+
   return (
-    <div className="flex h-full w-full sm:w-[380px] md:w-[420px] flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-xl transition-all">
+    <div
+      className={`fixed right-0 top-0 z-40 flex h-full w-full sm:w-[380px] md:w-[420px] flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl transition-transform duration-300 ease-out transform ${
+        isVisible ? "translate-x-0" : "translate-x-full"
+      }`}
+    >
       {/* 头部 */}
       <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 px-4 py-3 shrink-0">
         <div className="flex items-center gap-2">
