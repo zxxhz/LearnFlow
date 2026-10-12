@@ -11,6 +11,7 @@ from app.api import (
     exercise,
     imports,
     math,
+    mindmap,
     quiz,
     runtime,
     search,
@@ -32,6 +33,7 @@ api_router.include_router(execution.router)
 api_router.include_router(exercise.router)
 api_router.include_router(quiz.router)
 api_router.include_router(bank.router)
+api_router.include_router(mindmap.router)
 api_router.include_router(math.router)
 api_router.include_router(runtime.router)
 api_router.include_router(study.router)

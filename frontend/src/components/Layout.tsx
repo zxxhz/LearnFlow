@@ -9,6 +9,7 @@ import UpdateDialog from "./UpdateDialog";
 
 const NAV_ITEMS = [
   { to: "/", label: "首页", icon: "🏠" },
+  { to: "/mindmap", label: "思维导图", icon: "🧠" },
   { to: "/dashboard", label: "仪表盘", icon: "📊" },
   { to: "/wrongbook", label: "错题本", icon: "📕" },
   { to: "/bank", label: "题库刷题", icon: "🎯" },
@@ -81,6 +82,8 @@ function NavActions({ onNavigate }: { onNavigate?: () => void }) {
 export default function Layout() {
   const { pathname } = useLocation();
   const isReader = pathname.startsWith("/read/");
+  const isMindMapCanvas = pathname.startsWith("/mindmap/") && pathname !== "/mindmap";
+  const isImmersive = isReader || isMindMapCanvas;
   const [navOpen, setNavOpen] = useState(false);
   const [theme, setThemeState] = useState<Theme>(() => getTheme());
   const [dialogUpdate, setDialogUpdate] = useState<UpdateCheckResult | null>(null);
@@ -138,8 +141,8 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
-      {/* 桌面侧栏：进入课程阅读后隐藏，释放全宽给课程目录+正文两栏 */}
-      {!isReader && (
+      {/* 桌面侧栏：进入课程阅读或思维导图画布后隐藏，释放全宽给沉浸式工作台 */}
+      {!isImmersive && (
         <aside className="hidden w-56 shrink-0 flex-col border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 md:flex">
           <div className="flex items-center gap-2 px-5 py-5">
             <span className="text-xl font-bold text-brand-600">LearnFlow</span>
@@ -160,7 +163,7 @@ export default function Layout() {
       )}
 
       {/* 移动端抽屉 */}
-      {!isReader && navOpen && (
+      {!isImmersive && navOpen && (
         <div className="fixed inset-0 z-50 md:hidden" onClick={() => setNavOpen(false)}>
           <div className="absolute inset-0 bg-black/40" />
           <aside
@@ -180,8 +183,8 @@ export default function Layout() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* 移动端顶栏（阅读界面由阅读器自身顶栏接管） */}
-        {!isReader && (
+        {/* 移动端顶栏（沉浸界面由自身顶栏接管） */}
+        {!isImmersive && (
           <header className="flex items-center gap-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-2.5 md:hidden">
             <button
               onClick={() => setNavOpen(true)}
@@ -201,7 +204,7 @@ export default function Layout() {
           </header>
         )}
         {/* scrollbar-gutter: 滚动条出现/消失不再让居中内容横移（各页面标题位置保持一致） */}
-        <main className={`min-h-0 flex-1 ${isReader ? "overflow-hidden" : "overflow-auto [scrollbar-gutter:stable]"}`}>
+        <main className={`min-h-0 flex-1 ${isImmersive ? "overflow-hidden" : "overflow-auto [scrollbar-gutter:stable]"}`}>
           <Outlet />
         </main>
       </div>

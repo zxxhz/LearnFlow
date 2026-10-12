@@ -534,3 +534,84 @@ export interface LearnerProfileUpdate {
   background_summary?: string;
   socratic_mode?: boolean;
 }
+
+// ===== 思维导图 (Mind Map 独立模块) =====
+export interface MindMapNode {
+  id: string;
+  title: string;
+  summary?: string;
+  detail?: string;
+  children?: MindMapNode[];
+  collapsed?: boolean;
+}
+
+export interface MindMapSummary {
+  id: string;
+  title: string;
+  topic: string;
+  node_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MindMapDetail {
+  id: string;
+  title: string;
+  topic: string;
+  root: MindMapNode;
+  settings: {
+    layout?: "lr" | "radial";
+    zoom?: number;
+    [key: string]: any;
+  };
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MindMapCreateInput {
+  title?: string;
+  topic?: string;
+  root?: MindMapNode | Record<string, any>;
+  settings?: Record<string, any>;
+}
+
+export interface MindMapUpdateInput {
+  title?: string;
+  topic?: string;
+  root?: MindMapNode | Record<string, any>;
+  settings?: Record<string, any>;
+}
+
+export interface MindMapGenerateInput {
+  prompt: string;
+  depth?: number;
+  import_content?: string;
+}
+
+export interface MindMapImportInput {
+  title?: string;
+  content: string;
+  format?: "auto" | "markdown" | "json";
+}
+
+export interface MindMapAgentSSEEvent {
+  type: "tool_call" | "tool_result" | "tree_update" | "delta" | "done" | "error";
+  name?: string;
+  args?: any;
+  text?: string;
+  tree?: MindMapNode;
+  detail?: string;
+}
+
+export interface MindMapNodeDetailSSEEvent {
+  type: "delta" | "done" | "error";
+  text?: string;
+  detail?: string;
+  node_id?: string;
+}
+
+export interface MindMapNodeQASSEEvent {
+  type: "delta" | "done" | "error";
+  text?: string;
+}
+

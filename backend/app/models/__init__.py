@@ -7,6 +7,7 @@ from app.models.document import Document, Section
 from app.models.execution import CodeExecution
 from app.models.exercise import Exercise, ExerciseAttempt
 from app.models.knowledge_point import KnowledgePoint
+from app.models.mindmap import MindMap
 from app.models.settings import AppSetting
 from app.models.study import (
     LearnerMisconception,
@@ -31,6 +32,7 @@ __all__ = [
     "Exercise",
     "ExerciseAttempt",
     "KnowledgePoint",
+    "MindMap",
     "AppSetting",
     "LearnerProfile",
     "LearnerMisconception",

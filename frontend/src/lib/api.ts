@@ -40,6 +40,15 @@ import type {
   BankWrongQuestion,
   LearnerProfile,
   LearnerProfileUpdate,
+  MindMapDetail,
+  MindMapSummary,
+  MindMapCreateInput,
+  MindMapUpdateInput,
+  MindMapGenerateInput,
+  MindMapImportInput,
+  MindMapAgentSSEEvent,
+  MindMapNodeDetailSSEEvent,
+  MindMapNodeQASSEEvent,
 } from "./types";
 import { streamSSE, subscribeSSE } from "./sse";
 
@@ -442,6 +451,42 @@ export const api = {
       request<LearnerProfile>("/study/profile/reset", {
         method: "POST",
       }),
+  },
+  mindmaps: {
+    list: () => request<MindMapSummary[]>("/mindmaps"),
+    get: (id: string) => request<MindMapDetail>(`/mindmaps/${id}`),
+    create: (body: MindMapCreateInput) =>
+      request<MindMapDetail>("/mindmaps", { method: "POST", ...jsonBody(body) }),
+    update: (id: string, body: MindMapUpdateInput) =>
+      request<MindMapDetail>(`/mindmaps/${id}`, { method: "PUT", ...jsonBody(body) }),
+    delete: (id: string) =>
+      request<{ ok: boolean }>(`/mindmaps/${id}`, { method: "DELETE" }),
+    import: (body: MindMapImportInput) =>
+      request<MindMapDetail>("/mindmaps/import", { method: "POST", ...jsonBody(body) }),
+    generate: (body: MindMapGenerateInput) =>
+      request<MindMapDetail>("/mindmaps/generate", { method: "POST", ...jsonBody(body) }),
+    exportMarkdown: (id: string) =>
+      request<{ title: string; markdown: string }>(`/mindmaps/${id}/export`),
+    agentSSE: (
+      id: string,
+      body: { message: string; selected_node_id?: string | null },
+      onEvent: (ev: MindMapAgentSSEEvent) => void,
+      signal?: AbortSignal
+    ) => streamSSE<MindMapAgentSSEEvent>(`/mindmaps/${id}/agent`, body, onEvent, signal),
+    nodeDetailSSE: (
+      id: string,
+      nodeId: string,
+      body: { instruction?: string },
+      onEvent: (ev: MindMapNodeDetailSSEEvent) => void,
+      signal?: AbortSignal
+    ) => streamSSE<MindMapNodeDetailSSEEvent>(`/mindmaps/${id}/nodes/${nodeId}/detail`, body, onEvent, signal),
+    nodeQASSE: (
+      id: string,
+      nodeId: string,
+      body: { question: string; history?: any[] },
+      onEvent: (ev: MindMapNodeQASSEEvent) => void,
+      signal?: AbortSignal
+    ) => streamSSE<MindMapNodeQASSEEvent>(`/mindmaps/${id}/nodes/${nodeId}/qa`, body, onEvent, signal),
   },
 };
 
