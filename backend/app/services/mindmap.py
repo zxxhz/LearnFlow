@@ -427,7 +427,7 @@ async def generate_mindmap_tree(
     db: AsyncSession,
 ) -> dict[str, Any]:
     """结合用户画像与深度要求，生成多层级纯净思维导图。"""
-    adapter = create_adapter_from_settings(db, scene="generation")
+    adapter = await create_adapter_from_settings(db, scene="generation")
     profile_snippet = await format_profile_for_prompt(db)
     system_prompt = MINDMAP_GEN_SYSTEM_PROMPT.format(learner_profile=profile_snippet)
 
@@ -576,7 +576,7 @@ async def stream_mindmap_agent(
     思维导图伴学 Agent：
     解析用户自然语言意图，调用工具对导图进行动态增删改查修剪，并流式反馈解释。
     """
-    adapter = create_adapter_from_settings(db, scene="chat")
+    adapter = await create_adapter_from_settings(db, scene="chat")
     profile_snippet = await format_profile_for_prompt(db)
     outline = _format_tree_outline_for_agent(mindmap.root)
 
@@ -709,7 +709,7 @@ async def stream_node_detail(
 
     path = get_node_path(mindmap.root, node_id) or [node.get("title", "")]
     path_str = " > ".join(path)
-    adapter = create_adapter_from_settings(db, scene="generation")
+    adapter = await create_adapter_from_settings(db, scene="generation")
     profile_snippet = await format_profile_for_prompt(db)
 
     prompt = f"""你是一个顶尖的知识导师。请针对思维导图中的具体概念节点，撰写一份结构清晰、深入浅出、极具启发性的深度剖析文档。
@@ -767,7 +767,7 @@ async def stream_node_qa(
 
     path = get_node_path(mindmap.root, node_id) or [node.get("title", "")]
     path_str = " > ".join(path)
-    adapter = create_adapter_from_settings(db, scene="chat")
+    adapter = await create_adapter_from_settings(db, scene="chat")
     profile_snippet = await format_profile_for_prompt(db)
 
     system_prompt = f"""你是学生在学习思维导图「{mindmap.title}」时的专属伴学助教。
