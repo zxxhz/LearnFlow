@@ -404,6 +404,83 @@ export default function MindMapCanvasPage() {
 
   const handleMouseUp = () => setIsDragging(false);
 
+  // 触屏手势状态（单指移动与双指缩放）
+  const touchPinchRef = useRef<{
+    isPinching: boolean;
+    initialDist: number;
+    initialZoom: number;
+    initialPan: { x: number; y: number };
+    midX: number;
+    midY: number;
+  } | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 1) {
+      if ((e.target as HTMLElement).closest(".mindmap-node-card")) return;
+      const t = e.touches[0];
+      setIsDragging(true);
+      setDragStart({ x: t.clientX - pan.x, y: t.clientY - pan.y });
+      touchPinchRef.current = null;
+    } else if (e.touches.length === 2) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      const rect = containerRef.current?.getBoundingClientRect();
+      const midX = (t1.clientX + t2.clientX) / 2 - (rect?.left || 0);
+      const midY = (t1.clientY + t2.clientY) / 2 - (rect?.top || 0);
+
+      setIsDragging(true);
+      touchPinchRef.current = {
+        isPinching: true,
+        initialDist: dist,
+        initialZoom: zoom,
+        initialPan: { ...pan },
+        midX,
+        midY,
+      };
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 1 && !touchPinchRef.current?.isPinching && isDragging) {
+      const t = e.touches[0];
+      setPan({
+        x: t.clientX - dragStart.x,
+        y: t.clientY - dragStart.y,
+      });
+    } else if (e.touches.length === 2 && touchPinchRef.current?.isPinching) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      const { initialDist, initialZoom, initialPan, midX, midY } = touchPinchRef.current;
+      if (initialDist > 0) {
+        const factor = dist / initialDist;
+        const newZoom = Math.min(2.5, Math.max(0.3, initialZoom * factor));
+
+        const currentX = initialPan.x + sideShift;
+        const newCurrentX = midX - (midX - currentX) * (newZoom / initialZoom);
+        const newY = midY - (midY - initialPan.y) * (newZoom / initialZoom);
+
+        setZoom(newZoom);
+        setPan({
+          x: newCurrentX - sideShift,
+          y: newY,
+        });
+      }
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (e.touches.length === 0) {
+      setIsDragging(false);
+      touchPinchRef.current = null;
+    } else if (e.touches.length === 1) {
+      const t = e.touches[0];
+      touchPinchRef.current = null;
+      setDragStart({ x: t.clientX - pan.x, y: t.clientY - pan.y });
+    }
+  };
+
   const handleWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
@@ -551,10 +628,15 @@ export default function MindMapCanvasPage() {
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onWheel={handleWheel}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchEnd}
           className={`relative flex-1 h-full w-full overflow-hidden ${
             isDragging ? "cursor-grabbing" : "cursor-grab"
           }`}
           style={{
+            touchAction: "none",
             backgroundImage: "radial-gradient(circle, rgba(148, 163, 184, 0.15) 1px, transparent 1px)",
             backgroundSize: "24px 24px",
           }}

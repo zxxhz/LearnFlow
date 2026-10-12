@@ -684,7 +684,8 @@ async def stream_mindmap_agent(
             })
 
     # 2. 流式返回 Agent 的伴学解释文本
-    async for chunk in adapter.chat(messages, stream=True):
+    stream = await adapter.chat(messages, stream=True)
+    async for chunk in stream:
         if chunk:
             yield {"type": "delta", "text": chunk}
 
@@ -738,7 +739,8 @@ async def stream_node_detail(
     ]
 
     full_text = ""
-    async for chunk in adapter.chat(messages, stream=True):
+    stream = await adapter.chat(messages, stream=True)
+    async for chunk in stream:
         if chunk:
             full_text += chunk
             yield {"type": "delta", "text": chunk}
@@ -796,7 +798,8 @@ async def stream_node_qa(
 
     messages.append({"role": "user", "content": question.strip()})
 
-    async for chunk in adapter.chat(messages, stream=True):
+    stream = await adapter.chat(messages, stream=True)
+    async for chunk in stream:
         if chunk:
             yield {"type": "delta", "text": chunk}
 
