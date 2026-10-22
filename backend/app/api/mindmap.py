@@ -171,6 +171,7 @@ async def chat_with_mindmap_agent(
                 mindmap=mm,
                 user_message=data.message,
                 selected_node_id=data.selected_node_id,
+                history=data.history,
                 db=db,
             ):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"

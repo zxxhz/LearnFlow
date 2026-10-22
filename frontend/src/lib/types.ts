@@ -594,6 +594,12 @@ export interface MindMapImportInput {
   format?: "auto" | "markdown" | "json";
 }
 
+export interface MindMapAgentChatInput {
+  message: string;
+  selected_node_id?: string | null;
+  history?: Array<{ role: "user" | "assistant"; content: string }>;
+}
+
 export interface MindMapAgentSSEEvent {
   type: "tool_call" | "tool_result" | "tree_update" | "delta" | "done" | "error";
   name?: string;

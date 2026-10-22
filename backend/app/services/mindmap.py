@@ -570,12 +570,15 @@ async def stream_mindmap_agent(
     mindmap: MindMap,
     user_message: str,
     selected_node_id: str | None,
-    db: AsyncSession,
+    history: list[dict[str, str]] | None = None,
+    db: AsyncSession | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """
     思维导图伴学 Agent：
-    解析用户自然语言意图，调用工具对导图进行动态增删改查修剪，并流式反馈解释。
+    支持多轮连续上下文对话，解析用户自然语言意图，调用工具对导图进行动态增删改查修剪，并流式反馈解释。
     """
+    if db is None:
+        raise ValueError("db session is required")
     adapter = await create_adapter_from_settings(db, scene="chat")
     profile_snippet = await format_profile_for_prompt(db)
     outline = _format_tree_outline_for_agent(mindmap.root)
@@ -598,14 +601,23 @@ async def stream_mindmap_agent(
 2. 如果用户表达了修改意图（如“在xx下加几个子节点”、“把xx分支删了”、“重命名xx”、“再展开详细一点”），【必须优先调用相应工具】执行修改！
 3. 所有节点标题必须精炼纯粹，【坚决杜绝】类似「xxx：xxxx」的冒号格式！
 4. 在调用工具后，向学生用亲切、清晰、富有启发性的语言解释你做了哪些调整，以及为什么这样组织知识体系。
-5. 结合学生的认知偏好与学习画像因材施教。
+5. 结合学生的认知偏好与学习画像因材施教，并保持多轮对话连贯性（理解代词如“它”、“这个”、“刚才说的第二点”等）。
 
 {profile_snippet}"""
 
-    messages = [
+    messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message},
     ]
+
+    # 装配历史对话上下文（保留最近 10 轮对话，过滤掉空内容）
+    if history:
+        for h in history[-10:]:
+            role = h.get("role")
+            content = h.get("content")
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+
+    messages.append({"role": "user", "content": user_message})
 
     # 1. 尝试函数调用
     tree_changed = False

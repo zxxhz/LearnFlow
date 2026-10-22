@@ -20,6 +20,24 @@ interface MessageItem {
   actions?: Array<{ name: string; args: any }>;
 }
 
+const INITIAL_MSG: MessageItem = {
+  id: "init",
+  role: "assistant",
+  content:
+    "你好！我是你的思维导图伴学 Agent。你可以直接用自然语言对我下达指令，例如：\n- 「在选中的分支下补充 3 个核心机制」\n- 「把过时的废弃技术分支删掉」\n- 「把导图结构展开得更深入更精细」\n- 「结合我的学习画像精简当前概念」",
+};
+
+function loadStoredMessages(mapId: string): MessageItem[] {
+  try {
+    const raw = localStorage.getItem(`learnflow_mindmap_agent_msgs_${mapId}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {}
+  return [INITIAL_MSG];
+}
+
 export default function MindMapAgentPanel({
   mindmapId,
   selectedNode,
@@ -34,14 +52,20 @@ export default function MindMapAgentPanel({
     return () => clearTimeout(t);
   }, []);
 
-  const [messages, setMessages] = useState<MessageItem[]>([
-    {
-      id: "init",
-      role: "assistant",
-      content:
-        "你好！我是你的思维导图伴学 Agent。你可以直接用自然语言对我下达指令，例如：\n- 「在选中的分支下补充 3 个核心机制」\n- 「把过时的废弃技术分支删掉」\n- 「把导图结构展开得更深入更精细」\n- 「结合我的学习画像精简当前概念」",
-    },
-  ]);
+  const [messages, setMessages] = useState<MessageItem[]>(() => loadStoredMessages(mindmapId));
+
+  // 当 mindmapId 变化时重新加载该导图对应的历史记录
+  useEffect(() => {
+    setMessages(loadStoredMessages(mindmapId));
+  }, [mindmapId]);
+
+  // 对话历史自动持久化存储
+  useEffect(() => {
+    try {
+      localStorage.setItem(`learnflow_mindmap_agent_msgs_${mindmapId}`, JSON.stringify(messages));
+    } catch {}
+  }, [mindmapId, messages]);
+
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [streamingText, setStreamingText] = useState("");
@@ -52,6 +76,20 @@ export default function MindMapAgentPanel({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, streamingText, currentActions.length]);
+
+  const handleClear = () => {
+    if (messages.length <= 1) return;
+    if (confirm("确定清空当前的 Agent 对话历史？导图结构不会被删除。")) {
+      abortRef.current?.abort();
+      setMessages([INITIAL_MSG]);
+      setStreamingText("");
+      setCurrentActions([]);
+      setLoading(false);
+      try {
+        localStorage.removeItem(`learnflow_mindmap_agent_msgs_${mindmapId}`);
+      } catch {}
+    }
+  };
 
   const handleSend = async (customPrompt?: string) => {
     const text = customPrompt || input.trim();
@@ -66,6 +104,12 @@ export default function MindMapAgentPanel({
       role: "user",
       content: text,
     };
+
+    // 收集先前的多轮对话历史供 Agent 保持上下文连贯（指代词理解、前文修改追问等）
+    const historyToSend = messages
+      .filter((m) => m.id !== "init" && m.content)
+      .map((m) => ({ role: m.role, content: m.content }));
+
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setLoading(true);
@@ -81,6 +125,7 @@ export default function MindMapAgentPanel({
         {
           message: text,
           selected_node_id: selectedNode?.id ?? null,
+          history: historyToSend,
         },
         (ev: MindMapAgentSSEEvent) => {
           if (ev.type === "tool_call" && ev.name) {
@@ -185,14 +230,27 @@ export default function MindMapAgentPanel({
             )}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
-          title="收起 Agent 面板"
-        >
-          ✕
-        </button>
+        <div className="flex items-center gap-1.5">
+          {messages.length > 1 && (
+            <button
+              type="button"
+              onClick={handleClear}
+              className="flex items-center gap-1 rounded px-2 py-1 text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+              title="清空当前对话历史"
+            >
+              <span>↺</span>
+              <span className="hidden sm:inline">清空</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+            title="收起 Agent 面板"
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       {/* 快捷推荐指令条 */}

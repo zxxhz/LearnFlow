@@ -63,6 +63,7 @@ class MindMapImportRequest(BaseModel):
 class MindMapAgentChatRequest(BaseModel):
     message: str = Field(description="用户对话指令，如「在进程调度分支下补充时间片轮转算法」")
     selected_node_id: str | None = Field(default=None, description="当前用户选中的焦点节点 ID")
+    history: list[dict[str, str]] = Field(default_factory=list, description="多轮对话历史上下文")
 
 
 class MindMapNodeDetailRequest(BaseModel):

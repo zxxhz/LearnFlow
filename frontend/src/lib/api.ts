@@ -469,7 +469,11 @@ export const api = {
       request<{ title: string; markdown: string }>(`/mindmaps/${id}/export`),
     agentSSE: (
       id: string,
-      body: { message: string; selected_node_id?: string | null },
+      body: {
+        message: string;
+        selected_node_id?: string | null;
+        history?: Array<{ role: "user" | "assistant"; content: string }>;
+      },
       onEvent: (ev: MindMapAgentSSEEvent) => void,
       signal?: AbortSignal
     ) => streamSSE<MindMapAgentSSEEvent>(`/mindmaps/${id}/agent`, body, onEvent, signal),
