@@ -31,10 +31,23 @@ function loadStoredMessages(mapId: string): MessageItem[] {
   try {
     const raw = localStorage.getItem(`learnflow_mindmap_agent_msgs_${mapId}`);
     if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      const parsed: unknown = JSON.parse(raw);
+      const valid =
+        Array.isArray(parsed) &&
+        parsed.length > 0 &&
+        parsed.every(
+          (m) =>
+            m !== null &&
+            typeof m === "object" &&
+            typeof (m as MessageItem).id === "string" &&
+            ((m as MessageItem).role === "user" || (m as MessageItem).role === "assistant") &&
+            typeof (m as MessageItem).content === "string"
+        );
+      if (valid) return parsed as MessageItem[];
     }
-  } catch {}
+  } catch (e) {
+    console.warn("加载 Agent 对话历史失败，已重置为欢迎语", e);
+  }
   return [INITIAL_MSG];
 }
 
@@ -54,16 +67,25 @@ export default function MindMapAgentPanel({
 
   const [messages, setMessages] = useState<MessageItem[]>(() => loadStoredMessages(mindmapId));
 
-  // 当 mindmapId 变化时重新加载该导图对应的历史记录
+  // mindmapId 变化时重新加载对应历史；pendingLoadRef 挡住紧随其后的持久化效应，
+  // 避免它把切换前旧导图的消息写进新导图的存储键
+  const pendingLoadRef = useRef(false);
   useEffect(() => {
+    pendingLoadRef.current = true;
     setMessages(loadStoredMessages(mindmapId));
   }, [mindmapId]);
 
   // 对话历史自动持久化存储
   useEffect(() => {
+    if (pendingLoadRef.current) {
+      pendingLoadRef.current = false;
+      return;
+    }
     try {
       localStorage.setItem(`learnflow_mindmap_agent_msgs_${mindmapId}`, JSON.stringify(messages));
-    } catch {}
+    } catch (e) {
+      console.warn("Agent 对话历史持久化失败（可能超出 localStorage 配额）", e);
+    }
   }, [mindmapId, messages]);
 
   const [input, setInput] = useState("");
@@ -72,6 +94,9 @@ export default function MindMapAgentPanel({
   const [currentActions, setCurrentActions] = useState<Array<{ name: string; args: any }>>([]);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // 卸载时中断进行中的流式请求：面板关闭后回复不再丢失出历史，后端也不再空烧 token
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -105,9 +130,10 @@ export default function MindMapAgentPanel({
       content: text,
     };
 
-    // 收集先前的多轮对话历史供 Agent 保持上下文连贯（指代词理解、前文修改追问等）
+    // 收集先前的多轮对话历史供 Agent 保持上下文连贯（指代词理解、前文修改追问等）；
+    // 排除欢迎语与报错消息——报错不是模型的正常发言，回传会污染多轮上下文
     const historyToSend = messages
-      .filter((m) => m.id !== "init" && m.content)
+      .filter((m) => m.id !== "init" && !m.id.startsWith("err-") && m.content)
       .map((m) => ({ role: m.role, content: m.content }));
 
     setMessages((prev) => [...prev, userMsg]);

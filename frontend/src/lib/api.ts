@@ -46,6 +46,7 @@ import type {
   MindMapUpdateInput,
   MindMapGenerateInput,
   MindMapImportInput,
+  MindMapAgentChatInput,
   MindMapAgentSSEEvent,
   MindMapNodeDetailSSEEvent,
   MindMapNodeQASSEEvent,
@@ -469,11 +470,7 @@ export const api = {
       request<{ title: string; markdown: string }>(`/mindmaps/${id}/export`),
     agentSSE: (
       id: string,
-      body: {
-        message: string;
-        selected_node_id?: string | null;
-        history?: Array<{ role: "user" | "assistant"; content: string }>;
-      },
+      body: MindMapAgentChatInput,
       onEvent: (ev: MindMapAgentSSEEvent) => void,
       signal?: AbortSignal
     ) => streamSSE<MindMapAgentSSEEvent>(`/mindmaps/${id}/agent`, body, onEvent, signal),

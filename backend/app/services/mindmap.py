@@ -570,15 +570,14 @@ async def stream_mindmap_agent(
     mindmap: MindMap,
     user_message: str,
     selected_node_id: str | None,
-    history: list[dict[str, str]] | None = None,
-    db: AsyncSession | None = None,
+    history: list[dict[str, str | None]] | None = None,
+    *,
+    db: AsyncSession,
 ) -> AsyncIterator[dict[str, Any]]:
     """
     思维导图伴学 Agent：
     支持多轮连续上下文对话，解析用户自然语言意图，调用工具对导图进行动态增删改查修剪，并流式反馈解释。
     """
-    if db is None:
-        raise ValueError("db session is required")
     adapter = await create_adapter_from_settings(db, scene="chat")
     profile_snippet = await format_profile_for_prompt(db)
     outline = _format_tree_outline_for_agent(mindmap.root)
@@ -609,13 +608,27 @@ async def stream_mindmap_agent(
         {"role": "system", "content": system_prompt},
     ]
 
-    # 装配历史对话上下文（保留最近 10 轮对话，过滤掉空内容）
+    # 装配历史对话上下文：从最新往前最多保留 10 轮（20 条），且限制总字符预算，
+    # 超出预算的更早轮次直接丢弃，防止超长对话撑爆模型上下文
     if history:
-        for h in history[-10:]:
+        budget = 8000
+        picked: list[dict[str, str]] = []
+        for h in reversed(history):
+            if len(picked) >= 20 or budget <= 0:
+                break
             role = h.get("role")
             content = h.get("content")
-            if role in ("user", "assistant") and content:
-                messages.append({"role": role, "content": content})
+            if role not in ("user", "assistant") or not content:
+                continue
+            text = content.strip()
+            if not text:
+                continue
+            if len(text) > budget:
+                text = text[:budget]
+            budget -= len(text)
+            picked.append({"role": role, "content": text})
+        picked.reverse()
+        messages.extend(picked)
 
     messages.append({"role": "user", "content": user_message})
 
