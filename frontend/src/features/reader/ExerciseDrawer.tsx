@@ -43,20 +43,7 @@ export default function ExerciseDrawer({
     onFullscreenChange?.(isFullscreen);
   }, [isFullscreen, onFullscreenChange]);
 
-  // Esc 键优先退出全屏，若非全屏则关闭抽屉
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (isFullscreen) {
-          setIsFullscreen(false);
-        } else {
-          onClose();
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isFullscreen, onClose]);
+  // Esc 键由 ReaderPage 统一处理（全屏时退出全屏、非全屏时关闭抽屉），此处不再重复监听
 
   useEffect(() => {
     const timer = setTimeout(() => {

@@ -1,5 +1,5 @@
 // 字号调节管理与持久化（课程阅读与题库刷题独立控制）
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 
@@ -67,11 +67,9 @@ export function useFontSize(target: FontSizeTarget) {
 
   const mutation = useMutation({
     mutationFn: async (newSize: number) => {
-      const currentPrefs = query.data?.preferences ?? {
-        chapter_length: 3000,
-        exercises_per_kp: 3,
-        highlight_colors: {},
-      };
+      // 设置未加载完成时跳过服务端持久化，避免用 fallback 默认值覆盖 auto_highlight 等其他偏好
+      const currentPrefs = query.data?.preferences;
+      if (!currentPrefs) return null;
       return api.settings.update({
         preferences: {
           ...currentPrefs,
@@ -84,21 +82,40 @@ export function useFontSize(target: FontSizeTarget) {
     },
   });
 
+  // 连续点击 A+/A- 时防抖合并服务端请求（本地 localStorage 即时生效）
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+    };
+  }, []);
+  const persistDebounced = useCallback(
+    (newSize: number) => {
+      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = setTimeout(() => mutation.mutate(newSize), 600);
+    },
+    [mutation]
+  );
+
+  const fontSizeRef = useRef(fontSize);
+  fontSizeRef.current = fontSize;
+
   const setFontSize = useCallback(
     (newSize: number | ((prev: number) => number)) => {
-      setFontSizeState((prev) => {
-        const next = typeof newSize === "function" ? newSize(prev) : newSize;
-        const clamped = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, next));
-        try {
-          localStorage.setItem(STORAGE_KEYS[target], String(clamped));
-        } catch {
-          // 忽略存储写入异常
-        }
-        mutation.mutate(clamped);
-        return clamped;
-      });
+      // 副作用（localStorage / 服务端持久化）必须在 setState updater 之外执行：
+      // React StrictMode 下 updater 会跑两次，导致重复 PUT 与重复写存储
+      const next =
+        typeof newSize === "function" ? newSize(fontSizeRef.current) : newSize;
+      const clamped = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, next));
+      setFontSizeState(clamped);
+      try {
+        localStorage.setItem(STORAGE_KEYS[target], String(clamped));
+      } catch {
+        // 忽略存储写入异常
+      }
+      persistDebounced(clamped);
     },
-    [target, mutation]
+    [target, persistDebounced]
   );
 
   return {

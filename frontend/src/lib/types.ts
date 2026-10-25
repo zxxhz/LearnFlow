@@ -412,11 +412,23 @@ export interface InstallStatus {
 
 // ===== SSE 事件负载 =====
 export interface ChatSSEEvent {
-  type: "delta" | "done" | "error";
+  type: "user_ack" | "delta" | "done" | "error";
   text?: string;
   message_id?: string;
   detail?: string;
+  content?: string;              // done 事件携带完整回复
+  message?: { id: string };      // user_ack 事件回传已持久化的用户消息（乐观气泡对齐 ID）
   suggest_evaluate?: boolean;
+}
+
+/** 助教伴学诊断 SSE：含工具调用事件（tool_result.result 可能携带 render_math_plot 的 svg） */
+export interface TutorSSEEvent {
+  type: "tool_call" | "tool_result" | "delta" | "done" | "error";
+  name?: string;
+  args?: Record<string, unknown>;
+  result?: { svg?: string; [key: string]: unknown };
+  text?: string;
+  detail?: string;
 }
 
 export interface ProgressSSEEvent {

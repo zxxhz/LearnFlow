@@ -17,6 +17,7 @@ from app.services.llm.errors import LLMError
 from app.services.profile import (
     extract_and_update_learner_profile,
     format_profile_for_prompt,
+    trigger_profile_evolution,
 )
 from app.services.prompt import render_prompt
 
@@ -116,11 +117,8 @@ async def stream_exercise_diagnosis(
 
     # 助教伴学指导结束后，异步提炼学生的练习理解盲区
     reply_summary = "".join(tutor_replies)[:300]
-    asyncio.create_task(
-        extract_and_update_learner_profile(
-            async_session_factory,
-            context=f"练习题：{exercise.title}；知识点：{kp_title}；学生作答片段：{content[:200]}",
-            interaction=f"学生提问：{question}\n助教启发指导：{reply_summary}",
-        )
+    trigger_profile_evolution(
+        context=f"练习题：{exercise.title}；知识点：{kp_title}；学生作答片段：{content[:200]}",
+        interaction=f"学生提问：{question}\n助教启发指导：{reply_summary}",
     )
 

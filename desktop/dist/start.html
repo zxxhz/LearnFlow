@@ -69,11 +69,12 @@
       <code>uv run python -m app.main</code> 查看报错。</span>
     </div>
     <script>
-      // 30 秒仍未就绪则提示排查（成功时由壳直接跳转页面）
+      // 55 秒仍未就绪则提示排查（壳侧 60s 放弃；成功时由壳直接跳转页面，本提示自动失效）
       setTimeout(() => {
         document.getElementById("msg").style.display = "none";
         document.getElementById("err").style.display = "block";
-      }, 30000);
+        document.querySelector(".spin")?.remove();
+      }, 55000);
     </script>
   </body>
 </html>

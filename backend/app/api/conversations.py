@@ -14,7 +14,7 @@ from app.schemas.conversation import MessageCreate, MessageOut
 from app.services.context import build_annotation_messages
 from app.services.llm import create_adapter_from_settings
 from app.services.llm.errors import LLMError
-from app.services.profile import extract_and_update_learner_profile
+from app.services.profile import extract_and_update_learner_profile, trigger_profile_evolution
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +91,9 @@ async def post_message(
             msg_id = saved.id
 
         # 异步提炼用户划线问答的认知盲区与提问习惯
-        asyncio.create_task(
-            extract_and_update_learner_profile(
-                async_session_factory,
-                context=f"划线文本：{ann.exact}",
-                interaction=f"学生提问：{content}\n助教解答：{full_content[:300]}",
-            )
+        trigger_profile_evolution(
+            context=f"划线文本：{ann.exact}",
+            interaction=f"学生提问：{body.content}\n助教解答：{full_content[:300]}",
         )
 
         yield f"data: {json.dumps({'type': 'done', 'message_id': msg_id, 'content': full_content}, ensure_ascii=False)}\n\n"

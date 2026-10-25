@@ -1,5 +1,5 @@
 // 全课程问答：章节摘要 + 全文检索命中的原文拼接上下文，LLM 流式回答（不落对话记录）
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { Button, Spinner } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
@@ -14,6 +14,13 @@ export default function CourseAskPanel({ courseId }: { courseId: string }) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<(() => void) | null>(null);
+
+  // 卸载或切换课程时中断进行中的问答流
+  useEffect(() => {
+    return () => {
+      abortRef.current?.();
+    };
+  }, [courseId]);
 
   const ask = () => {
     const q = question.trim();

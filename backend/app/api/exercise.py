@@ -26,7 +26,8 @@ async def generate(body: ExerciseGenerateRequest, db: AsyncSession = Depends(get
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return [ExerciseOut.model_validate(r) for r in rows]
+    # 统一走 _attach_meta：补齐 unlocked 链路与 kp_title，并对未通关题目脱敏答案
+    return await exercise_service._attach_meta(db, rows)
 
 
 @router.get("", response_model=list[ExerciseOut])

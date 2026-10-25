@@ -2,7 +2,7 @@ import json
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import Integer, case, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
@@ -38,77 +38,98 @@ def _exercise_mastery(pass_ratio: float | None) -> int:
 
 @router.get("/summary", response_model=DashboardSummary)
 async def summary(db: AsyncSession = Depends(get_db)):
+    # 章节进度按 course_id 聚合（SQL COUNT/GROUP BY 替代把全部文档拉入内存再过滤）
+    total_rows = (
+        await db.execute(
+            select(Document.course_id, func.count().label("total")).group_by(Document.course_id)
+        )
+    ).all()
+    doc_totals = {r.course_id: int(r.total) for r in total_rows}
+
+    done_rows = (
+        await db.execute(
+            select(Document.course_id, func.count().label("done"))
+            .where(Document.status == "done")
+            .group_by(Document.course_id)
+        )
+    ).all()
+    doc_done = {r.course_id: int(r.done) for r in done_rows}
+
     courses = (
         await db.scalars(select(Course).where(Course.status != "archived").order_by(Course.updated_at.desc()))
     ).all()
-    docs = (await db.scalars(select(Document))).all()
-
     course_items = []
     for c in courses:
-        cdocs = [d for d in docs if d.course_id == c.id]
         course_items.append(
             {
                 "id": c.id,
                 "title": c.title,
                 "status": c.status,
-                "done_chapters": sum(1 for d in cdocs if d.status == "done"),
-                "total_chapters": len(cdocs),
+                "done_chapters": doc_done.get(c.id, 0),
+                "total_chapters": doc_totals.get(c.id, 0),
                 "updated_at": c.updated_at,
             }
         )
 
-    # 薄弱知识点：闯关练习通过率（最近一次作答）+ 失败题数
-    kps = (await db.scalars(select(KnowledgePoint))).all()
-
-    # 每题最近一次作答（窗口函数），聚合出练习通过率与失败题数
+    # 薄弱知识点：闯关练习通过率（最近一次作答）+ 失败题数，全部在 SQL 内聚合：
+    # 最近一次作答窗口函数 → outer join 练习 → 按 kp 分组统计有作答数/通过数/失败数
     rn = func.row_number().over(
         partition_by=ExerciseAttempt.exercise_id, order_by=ExerciseAttempt.created_at.desc()
     ).label("rn")
-    sq = (
+    ranked = (
         select(ExerciseAttempt.exercise_id.label("eid"), ExerciseAttempt.passed.label("ok"), rn)
         .subquery()
     )
-    latest_rows = (await db.execute(select(sq.c.eid, sq.c.ok).where(sq.c.rn == 1))).all()
-    latest_ok: dict[str, bool | None] = {r.eid: r.ok for r in latest_rows}
-    exercises = (await db.scalars(select(Exercise))).all()
-    fail_by_kp: dict[str, int] = {}
-    attempt_total: dict[str, list[bool | None]] = {}
-    for e in exercises:
-        ok = latest_ok.get(e.id)
-        attempt_total.setdefault(e.knowledge_point_id, []).append(ok)
-        if ok is False:
-            fail_by_kp[e.knowledge_point_id] = fail_by_kp.get(e.knowledge_point_id, 0) + 1
+    latest = (
+        select(ranked.c.eid, ranked.c.ok).where(ranked.c.rn == 1).subquery().alias("latest")
+    )
+    kp_stats_rows = (
+        await db.execute(
+            select(
+                Exercise.knowledge_point_id.label("kpid"),
+                func.sum(case((latest.c.eid.isnot(None), 1), else_=0)).label("answered_n"),
+                func.sum(cast(latest.c.ok, Integer)).label("passed_n"),
+                func.sum(case((latest.c.ok.is_(False), 1), else_=0)).label("failed_n"),
+            )
+            .outerjoin(latest, latest.c.eid == Exercise.id)
+            .group_by(Exercise.knowledge_point_id)
+        )
+    ).all()
+    kp_answered = {r.kpid: int(r.answered_n or 0) for r in kp_stats_rows}
+    kp_passed = {r.kpid: int(r.passed_n or 0) for r in kp_stats_rows}
+    kp_failed = {r.kpid: int(r.failed_n or 0) for r in kp_stats_rows}
 
+    kps = (await db.scalars(select(KnowledgePoint))).all()
     weak = []
     for kp in kps:
-        oks = [o for o in attempt_total.get(kp.id, []) if o is not None]
-        ex_fail = fail_by_kp.get(kp.id, 0)
-        # 完全没有练习信号的知识点不进薄弱榜（无法判断强弱）
-        if not oks:
+        answered_n = kp_answered.get(kp.id, 0)
+        failed_n = kp_failed.get(kp.id, 0)
+        # 完全没有练习作答信号的知识点不进薄弱榜（无法判断强弱）
+        if answered_n == 0:
             continue
-        pass_ratio = sum(1 for o in oks if o) / len(oks)
+        pass_ratio = kp_passed.get(kp.id, 0) / answered_n
         mastery = _exercise_mastery(pass_ratio)
-        if mastery >= 85 and ex_fail == 0:
+        if mastery >= 85 and failed_n == 0:
             continue
         weak.append(
             WeakPoint(
                 knowledge_point_id=kp.id,
                 title=kp.title,
                 document_id=kp.document_id,
-                exercise_fail=ex_fail,
+                exercise_fail=failed_n,
                 mastery=mastery,
             )
         )
     weak.sort(key=lambda w: (w.mastery, -w.exercise_fail))
 
-    # 热力图：用户消息（划线提问等），按本地日期聚合
+    # 热力图：用户消息（划线提问等），按本地日期聚合（只取 created_at 列，不拉正文）
     today = local_today()
-    user_msgs = (
-        await db.scalars(select(Message).where(Message.role == "user"))
+    msg_rows = (
+        await db.execute(select(Message.created_at).where(Message.role == "user"))
     ).all()
     counts: dict = {}
-    for m in user_msgs:
-        d = parse_dt(m.created_at)
+    for (created_at,) in msg_rows:
+        d = parse_dt(created_at)
         if d:
             ld = d.astimezone().date()
             counts[ld] = counts.get(ld, 0) + 1
@@ -130,25 +151,36 @@ async def summary(db: AsyncSession = Depends(get_db)):
         seconds_by_day.get((today - timedelta(days=i)).isoformat(), 0) for i in range(7)
     ) // 60
 
-    # LLM Token 用量（近 30 天）
+    # LLM Token 用量（近 30 天，SQL GROUP BY 聚合）
     since = (parse_dt(utcnow_iso()) - timedelta(days=30)).isoformat()
-    usage_rows = (
-        await db.scalars(select(LLMUsage).where(LLMUsage.created_at >= since))
+    scene_rows = (
+        await db.execute(
+            select(
+                LLMUsage.scene,
+                func.count().label("calls"),
+                func.sum(LLMUsage.prompt_tokens + LLMUsage.completion_tokens).label("tokens"),
+            )
+            .where(LLMUsage.created_at >= since)
+            .group_by(LLMUsage.scene)
+            .order_by(LLMUsage.scene)
+        )
     ).all()
     llm_usage = None
-    if usage_rows:
-        by_scene: dict[str, list[int]] = {}
-        for u in usage_rows:
-            stat = by_scene.setdefault(u.scene, [0, 0])
-            stat[0] += 1
-            stat[1] += u.prompt_tokens + u.completion_tokens
+    if scene_rows:
+        totals = (
+            await db.execute(
+                select(func.sum(LLMUsage.prompt_tokens), func.sum(LLMUsage.completion_tokens)).where(
+                    LLMUsage.created_at >= since
+                )
+            )
+        ).one()
         llm_usage = LLMUsageSummary(
-            calls=len(usage_rows),
-            prompt_tokens=sum(u.prompt_tokens for u in usage_rows),
-            completion_tokens=sum(u.completion_tokens for u in usage_rows),
+            calls=sum(int(r.calls) for r in scene_rows),
+            prompt_tokens=int(totals[0] or 0),
+            completion_tokens=int(totals[1] or 0),
             by_scene=[
-                SceneUsage(scene=scene, calls=calls, tokens=tokens)
-                for scene, (calls, tokens) in sorted(by_scene.items())
+                SceneUsage(scene=r.scene, calls=int(r.calls), tokens=int(r.tokens or 0))
+                for r in scene_rows
             ],
         )
 

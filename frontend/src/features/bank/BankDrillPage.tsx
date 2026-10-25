@@ -341,23 +341,6 @@ export default function BankDrillPage() {
         </div>
       )}
 
-      {draft && !draftFinished && (
-        <div className="mt-4 rounded-xl border border-brand-200 dark:border-brand-800 bg-brand-50/60 dark:bg-brand-900/20 p-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex-1">
-              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                ↩ 上次刷到第 {Math.min(draft.idx + 1, draft.round.questions.length)} /{" "}
-                {draft.round.questions.length} 题
-              </h2>
-              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                已作答 {Object.keys(draft.results).length} 题，进度已保留；开始新一轮会覆盖它。
-              </p>
-            </div>
-            <Button onClick={resumeDraft}>继续刷题 →</Button>
-          </div>
-        </div>
-      )}
-
       {(() => {
         const newCount = s.new_count ?? Math.max(0, s.question_count - s.answered);
         return (
@@ -527,9 +510,17 @@ function WrongQuestionItem({
   const [aiText, setAiText] = useState(existingExplain);
   const [aiError, setAiError] = useState("");
   const aiStreamRef = useRef<HTMLDivElement>(null);
+  const explainAbortRef = useRef<AbortController | null>(null);
   const opts = visibleOptions(question);
 
   const cardRef = useRef<HTMLDivElement>(null);
+
+  // 切换错题或卸载时中断进行中的 AI 解析流
+  useEffect(() => {
+    return () => {
+      explainAbortRef.current?.abort();
+    };
+  }, [question.id]);
 
   // 错题卡片题干与选项公式渲染
   useEffect(() => {
@@ -578,6 +569,9 @@ function WrongQuestionItem({
     setAiError("");
 
     let acc = "";
+    explainAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    explainAbortRef.current = ctrl;
     try {
       await api.banks.explainSSE(
         question.id,
@@ -597,12 +591,15 @@ function WrongQuestionItem({
             setAiStreaming(false);
             setAiError(ev.detail || "AI 解答遇到异常，请稍后重试");
           }
-        }
+        },
+        ctrl.signal
       );
     } catch (e) {
-      setAiThinking(false);
-      setAiStreaming(false);
-      setAiError(`网络或服务异常：${(e as Error).message}`);
+      if ((e as Error).name !== "AbortError") {
+        setAiThinking(false);
+        setAiStreaming(false);
+        setAiError(`网络或服务异常：${(e as Error).message}`);
+      }
     }
   }
 

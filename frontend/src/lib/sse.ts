@@ -2,20 +2,20 @@
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { getAccessToken } from "./api";
 
-function parseEvent(data: string, onEvent: (payload: any) => void) {
+function parseEvent<T>(data: string, onEvent: (payload: T) => void) {
   if (!data) return;
   try {
-    onEvent(JSON.parse(data));
+    onEvent(JSON.parse(data) as T);
   } catch {
     /* 非 JSON 事件忽略 */
   }
 }
 
 /** POST + SSE：服务端流式返回（对话、评价等）。使用原生 fetch + ReadableStream 逐块实时解析，杜绝自动重试与缓冲挂起。 */
-export async function streamSSE(
+export async function streamSSE<T = unknown>(
   url: string,
   body: unknown,
-  onEvent: (payload: any) => void,
+  onEvent: (payload: T) => void,
   signal?: AbortSignal
 ): Promise<void> {
   const token = getAccessToken();
@@ -85,9 +85,9 @@ export async function streamSSE(
 }
 
 /** GET + SSE：订阅服务端事件流（生成进度等）。 */
-export async function subscribeSSE(
+export async function subscribeSSE<T = unknown>(
   url: string,
-  onEvent: (payload: any) => void,
+  onEvent: (payload: T) => void,
   signal?: AbortSignal
 ): Promise<void> {
   const token = getAccessToken();

@@ -122,7 +122,13 @@ async def execute_tool(
             x_min = float(args.get("x_min", -10.0))
             x_max = float(args.get("x_max", 10.0))
             svg = await asyncio.to_thread(render_sync, exprs, x_min, x_max)
-            return {"status": "success", "svg_length": len(svg), "expressions": exprs}
+            # svg 通过 tool_result 事件透传给前端渲染；进入 LLM 历史前由 runner 剥离避免撑爆上下文
+            return {
+                "status": "success",
+                "svg": svg,
+                "svg_length": len(svg),
+                "expressions": exprs,
+            }
 
         elif name == "inspect_exercise":
             from app.models import Exercise

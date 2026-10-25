@@ -79,8 +79,9 @@ def check_math_equality(user_expr_str: str, expected_expr_str: str) -> bool:
         return True
     try:
         symbols_dict = {name: sp.Symbol(name) for name in "xyztabcn"}
-        u = sp.sympify(u_str, locals=symbols_dict)
-        e = sp.sympify(e_str, locals=symbols_dict)
+        # 用户习惯 x^2 表示幂，SymPy 中 ^ 是 XOR，统一替换为 ** 再解析
+        u = sp.sympify(u_str.replace("^", "**"), locals=symbols_dict)
+        e = sp.sympify(e_str.replace("^", "**"), locals=symbols_dict)
         diff = sp.simplify(u - e)
         return bool(diff == 0)
     except Exception:
@@ -162,7 +163,14 @@ async def generate_for_kp(
             task_md=item.task,
             language=item.resolved_language(language) if item.kind == EXERCISE_CODE else "",
             skeleton_code=item.skeleton_code if item.kind == EXERCISE_CODE else "",
-            expected_output=item.expected_output if item.kind == EXERCISE_CODE else "",
+            # math 题的参考目标（expected_output 或 reference_answer）必须落库，否则判题恒失败
+            expected_output=(
+                item.expected_output
+                if item.kind == EXERCISE_CODE
+                else (item.expected_output or item.reference_answer)
+                if item.kind == EXERCISE_MATH
+                else ""
+            ),
             reference_code=item.reference_code if item.kind == EXERCISE_CODE else "",
             hints=(
                 json.dumps([h for h in item.hints if str(h).strip()][:3], ensure_ascii=False)
@@ -170,7 +178,11 @@ async def generate_for_kp(
                 else "[]"
             ),
             order_index=idx,
-            reference_answer=item.reference_answer if item.kind == EXERCISE_CONCEPT else "",
+            reference_answer=(
+                item.reference_answer
+                if item.kind in (EXERCISE_CONCEPT, EXERCISE_MATH)
+                else ""
+            ),
             options=json.dumps(item.options, ensure_ascii=False) if item.kind == EXERCISE_CHOICE else "",
             answer=item.stored_answer(),
         )
@@ -251,6 +263,13 @@ async def _attach_meta(db: AsyncSession, exercises: list[Exercise]) -> list[Exer
         o.latest_attempt = (
             ExerciseAttemptOut.model_validate(latest[e.id]) if e.id in latest else None
         )
+        # 防作弊脱敏：尚未作答过时不明文下发答案；代码关参考实现仅在通关后下发。
+        # expected_output（代码关目标输出）必须保留——闯关界面常显目标。
+        if o.latest_attempt is None:
+            o.answer = ""
+            o.reference_answer = ""
+        if o.kind == EXERCISE_CODE and not o.ever_passed:
+            o.reference_code = ""
         out.append(o)
     return out
 

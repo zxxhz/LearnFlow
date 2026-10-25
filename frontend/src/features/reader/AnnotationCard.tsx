@@ -53,6 +53,14 @@ export default function AnnotationCard({
   const [currentColor, setCurrentColor] = useState<AnnotationColor>(annotation.color);
   const bottomRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<HTMLDivElement>(null);
+  const sseAbortRef = useRef<AbortController | null>(null);
+
+  // 卸载或切换标注会话时中断进行中的提问流，防止后台空烧 Token
+  useEffect(() => {
+    return () => {
+      sseAbortRef.current?.abort();
+    };
+  }, [conversationId]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -74,13 +82,24 @@ export default function AnnotationCard({
   const displayMsgs = useMemo(() => {
     const list = [...(serverMsgs ?? [])];
     const serverIds = new Set(list.map((m) => m.id));
-    const serverUserContents = new Set(
-      list.filter((m) => m.role === "user").map((m) => m.content.trim())
-    );
+    const serverUserContents = list
+      .filter((m) => m.role === "user")
+      .map((m) => m.content.trim());
 
+    // 按发送顺序 FIFO 配对去重：乐观消息与一条尚未回显的相同内容服务端消息配对后跳过，
+    // 相同内容重复提问（如连续两次"为什么？"）不会被误吞
+    const matched = new Set<number>();
     for (const lm of localMsgs) {
       if (serverIds.has(lm.id)) continue;
-      if (lm.role === "user" && serverUserContents.has(lm.content.trim())) continue;
+      if (lm.role === "user") {
+        const idx = serverUserContents.findIndex(
+          (c, i) => c === lm.content.trim() && !matched.has(i)
+        );
+        if (idx >= 0) {
+          matched.add(idx);
+          continue;
+        }
+      }
       list.push({
         id: lm.id,
         conversation_id: conversationId,
@@ -124,15 +143,19 @@ export default function AnnotationCard({
     }, 30);
 
     let acc = "";
+    sseAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    sseAbortRef.current = ctrl;
     try {
-      await streamSSE(
+      await streamSSE<ChatSSEEvent>(
         `/conversations/${conversationId}/messages`,
         { content },
-        (ev: any) => {
-          if (ev.type === "user_ack" && ev.message) {
+        (ev) => {
+          if (ev.type === "user_ack" && ev.message?.id) {
             // 后端持久化成功，将乐观消息 ID 对齐
+            const ackedId = ev.message.id;
             setLocalMsgs((prev) =>
-              prev.map((m) => (m.id === tempUserId ? { ...m, id: ev.message.id } : m))
+              prev.map((m) => (m.id === tempUserId ? { ...m, id: ackedId } : m))
             );
           } else if (ev.type === "delta" && ev.text) {
             setIsThinking(false);
@@ -160,11 +183,14 @@ export default function AnnotationCard({
               setStreaming("");
             }
           }
-        }
+        },
+        ctrl.signal
       );
     } catch (e) {
-      setIsThinking(false);
-      setStreamErr(`网络错误：${(e as Error).message}`);
+      if ((e as Error).name !== "AbortError") {
+        setIsThinking(false);
+        setStreamErr(`网络错误：${(e as Error).message}`);
+      }
     }
   };
 

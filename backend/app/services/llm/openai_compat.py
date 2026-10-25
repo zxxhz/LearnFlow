@@ -78,6 +78,7 @@ class OpenAICompatAdapter(LLMAdapter):
         stream: bool = False,
         max_tokens: int | None = None,
         json_mode: bool = False,
+        temperature: float | None = None,
     ):
         messages = self._normalize_messages(messages)
         kwargs: dict = {
@@ -86,6 +87,8 @@ class OpenAICompatAdapter(LLMAdapter):
         }
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
+        if temperature is not None:
+            kwargs["temperature"] = temperature
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
 

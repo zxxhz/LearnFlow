@@ -2,7 +2,7 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
@@ -157,17 +157,31 @@ async def list_courses(db: AsyncSession = Depends(get_db)):
             select(Course).where(Course.status != "archived").order_by(Course.updated_at.desc())
         )
     ).all()
-    docs = (await db.scalars(select(Document))).all()
+    # 章节统计与首章定位：SQL 聚合替代全表拉入内存逐课程过滤
+    total_rows = (
+        await db.execute(
+            select(Document.course_id, func.count().label("n")).group_by(Document.course_id)
+        )
+    ).all()
+    totals = {r.course_id: int(r.n) for r in total_rows}
+    done_rows = (
+        await db.execute(
+            select(Document.course_id, Document.id)
+            .where(Document.status == "done")
+            .order_by(Document.course_id, Document.chapter_index, Document.created_at)
+        )
+    ).all()
+    done_first: dict[str, str] = {}
+    done_count: dict[str, int] = {}
+    for course_id, doc_id in done_rows:
+        done_count[course_id] = done_count.get(course_id, 0) + 1
+        done_first.setdefault(course_id, doc_id)
     items = []
     for c in courses:
-        mine = [d for d in docs if d.course_id == c.id]
-        mine_done = [d for d in mine if d.status == "done"]
         item = CourseListItem.model_validate(c)
-        item.done_chapters = len(mine_done)
-        item.total_chapters = len(mine)
-        if mine_done:
-            mine_done.sort(key=lambda d: d.chapter_index)
-            item.first_document_id = mine_done[0].id
+        item.done_chapters = done_count.get(c.id, 0)
+        item.total_chapters = totals.get(c.id, 0)
+        item.first_document_id = done_first.get(c.id)
         items.append(item)
     return items
 
@@ -320,6 +334,10 @@ async def progress(course_id: str, db: AsyncSession = Depends(get_db)):
                 "documents": [p.model_dump() for p in _progress_list(list(docs))],
             }
             yield f"data: {_json.dumps(snapshot, ensure_ascii=False)}\n\n"
+            # 订阅时生成已结束：快照即终态，直接结束流，避免客户端永远挂在 ping 循环上
+            if not pipeline.is_running(course_id):
+                yield f"data: {_json.dumps({'type': 'course_done'}, ensure_ascii=False)}\n\n"
+                return
             while True:
                 try:
                     evt = await asyncio.wait_for(queue.get(), timeout=15.0)
@@ -327,6 +345,10 @@ async def progress(course_id: str, db: AsyncSession = Depends(get_db)):
                     if evt.get("type") in ("course_done", "error"):
                         break
                 except asyncio.TimeoutError:
+                    # 等待期间任务可能已结束（结束事件发布在订阅前），超时后复查一次
+                    if not pipeline.is_running(course_id):
+                        yield f"data: {_json.dumps({'type': 'course_done'}, ensure_ascii=False)}\n\n"
+                        return
                     yield ": ping\n\n"
         finally:
             pipeline.unsubscribe(course_id, queue)

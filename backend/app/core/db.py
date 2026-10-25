@@ -74,6 +74,8 @@ async def init_db() -> None:
     # feynman 对话连带消息先删 → DROP 三张表；conversations 里指向已删表的
     # feynman_session_id 列受 FK 约束无法 DROP COLUMN，按 SQLite 流程重建表。
     # 新库没有这些表/列，全部幂等跳过。
+    # 注意：PRAGMA 是连接级状态，该连接归还连接池前必须恢复 foreign_keys=ON，
+    # 否则池内这条连接在进程生命周期内永久失去外键约束。
     async with engine.connect() as legacy:
         await legacy.exec_driver_sql("PRAGMA foreign_keys=OFF")
         tables = {
@@ -116,4 +118,6 @@ async def init_db() -> None:
                 "CREATE INDEX ix_conversations_annotation_id ON conversations (annotation_id)"
             ))
         await legacy.commit()
+        # 归还连接池前恢复外键约束，避免污染池内连接
+        await legacy.exec_driver_sql("PRAGMA foreign_keys=ON")
     logger.info("数据库已就绪: %s", settings.db_path)

@@ -1,5 +1,5 @@
 // 通用 UI 原语：全应用一致的轻量组件集
-import { ReactNode } from "react";
+import { ReactNode, useEffect } from "react";
 
 type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 
@@ -45,7 +45,7 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...rest}
-      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-brand-400 focus:ring-1 focus:ring-brand-500 ${className}`}
+      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:focus:border-brand-400 focus:ring-1 focus:ring-brand-500 ${className}`}
     />
   );
 }
@@ -57,7 +57,7 @@ export function Textarea(
   return (
     <textarea
       {...rest}
-      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-brand-400 focus:ring-1 focus:ring-brand-500 ${className}`}
+      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:focus:border-brand-400 focus:ring-1 focus:ring-brand-500 ${className}`}
     />
   );
 }
@@ -67,7 +67,7 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
       {...rest}
-      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:border-brand-400 ${className}`}
+      className={`w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm outline-none focus:border-brand-500 dark:focus:border-brand-400 ${className}`}
     />
   );
 }
@@ -86,7 +86,7 @@ export function Badge({
   const styles = {
     gray: "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400",
     green: "bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-400",
-    blue: "bg-blue-100 text-blue-700",
+    blue: "bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-400",
     red: "bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-400",
     amber: "bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400",
     purple: "bg-purple-100 dark:bg-purple-900/40 text-purple-700 dark:text-purple-400",
@@ -124,10 +124,25 @@ export function Modal({
   children: ReactNode;
   width?: string;
 }) {
+  // Esc 关闭模态框
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      role="dialog"
+      aria-modal="true"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -137,6 +152,7 @@ export function Modal({
           <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
           <button
             onClick={onClose}
+            aria-label="关闭"
             className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
           >
             ✕

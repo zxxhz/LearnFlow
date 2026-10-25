@@ -23,7 +23,7 @@ export default function MindMapListPage() {
   const [renamingMap, setRenamingMap] = useState<MindMapSummary | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
 
-  const { data: mindmaps, isLoading } = useQuery({
+  const { data: mindmaps, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["mindmaps"],
     queryFn: api.mindmaps.list,
   });
@@ -210,6 +210,17 @@ export default function MindMapListPage() {
         <div className="py-20 flex justify-center">
           <Spinner />
         </div>
+      ) : isError ? (
+        <EmptyState
+          icon="⚠️"
+          title="导图列表加载失败"
+          hint={(error as Error)?.message ?? "服务暂时不可用，请稍后重试"}
+          action={
+            <Button className="mt-3" variant="secondary" onClick={() => refetch()}>
+              重试
+            </Button>
+          }
+        />
       ) : filtered.length === 0 ? (
         <div className="mt-8 rounded-2xl border border-dashed border-gray-200 dark:border-gray-800 p-12 text-center bg-white/40 dark:bg-gray-800/20">
           <div className="text-4xl mb-3">🌿</div>

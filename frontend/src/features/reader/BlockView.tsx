@@ -258,7 +258,8 @@ export default function BlockView({
     setPlotBusy(true);
     setPlotErr("");
     try {
-      const res = await api.math.render({ expressions: code });
+      // 使用编辑后的代码重绘，而非初始代码
+      const res = await api.math.render({ expressions: displayCode });
       setPlotSvg(res.svg);
     } catch (e) {
       setPlotErr((e as Error).message);
@@ -278,11 +279,8 @@ export default function BlockView({
     const el = innerRef.current;
     if (isCode || !el || !sectionId) return;
     applyHighlights(el, annotations);
-    if (activeAnnId) {
-      el.querySelector(`mark[data-ann-id="${activeAnnId}"]`)?.classList.add("hl-active");
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, annKey, isCode, activeAnnId, sectionId]);
+  }, [html, annKey, isCode, sectionId]);
 
   // 代码块：Shiki 高亮 + 划线 mark + 偏移区间，一次完成（编辑时随 displayCode 重跑）
   useEffect(() => {
@@ -306,16 +304,24 @@ export default function BlockView({
       el.innerHTML = inner;
       el.classList.toggle("ann-code-flag", annotations.some((a) => a.status === "active"));
       applyHighlights(el, annotations);
-      if (activeAnnId) {
-        el.querySelector(`mark[data-ann-id="${activeAnnId}"]`)?.classList.add("hl-active");
-      }
       markRangesRef.current = collectMarkRanges(el);
     })();
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayCode, lang, isCode, annKey, activeAnnId, sectionId]);
+  }, [displayCode, lang, isCode, annKey, sectionId]);
+
+  // 活动标注高亮：仅切换 mark 类名，避免因打开/关闭标注卡而整块重新 Shiki 高亮
+  useEffect(() => {
+    for (const el of [codeRef.current, innerRef.current]) {
+      if (!el) continue;
+      el.querySelector("mark.hl-active")?.classList.remove("hl-active");
+      if (activeAnnId) {
+        el.querySelector(`mark[data-ann-id="${activeAnnId}"]`)?.classList.add("hl-active");
+      }
+    }
+  }, [activeAnnId, html, isCode, annKey]);
 
   // 输入层接管点击：光标位置落在某个 mark 区间 → 打开对应标注卡
   const onCodeClick = () => {

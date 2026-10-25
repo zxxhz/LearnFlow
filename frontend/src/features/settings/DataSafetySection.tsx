@@ -150,9 +150,23 @@ export default function DataSafetySection() {
             {access.lan_urls_with_token.map((u) => (
               <div
                 key={u}
-                onClick={() => {
-                  navigator.clipboard.writeText(u);
-                  flash("地址与令牌已复制到剪贴板");
+                onClick={async () => {
+                  // http 局域网地址下 navigator.clipboard 可能不存在或被拒绝，降级用 execCommand
+                  try {
+                    if (navigator.clipboard?.writeText) {
+                      await navigator.clipboard.writeText(u);
+                    } else {
+                      const ta = document.createElement("textarea");
+                      ta.value = u;
+                      document.body.appendChild(ta);
+                      ta.select();
+                      document.execCommand("copy");
+                      ta.remove();
+                    }
+                    flash("地址与令牌已复制到剪贴板");
+                  } catch {
+                    flash("复制失败，请手动长按选择复制");
+                  }
                 }}
                 className="group flex items-center justify-between rounded-lg bg-gray-50 dark:bg-gray-800/50 px-3 py-2 font-mono text-xs text-gray-700 dark:text-gray-300 border border-gray-100 dark:border-gray-800 hover:border-brand-300 dark:hover:border-brand-700 cursor-pointer transition"
                 title="点击复制访问地址"

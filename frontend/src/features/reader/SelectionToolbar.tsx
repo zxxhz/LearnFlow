@@ -2,6 +2,7 @@
 import { useEffect, useRef } from "react";
 import type { AnchorRange } from "../../lib/anchor";
 import type { AnnotationColor } from "../../lib/types";
+import { HL_DEFAULTS, useHlColors } from "./colors";
 
 const COLORS: AnnotationColor[] = ["yellow", "green", "blue", "pink"];
 
@@ -25,6 +26,7 @@ export default function SelectionToolbar({
   onHighlight,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const hlColors = useHlColors();
 
   useEffect(() => {
     const el = ref.current;
@@ -65,7 +67,8 @@ export default function SelectionToolbar({
           onClick={() => onColorChange(c)}
           className={`h-4 w-4 rounded-full border ${color === c ? "ring-2 ring-brand-500 ring-offset-1" : ""}`}
           style={{
-            backgroundColor: { yellow: "#fde68a", green: "#bbf7d0", blue: "#bfdbfe", pink: "#fbcfe8" }[c],
+            // 使用用户自定义高亮色，与正文 mark 染色保持一致
+            backgroundColor: hlColors[c] ?? HL_DEFAULTS[c],
           }}
           title={c}
         />

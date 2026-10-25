@@ -26,6 +26,7 @@ class LLMAdapter(ABC):
         stream: bool = False,
         max_tokens: int | None = None,
         json_mode: bool = False,
+        temperature: float | None = None,
     ) -> str | AsyncIterator[str]:
         ...
 

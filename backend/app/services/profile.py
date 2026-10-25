@@ -18,19 +18,51 @@ logger = logging.getLogger(__name__)
 DEFAULT_PROFILE_ID = "local"
 
 
+_background_tasks: set[asyncio.Task] = set()
+
+
 async def get_or_create_profile(db: AsyncSession, profile_id: str = DEFAULT_PROFILE_ID) -> LearnerProfile:
-    """获取学习者画像；不存在时自动创建并持久化默认实例。"""
+    """获取学习者画像；不存在时用独立短会话落库默认实例。
+
+    不能在调用方会话上写入默认画像：
+    - commit 会把调用方未完事务一起提前提交；
+    - flush 会挂起一条写事务，长流式请求期间（LLM 响应数十秒）锁死 SQLite 单写者，
+      其他写入全部 database is locked 超时（实测踩中）。
+    """
     profile = await db.get(LearnerProfile, profile_id)
     if profile is None:
-        profile = LearnerProfile(
-            id=profile_id,
-            background_summary="",
-            socratic_mode=True,
-            updated_at=utcnow_iso(),
-        )
-        db.add(profile)
-        await db.commit()
-        await db.refresh(profile)
+        import asyncio as _asyncio
+
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            async with async_session_factory() as s:
+                existing = await s.get(LearnerProfile, profile_id)
+                if existing is None:
+                    s.add(
+                        LearnerProfile(
+                            id=profile_id,
+                            background_summary="",
+                            socratic_mode=True,
+                            updated_at=utcnow_iso(),
+                        )
+                    )
+                    await s.commit()
+        except IntegrityError:
+            # 并发首建竞态：另一会话已创建，忽略即可
+            await _asyncio.sleep(0)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"默认画像创建失败（继续使用空画像）: {e}")
+        # 行已由短会话落库，从调用方会话读取（读事务不持写锁）
+        profile = await db.get(LearnerProfile, profile_id)
+        if profile is None:
+            # 极端兜底：库仍读不到时构造非持久化实例，功能不中断
+            profile = LearnerProfile(
+                id=profile_id,
+                background_summary="",
+                socratic_mode=True,
+                updated_at=utcnow_iso(),
+            )
     return profile
 
 
@@ -106,9 +138,28 @@ EVOLVE_PROMPT = """你是一个认知诊断与学习者画像分析专家。
 ```"""
 
 
-async def evolve_profile_from_interaction(dialogue_snippet: str) -> dict[str, Any] | None:
-    """根据一次学习交互提炼并更新画像与认知易错点。"""
-    snippet = dialogue_snippet.strip()
+async def evolve_profile_from_interaction(
+    dialogue_snippet_or_factory: Any = "",
+    *,
+    context: str = "",
+    interaction: str = "",
+    dialogue_snippet: str = "",
+) -> dict[str, Any] | None:
+    """根据一次学习交互提炼并更新画像与认知易错点。
+
+    兼容单参数 (dialogue_snippet) 以及 (session_factory, context=..., interaction=...) 多种历史调用方式。
+    """
+    parts = []
+    if context:
+        parts.append(str(context).strip())
+    if interaction:
+        parts.append(str(interaction).strip())
+    if dialogue_snippet:
+        parts.append(str(dialogue_snippet).strip())
+    if not parts and isinstance(dialogue_snippet_or_factory, str):
+        parts.append(dialogue_snippet_or_factory.strip())
+
+    snippet = "\n".join(p for p in parts if p).strip()
     if len(snippet) < 6:
         return None
 
@@ -117,15 +168,15 @@ async def evolve_profile_from_interaction(dialogue_snippet: str) -> dict[str, An
         snippet = snippet[:1500] + "..."
 
     async with async_session_factory() as db:
-        profile = await get_or_create_profile(db)
-        current_summary = profile.background_summary or "（暂无，尚待建立）"
-
-        prompt = EVOLVE_PROMPT.format(
-            current_summary=current_summary,
-            dialogue_snippet=snippet,
-        )
-
         try:
+            profile = await get_or_create_profile(db)
+            current_summary = profile.background_summary or "（暂无，尚待建立）"
+
+            prompt = EVOLVE_PROMPT.format(
+                current_summary=current_summary,
+                dialogue_snippet=snippet,
+            )
+
             adapter = await create_adapter_from_settings(db, scene="chat")
             response = await adapter.chat(
                 [{"role": "user", "content": prompt}],
@@ -145,9 +196,21 @@ async def evolve_profile_from_interaction(dialogue_snippet: str) -> dict[str, An
             if isinstance(new_miscs, list):
                 for item in new_miscs:
                     if isinstance(item, dict) and item.get("topic"):
+                        topic_str = str(item["topic"])[:64]
+                        tag_str = str(item.get("tag", "理解偏差"))[:32]
+                        # 避免重复插入相同 topic 和 tag 的未解决盲区
+                        existing = await db.scalar(
+                            select(LearnerMisconception).where(
+                                LearnerMisconception.topic == topic_str,
+                                LearnerMisconception.tag == tag_str,
+                                LearnerMisconception.status == "active",
+                            )
+                        )
+                        if existing:
+                            continue
                         misc = LearnerMisconception(
-                            topic=str(item["topic"])[:64],
-                            tag=str(item.get("tag", "理解偏差"))[:32],
+                            topic=topic_str,
+                            tag=tag_str,
                             evidence=str(item.get("evidence", ""))[:128],
                             status="active",
                         )
@@ -160,11 +223,24 @@ async def evolve_profile_from_interaction(dialogue_snippet: str) -> dict[str, An
             return None
 
 
-def trigger_profile_evolution(dialogue_snippet: str) -> None:
-    """触发非阻塞后台认知演进任务。"""
+def trigger_profile_evolution(
+    dialogue_snippet: str = "",
+    *,
+    context: str = "",
+    interaction: str = "",
+) -> None:
+    """触发非阻塞后台认知演进任务，持有强引用避免被 GC 回收。"""
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(evolve_profile_from_interaction(dialogue_snippet))
+        task = loop.create_task(
+            evolve_profile_from_interaction(
+                dialogue_snippet=dialogue_snippet,
+                context=context,
+                interaction=interaction,
+            )
+        )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
     except RuntimeError:
         # 没有活跃事件循环时直接安全忽略
         pass

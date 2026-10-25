@@ -8,7 +8,7 @@ import FontSizeControl from "../../components/FontSizeControl";
 import { useFontSize } from "../../lib/fontSize";
 
 export default function WrongBookPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["exercises-wrongbook"],
     queryFn: api.exercises.wrongbook,
   });
@@ -29,6 +29,21 @@ export default function WrongBookPage() {
         <div className="mt-10 flex justify-center">
           <Spinner />
         </div>
+      ) : isError ? (
+        <EmptyState
+          icon="⚠️"
+          title="错题本加载失败"
+          hint={(error as Error)?.message ?? "服务暂时不可用，请稍后重试"}
+          action={
+            <button
+              type="button"
+              onClick={() => refetch()}
+              className="mt-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+            >
+              重试
+            </button>
+          }
+        />
       ) : !data || data.length === 0 ? (
         <EmptyState icon="🎉" title="没有错题" hint="练习里做错的题会自动收集到这里。" />
       ) : (
@@ -41,7 +56,15 @@ export default function WrongBookPage() {
               <div className="mb-1 flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
                 <span>
                   {e.kp_title ?? "（知识点已删除）"} ·{" "}
-                  {e.kind === "code" ? "代码题" : e.kind === "choice" ? "单选" : e.kind === "fill" ? "填空" : "概念题"}
+                  {e.kind === "code"
+                    ? "代码题"
+                    : e.kind === "choice"
+                    ? "单选"
+                    : e.kind === "fill"
+                    ? "填空"
+                    : e.kind === "math"
+                    ? "数学题"
+                    : "概念题"}
                 </span>
                 <Link to={`/read/${e.document_id}`} className="text-brand-600 underline">
                   前往章节 ↗

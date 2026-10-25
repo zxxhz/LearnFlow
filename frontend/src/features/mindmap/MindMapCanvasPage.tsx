@@ -60,7 +60,7 @@ export default function MindMapCanvasPage() {
   const { mapId } = useParams<{ mapId: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { fontSize } = useFontSize("course");
+  const { fontSize, setFontSize } = useFontSize("course");
 
   const [pan, setPan] = useState({ x: 80, y: 160 });
   const [zoom, setZoom] = useState(1);
@@ -76,7 +76,8 @@ export default function MindMapCanvasPage() {
   // 本地树状态缓存，支持秒级即时操作与防抖保存
   const [treeData, setTreeData] = useState<MindMapNode | null>(null);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
-  const saveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveStatusRef = useRef<"saved" | "saving" | "unsaved">("saved");
 
   // 快捷重命名或新增节点模态框
   const [editingNode, setEditingNode] = useState<{ id: string; title: string } | null>(null);
@@ -93,7 +94,11 @@ export default function MindMapCanvasPage() {
 
   useEffect(() => {
     if (mapDetail?.root) {
-      setTreeData(mapDetail.root);
+      setTreeData((prev) => {
+        // 本地存在未保存的编辑时不覆盖，防止保存回包/缓存刷新打断正在输入的内容
+        if (prev && saveStatusRef.current !== "saved") return prev;
+        return mapDetail.root;
+      });
     }
   }, [mapDetail?.id, mapDetail?.updated_at]);
 
@@ -101,20 +106,44 @@ export default function MindMapCanvasPage() {
   const saveTreeDebounced = useCallback(
     (newTree: MindMapNode) => {
       setSaveStatus("saving");
+      saveStatusRef.current = "saving";
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(async () => {
         if (!mapId) return;
         try {
           await api.mindmaps.update(mapId, { root: newTree });
           setSaveStatus("saved");
+          saveStatusRef.current = "saved";
           queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
+          // 同步详情缓存，防止 15s staleTime 内重进页面读到旧树覆盖刚保存的内容
+          queryClient.setQueryData<MindMapDetail>(["mindmap", mapId], (old) =>
+            old ? { ...old, root: newTree } : old
+          );
         } catch (e) {
           setSaveStatus("unsaved");
+          saveStatusRef.current = "unsaved";
         }
       }, 800);
     },
     [mapId, queryClient]
   );
+
+  // 卸载时若有待保存的防抖任务立即落库，防止快速返回列表页丢失最后一次编辑
+  const treeDataRef = useRef<MindMapNode | null>(null);
+  useEffect(() => {
+    treeDataRef.current = treeData;
+  }, [treeData]);
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        if (mapId && treeDataRef.current && saveStatusRef.current !== "saved") {
+          api.mindmaps.update(mapId, { root: treeDataRef.current }).catch(() => {});
+        }
+      }
+    };
+  }, [mapId]);
 
   // 节点更新调度
   const updateTreeNode = useCallback(
@@ -232,9 +261,25 @@ export default function MindMapCanvasPage() {
   );
 
   // 节点详情抽屉与 Agent 面板的平滑开启/关闭控制
+  const closeTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const clearCloseTimer = (key: string) => {
+    const t = closeTimerRef.current[key];
+    if (t) {
+      clearTimeout(t);
+      delete closeTimerRef.current[key];
+    }
+  };
+  useEffect(() => {
+    const timers = closeTimerRef.current;
+    return () => {
+      for (const key of Object.keys(timers)) clearTimeout(timers[key]);
+    };
+  }, []);
+
   const closeDetailDrawer = useCallback(() => {
     setIsClosingDetail(true);
-    setTimeout(() => {
+    clearCloseTimer("detail");
+    closeTimerRef.current.detail = setTimeout(() => {
       setDetailDrawerOpen(false);
       setIsClosingDetail(false);
     }, 300);
@@ -243,13 +288,15 @@ export default function MindMapCanvasPage() {
   const openDetailDrawer = useCallback(
     (nodeId: string) => {
       if (agentPanelOpen && !isClosingAgent) {
+        clearCloseTimer("agent");
         setIsClosingAgent(true);
-        setTimeout(() => {
+        closeTimerRef.current.agent = setTimeout(() => {
           setAgentPanelOpen(false);
           setIsClosingAgent(false);
         }, 300);
       }
       setSelectedNodeId(nodeId);
+      clearCloseTimer("detail");
       setIsClosingDetail(false);
       setDetailDrawerOpen(true);
     },
@@ -258,19 +305,22 @@ export default function MindMapCanvasPage() {
 
   const openAgent = useCallback(() => {
     if (detailDrawerOpen && !isClosingDetail) {
+      clearCloseTimer("detail");
       setIsClosingDetail(true);
-      setTimeout(() => {
+      closeTimerRef.current.detail = setTimeout(() => {
         setDetailDrawerOpen(false);
         setIsClosingDetail(false);
       }, 300);
     }
+    clearCloseTimer("agent");
     setIsClosingAgent(false);
     setAgentPanelOpen(true);
   }, [detailDrawerOpen, isClosingDetail]);
 
   const closeAgent = useCallback(() => {
     setIsClosingAgent(true);
-    setTimeout(() => {
+    clearCloseTimer("agent");
+    closeTimerRef.current.agent = setTimeout(() => {
       setAgentPanelOpen(false);
       setIsClosingAgent(false);
     }, 300);
@@ -594,7 +644,7 @@ export default function MindMapCanvasPage() {
           <div className="flex items-center gap-2">
             <FontSizeControl
               value={fontSize}
-              onChange={() => {}}
+              onChange={setFontSize}
               defaultValue={16}
               label="字号"
             />
@@ -847,8 +897,20 @@ export default function MindMapCanvasPage() {
           selectedNode={selectedNode}
           closing={isClosingAgent}
           onTreeUpdate={(newTree) => {
+            // Agent 服务端已落库，这里仅同步本地树与详情缓存，不再重复 PUT
             setTreeData(newTree);
-            saveTreeDebounced(newTree);
+            setSaveStatus("saved");
+            saveStatusRef.current = "saved";
+            if (saveTimerRef.current) {
+              clearTimeout(saveTimerRef.current);
+              saveTimerRef.current = null;
+            }
+            if (mapId) {
+              queryClient.setQueryData<MindMapDetail>(["mindmap", mapId], (old) =>
+                old ? { ...old, root: newTree } : old
+              );
+              queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
+            }
           }}
           onClose={closeAgent}
         />

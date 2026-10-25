@@ -36,6 +36,7 @@ from app.services.llm import create_adapter_from_settings
 from app.services.profile import (
     extract_and_update_learner_profile,
     format_profile_for_prompt,
+    trigger_profile_evolution,
 )
 from app.services.llm.errors import LLMError
 
@@ -312,12 +313,9 @@ async def ai_explain_question(
 
             # 异步提炼错题特征到学习者画像
             question_context = f"题库：{bank.name}；题目：{q.title}；错误作答：{'、'.join(body.picked)}"
-            asyncio.create_task(
-                extract_and_update_learner_profile(
-                    async_session_factory,
-                    context=question_context,
-                    interaction=f"AI 解析重点：{full_text[:300]}",
-                )
+            trigger_profile_evolution(
+                context=question_context,
+                interaction=f"AI 解析重点：{full_text[:300]}",
             )
 
         yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"

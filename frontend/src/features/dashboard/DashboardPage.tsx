@@ -25,10 +25,29 @@ function MasteryPill({ mastery }: { mastery: number }) {
 }
 
 export default function DashboardPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["dashboard"],
     queryFn: api.dashboard.summary,
   });
+
+  if (isError) {
+    return (
+      <EmptyState
+        icon="⚠️"
+        title="仪表盘加载失败"
+        hint={(error as Error)?.message ?? "服务暂时不可用，请稍后重试"}
+        action={
+          <button
+            type="button"
+            onClick={() => refetch()}
+            className="mt-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+          >
+            重试
+          </button>
+        }
+      />
+    );
+  }
 
   if (isLoading || !data) {
     return (

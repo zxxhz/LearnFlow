@@ -8,7 +8,7 @@ import random
 import shutil
 from io import BytesIO
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -244,38 +244,72 @@ async def wrong_question_ids(db: AsyncSession, bank_id: str) -> list[str]:
 
 
 async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
-    """题库统计：已答/正确率/错题数/按题型分布（错题池口径 = 最近一次作答）。"""
-    questions = (
-        await db.scalars(select(BankQuestion).where(BankQuestion.bank_id == bank.id))
-    ).all()
-    qmap = {q.id: q for q in questions}
-    attempts = (
-        await db.scalars(select(BankAttempt).where(BankAttempt.bank_id == bank.id))
-    ).all()
-    latest = {}
-    for a in sorted(attempts, key=lambda x: x.created_at):
-        latest[a.question_id] = a
+    """题库统计：已答/正确率/错题数/按题型分布（错题池口径 = 最近一次作答）。
 
-    wrong_ids = {qid for qid, a in latest.items() if not a.passed}
-    attempted_ids = set(latest.keys())
-    new_count = len([q for q in questions if q.id not in attempted_ids])
+    全部在 SQL 内聚合（最近一次作答窗口函数 + GROUP BY），不再把题目全文与全部作答拉入内存。
+    """
+    # 每题最近一次作答（窗口函数取 rn=1，按时间倒序保证是"最近"而非"最早"）
+    rn = func.row_number().over(
+        partition_by=BankAttempt.question_id, order_by=BankAttempt.created_at.desc()
+    ).label("rn")
+    ranked = (
+        select(BankAttempt.question_id.label("qid"), BankAttempt.passed.label("ok"), rn)
+        .where(BankAttempt.bank_id == bank.id)
+        .subquery()
+    )
+    latest = (
+        select(ranked.c.qid, ranked.c.ok).where(ranked.c.rn == 1).subquery().alias("latest")
+    )
+
+    # 总作答次数与正确次数（全量 attempt 聚合）
+    totals = (
+        await db.execute(
+            select(
+                func.count().label("n"),
+                func.sum(case((BankAttempt.passed.is_(True), 1), else_=0)).label("ok"),
+            ).where(BankAttempt.bank_id == bank.id)
+        )
+    ).one()
+    total_attempts = int(totals.n or 0)
+    correct_attempts = int(totals.ok or 0)
+
+    # 按题聚合最近一次作答结果，再与题目 join 得到统计分布
+    stats_rows = (
+        await db.execute(
+            select(
+                BankQuestion.qtype.label("qtype"),
+                func.count().label("total"),
+                func.sum(case((latest.c.qid.isnot(None), 1), else_=0)).label("answered_n"),
+                func.sum(case((latest.c.ok.is_(False), 1), else_=0)).label("wrong_n"),
+                func.sum(case((latest.c.ok.is_(True), 1), else_=0)).label("correct_n"),
+            )
+            .outerjoin(latest, latest.c.qid == BankQuestion.id)
+            .where(BankQuestion.bank_id == bank.id)
+            .group_by(BankQuestion.qtype)
+        )
+    ).all()
+
+    question_count = answered = correct_latest = wrong_count = 0
     by_type: dict[str, dict] = {}
-    for q in questions:
-        slot = by_type.setdefault(q.qtype, {"total": 0, "wrong": 0})
-        slot["total"] += 1
-        if q.id in wrong_ids:
-            slot["wrong"] += 1
+    for r in stats_rows:
+        qtotal = int(r.total or 0)
+        q_answered = int(r.answered_n or 0)
+        q_wrong = int(r.wrong_n or 0)
+        q_correct = int(r.correct_n or 0)
+        question_count += qtotal
+        answered += q_answered
+        correct_latest += q_correct
+        wrong_count += q_wrong
+        by_type[r.qtype] = {"total": qtotal, "wrong": q_wrong}
 
-    total_attempts = len(attempts)
-    correct_attempts = sum(1 for a in attempts if a.passed)
     return {
-        "question_count": len(questions),
-        "answered": len(latest),
-        "new_count": new_count,
+        "question_count": question_count,
+        "answered": answered,
+        "new_count": question_count - answered,
         "attempts": total_attempts,
-        "correct": sum(1 for a in latest.values() if a.passed),
+        "correct": correct_latest,
         "accuracy": round(correct_attempts / total_attempts * 100, 1) if total_attempts else 0,
-        "wrong_count": len(wrong_ids),
+        "wrong_count": wrong_count,
         "by_type": by_type,
     }
 

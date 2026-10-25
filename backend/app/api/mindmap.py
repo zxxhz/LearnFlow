@@ -8,8 +8,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.schemas.mindmap import (
-    MindMapAgentChatRequest,
+from app.schemas.mindmap import (    MindMapAgentChatRequest,
     MindMapCreate,
     MindMapDetail,
     MindMapGenerateRequest,
@@ -20,6 +19,7 @@ from app.schemas.mindmap import (
     MindMapUpdate,
 )
 from app.services import mindmap as mindmap_service
+from app.services.llm.errors import LLMError
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +112,9 @@ async def generate_mindmap(data: MindMapGenerateRequest, db: AsyncSession = Depe
         )
         mm = await mindmap_service.create_mindmap(db, create_data)
         return _to_detail(mm)
+    except LLMError:
+        # 交给全局 llm_error_handler（400 + 中文提示），不得吞掉转 500
+        raise
     except Exception as e:
         logger.exception("生成思维导图异常")
         raise HTTPException(status_code=500, detail=f"AI 生成思维导图失败: {str(e)}")

@@ -45,6 +45,14 @@ export default function BankQuestionCard({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const opts = visibleOptions(question);
+  const explainAbortRef = useRef<AbortController | null>(null);
+
+  // 切换题目或卸载时中断进行中的 AI 解析流，防止后台空烧 Token
+  useEffect(() => {
+    return () => {
+      explainAbortRef.current?.abort();
+    };
+  }, [question.id]);
 
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -117,6 +125,9 @@ export default function BankQuestionCard({
     setAiError("");
 
     let acc = "";
+    explainAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    explainAbortRef.current = ctrl;
     try {
       await api.banks.explainSSE(
         question.id,
@@ -136,12 +147,15 @@ export default function BankQuestionCard({
             setAiStreaming(false);
             setAiError(ev.detail || "AI 解答遇到异常，请稍后重试");
           }
-        }
+        },
+        ctrl.signal
       );
     } catch (e) {
-      setAiThinking(false);
-      setAiStreaming(false);
-      setAiError(`网络或服务异常：${(e as Error).message}`);
+      if ((e as Error).name !== "AbortError") {
+        setAiThinking(false);
+        setAiStreaming(false);
+        setAiError(`网络或服务异常：${(e as Error).message}`);
+      }
     }
   }
 
@@ -301,7 +315,7 @@ export default function BankQuestionCard({
         <div className="mt-3 flex items-center justify-end gap-2">
           {multi && picked.length > 0 && !pending && (
             <span className="text-xs text-gray-400 dark:text-gray-500">
-              已选 {picked.sort().join("、")}
+              已选 {[...picked].sort().join("、")}
             </span>
           )}
           <Button disabled={pending || picked.length === 0} onClick={submit}>

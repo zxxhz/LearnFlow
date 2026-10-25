@@ -57,7 +57,15 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
   const [tutorQuestion, setTutorQuestion] = useState("");
   const [tutorMode, setTutorMode] = useState<"socratic" | "direct">("socratic");
   const [tutorStatus, setTutorStatus] = useState<string | null>(null);
+  const [tutorPlot, setTutorPlot] = useState<string>("");
   const tutorAbortRef = useRef<AbortController | null>(null);
+
+  // 卸载时中断进行中的助教 SSE，防止后台空烧 Token
+  useEffect(() => {
+    return () => {
+      tutorAbortRef.current?.abort();
+    };
+  }, []);
 
 
 
@@ -86,6 +94,8 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["exercises", documentId] });
       queryClient.invalidateQueries({ queryKey: ["exercises-wrongbook"] });
+      // 小测题同源提交，需刷新 quizzes 缓存才能拿到作答后的参考答案回显
+      queryClient.invalidateQueries({ queryKey: ["quizzes", documentId] });
     },
     onError: (e) => alert((e as Error).message),
   });
@@ -145,6 +155,7 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
     setTutorStatus(null);
     if (!questionText) {
       setTutorText("");
+      setTutorPlot("");
     } else {
       setTutorText((prev) => prev + `\n\n**追问：${questionText}**\n\n`);
     }
@@ -159,6 +170,10 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
             else setTutorStatus(`🛠️ 助教正在调用工具 ${ev.name}...`);
           } else if (ev.type === "tool_result") {
             setTutorStatus(null);
+            // 助教绘制的函数图像实时渲染在助教面板内
+            if (ev.name === "render_math_plot" && ev.result?.svg) {
+              setTutorPlot(ev.result.svg);
+            }
           } else if (ev.type === "delta" && ev.text) {
             setTutorStatus(null);
             setTutorText((prev) => prev + ev.text);
@@ -233,6 +248,12 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
             <span>{tutorStatus}</span>
           </div>
         )}
+        {tutorPlot && (
+          <div
+            className="rounded-md border border-amber-100 dark:border-amber-900/50 bg-white p-2 dark:bg-gray-900/80 [&_svg]:h-auto [&_svg]:max-w-full"
+            dangerouslySetInnerHTML={{ __html: tutorPlot }}
+          />
+        )}
         {tutorText && (
           <div className="msg-md text-[0.9em] leading-relaxed text-gray-800 dark:text-gray-200 bg-white/80 dark:bg-gray-900/80 rounded-md p-2.5 border border-amber-100 dark:border-amber-900/50">
             <MarkdownLite text={tutorText} />
@@ -298,7 +319,6 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
             </button>
           </div>
         )}
-        {renderTutorPanel()}
 
 
         {isCode && (attempt.stdout || attempt.stderr) && (
@@ -611,6 +631,8 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
           )}
         </>
       )}
+      {/* 伴学助教面板：任何题型、作答前后均可展示（作答前呼叫时后端会以“思考中”作上下文） */}
+      {renderTutorPanel()}
     </div>
   );
 }

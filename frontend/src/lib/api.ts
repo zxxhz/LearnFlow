@@ -50,6 +50,7 @@ import type {
   MindMapAgentSSEEvent,
   MindMapNodeDetailSSEEvent,
   MindMapNodeQASSEEvent,
+  TutorSSEEvent,
 } from "./types";
 import { streamSSE, subscribeSSE } from "./sse";
 
@@ -224,50 +225,26 @@ export const api = {
     exportHtml: (id: string) => downloadFile(`/courses/${id}/export.html`),
     ask: (id: string, question: string, onDelta: (text: string) => void, onDone: (err?: string) => void) => {
       const ctrl = new AbortController();
-      fetch(`${BASE}/courses/${id}/ask`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
-        signal: ctrl.signal,
-      })
-        .then(async (res) => {
-          if (!res.ok || !res.body) {
-            let detail = `请求失败（HTTP ${res.status}）`;
-            try {
-              const j = await res.json();
-              if (j?.detail) detail = j.detail;
-            } catch {
-              /* ignore */
-            }
-            onDone(detail);
-            return;
-          }
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder();
-          let buf = "";
-          for (;;) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += decoder.decode(value, { stream: true });
-            const parts = buf.split("\n\n");
-            buf = parts.pop() ?? "";
-            for (const p of parts) {
-              const line = p.trim();
-              if (!line.startsWith("data: ")) continue;
-              try {
-                const ev = JSON.parse(line.slice(6));
-                if (ev.type === "delta") onDelta(ev.text);
-                else if (ev.type === "error") onDone(ev.detail);
-                else if (ev.type === "done") onDone();
-              } catch {
-                /* 忽略坏帧 */
-              }
-            }
-          }
-          onDone();
-        })
+      // 复用 streamSSE：自动附带 x-access-token（局域网令牌鉴权必需），并保证 onDone 仅回调一次
+      let finished = false;
+      const finish = (err?: string) => {
+        if (finished) return;
+        finished = true;
+        onDone(err);
+      };
+      streamSSE<{ type: string; text?: string; detail?: string }>(
+        `/courses/${id}/ask`,
+        { question },
+        (ev) => {
+          if (ev.type === "delta") onDelta(ev.text ?? "");
+          else if (ev.type === "error") finish(ev.detail);
+          else if (ev.type === "done") finish();
+        },
+        ctrl.signal
+      )
+        .then(() => finish())
         .catch((e) => {
-          if ((e as Error).name !== "AbortError") onDone((e as Error).message);
+          if ((e as Error).name !== "AbortError") finish((e as Error).message);
         });
       return () => ctrl.abort();
     },
@@ -432,9 +409,9 @@ export const api = {
   tutor: {
     diagnoseSSE: (
       body: { exercise_id: string; content: string; question?: string; mode?: "socratic" | "direct" },
-      onEvent: (payload: any) => void,
+      onEvent: (ev: TutorSSEEvent) => void,
       signal?: AbortSignal
-    ) => streamSSE("/tutor/diagnose", body, onEvent, signal),
+    ) => streamSSE<TutorSSEEvent>("/tutor/diagnose", body, onEvent, signal),
   },
   profile: {
     get: () => request<LearnerProfile>("/study/profile"),

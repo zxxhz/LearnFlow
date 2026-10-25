@@ -13,11 +13,13 @@
 """
 import asyncio
 import logging
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
+import uuid
 
 from app.models.execution import (
     COMPILE_TIMEOUT_SECONDS,
@@ -180,12 +182,17 @@ def _run_process(
         return _tail(out_f.read()), _tail(err_f.read()), proc.returncode, timed_out
 
 
+def _unique_file(workdir: str, suffix: str) -> str:
+    """workdir 内一次性文件名（替代已废弃的 tempfile.mktemp，避免可预测名竞态）。"""
+    return os.path.join(workdir, f"main_{uuid.uuid4().hex[:12]}{suffix}")
+
+
 def run_code_sync(language: str, code: str) -> dict:
     """同步执行（应通过 asyncio.to_thread 调用）。返回执行结果字典（不含持久化字段）。"""
     workdir = tempfile.mkdtemp(prefix="learnflow-exec-")
     try:
         if language == "python":
-            src = tempfile.mktemp(suffix=".py", dir=workdir)
+            src = _unique_file(workdir, ".py")
             with open(src, "w", encoding="utf-8") as f:
                 f.write(code)
             python = toolchain.find_python()
@@ -211,9 +218,14 @@ def run_code_sync(language: str, code: str) -> dict:
                     "duration_ms": 0,
                 }
             compiler = toolchain.ascii_compiler(compiler)
+            original_workdir = workdir
             workdir = toolchain.ascii_workdir(workdir)
-            src = tempfile.mktemp(suffix=".cpp", dir=workdir)
-            exe = tempfile.mktemp(suffix=".exe" if _IS_WINDOWS else "", dir=workdir)
+            if workdir != original_workdir:
+                # 切到 ASCII 别名目录后，首个含非 ASCII 路径的临时目录立即清理，
+                # 否则 finally 只删新目录，每次 C++ 运行都会泄漏一个旧目录
+                shutil.rmtree(original_workdir, ignore_errors=True)
+            src = _unique_file(workdir, ".cpp")
+            exe = _unique_file(workdir, ".exe" if _IS_WINDOWS else "")
             with open(src, "w", encoding="utf-8") as f:
                 f.write(code)
             t0 = time.perf_counter()

@@ -92,18 +92,19 @@ export default function NodeDetailDrawer({
     }
   }, [targetNode?.id]);
 
+  // 切换目标节点或卸载时中断进行中的流，防止节点 A 的解析串台写入节点 B
+  useEffect(() => {
+    return () => {
+      detailAbortRef.current?.abort();
+      qaAbortRef.current?.abort();
+    };
+  }, [targetNode?.id]);
+
   useEffect(() => {
     qaBottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [qaHistory.length, qaStreaming]);
 
-  // Esc 快捷键关闭抽屉
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Esc 快捷键由 MindMapCanvasPage 统一处理（优先收起抽屉/Agent 面板），此处不再重复监听
 
   if (!targetNode || !nodeId) return null;
 

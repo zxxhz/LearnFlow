@@ -462,9 +462,7 @@ export default function SettingsPage() {
                 <FontSizeControl
                   value={prefs.course_font_size ?? 16}
                   onChange={(val) => {
-                    const current = prefs.course_font_size ?? 16;
-                    const next = typeof val === "function" ? val(current) : val;
-                    setPrefs({ ...prefs, course_font_size: next });
+                    setPrefs({ ...prefs, course_font_size: val });
                   }}
                   defaultValue={16}
                   label="课程"
@@ -494,9 +492,7 @@ export default function SettingsPage() {
                 <FontSizeControl
                   value={prefs.drill_font_size ?? 15}
                   onChange={(val) => {
-                    const current = prefs.drill_font_size ?? 15;
-                    const next = typeof val === "function" ? val(current) : val;
-                    setPrefs({ ...prefs, drill_font_size: next });
+                    setPrefs({ ...prefs, drill_font_size: val });
                   }}
                   defaultValue={15}
                   label="刷题"

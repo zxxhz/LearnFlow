@@ -3,13 +3,14 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import uuid
 from typing import Any, AsyncIterator
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.mindmap import MindMap
@@ -34,18 +35,24 @@ def new_node_id() -> str:
 
 
 def clean_title(title: str) -> str:
-    """清理节点标题：坚决杜绝 'xxx：xxxx' 或 'xxx: xxxx' 等键值对格式，提取精炼概念名。"""
+    """清理节点标题：坚决杜绝 'xxx：xxxx' 或 'xxx: xxxx' 等键值对格式，提取精炼概念名。
+
+    只剥除「列表序号」前缀（如 "1. " "1.1 " "1、" "1) " "- " "* "），
+    不伤及 "0-1 背包" "2-3-4 树" "3D 渲染" "5G 通信" "8086 架构" "std::vector" 等合法术语。
+    """
     t = title.strip()
-    # 移除常见的列表序号前缀如 1. 1.1 - 等
-    t = re.sub(r"^[\d\.\-\*\+、\s]+", "", t).strip()
-    # 移除中文冒号或英文冒号前缀如 "核心机制：页面置换" -> "页面置换"
+    # 仅剥除带点号/顿号/括号的层级序号与列表符；裸数字+空格（如 "8086 架构"）不是序号
+    t = re.sub(r"^(?:\d+(?:\.\d+)+\s*|\d+[.、)．]\s*|[-*+•]\s+)+", "", t)
+    t = re.sub(r"^[.、\s]+", "", t).strip()
+    # 中文冒号总是键值对分隔符："核心机制：页面置换" -> "页面置换"
     if "：" in t:
         parts = t.split("：", 1)
-        # 如果冒号后内容具体且不为空，取后半段；如果前半段才是概念名，则保留更像概念的一段
         t = parts[1].strip() if len(parts[1].strip()) >= 2 else parts[0].strip()
-    elif ":" in t and not t.startswith("http"):
-        parts = t.split(":", 1)
-        t = parts[1].strip() if len(parts[1].strip()) >= 2 else parts[0].strip()
+    else:
+        # 英文冒号：跳过 C++ 命名空间（::）与 URL；单冒号且前段像引导语时取后段
+        m = re.match(r"^([^:：]{2,14})\s*:\s+(.{2,})$", t)
+        if m and "::" not in t and not t.startswith(("http", "https")):
+            t = m.group(2).strip()
     return t or "未命名概念"
 
 
@@ -306,12 +313,23 @@ def export_tree_to_markdown(node: dict[str, Any], level: int = 0) -> str:
 # ==============================================================================
 
 async def list_mindmaps(db: AsyncSession) -> list[MindMapSummary]:
-    stmt = select(MindMap).order_by(desc(MindMap.updated_at))
-    result = await db.execute(stmt)
-    records = result.scalars().all()
-    summaries: list[MindMapSummary] = []
-    for m in records:
-        summaries.append(
+    """列表页只需要元数据：node_count 用 SQLite json_tree 直接在库内统计，不把整棵树拉进 Python。
+
+    json_tree 对每一行统计 key='title' 的节点数（normalize_node 保证每个节点恰有一个 title）。
+    不支持 json_tree 的老 SQLite 回退为整树加载后内存计数。
+    """
+    sql = text(
+        "SELECT id, title, topic, created_at, updated_at, "
+        "(SELECT COUNT(*) FROM json_tree(mindmaps.root, '$') jt "
+        " WHERE jt.key = 'title' AND jt.type = 'text') AS node_count "
+        "FROM mindmaps ORDER BY updated_at DESC"
+    )
+    try:
+        rows = (await db.execute(sql)).all()
+    except Exception:
+        # 老版本 SQLite 无 json_tree：回退为整树加载
+        records = (await db.scalars(select(MindMap).order_by(desc(MindMap.updated_at)))).all()
+        return [
             MindMapSummary(
                 id=m.id,
                 title=m.title,
@@ -320,8 +338,19 @@ async def list_mindmaps(db: AsyncSession) -> list[MindMapSummary]:
                 created_at=m.created_at,
                 updated_at=m.updated_at,
             )
+            for m in records
+        ]
+    return [
+        MindMapSummary(
+            id=r.id,
+            title=r.title,
+            topic=r.topic,
+            node_count=int(r.node_count or 0),
+            created_at=r.created_at,
+            updated_at=r.updated_at,
         )
-    return summaries
+        for r in rows
+    ]
 
 
 async def create_mindmap(db: AsyncSession, data: MindMapCreate) -> MindMap:
@@ -707,6 +736,17 @@ async def stream_mindmap_agent(
                 "tool_call_id": tc.id,
                 "content": json.dumps({"status": "success", "tree_updated": tree_changed}, ensure_ascii=False)
             })
+    else:
+        # 模型未调用工具且已生成完整回答文本时，直接分块流式下发，消除二次调用与额外延迟
+        final_text = getattr(raw_msg, "content", None)
+        if final_text:
+            chunk_size = 12
+            for i in range(0, len(final_text), chunk_size):
+                yield {"type": "delta", "text": final_text[i:i + chunk_size]}
+                if len(final_text) > chunk_size:
+                    await asyncio.sleep(0.01)
+            yield {"type": "done", "tree": None}
+            return
 
     # 2. 流式返回 Agent 的伴学解释文本
     stream = await adapter.chat(messages, stream=True)
@@ -770,13 +810,25 @@ async def stream_node_detail(
             full_text += chunk
             yield {"type": "delta", "text": chunk}
 
-    # 结果持久化入该节点
-    node["detail"] = full_text.strip()
-    mindmap.root = normalize_node(mindmap.root, mindmap.title)
-    await db.commit()
-    await db.refresh(mindmap)
+    # 结果持久化：流式生成可能持续数十秒，期间画布编辑/Agent 指令可能已更新库中树。
+    # 用全新短会话重新加载最新树，仅改写目标节点的 detail 字段，避免旧内存树整列覆盖造成丢更新。
+    from app.core.db import async_session_factory
 
-    yield {"type": "done", "detail": node["detail"], "node_id": node_id}
+    persisted = False
+    try:
+        async with async_session_factory() as fresh_db:
+            fresh = await fresh_db.get(MindMap, mindmap.id)
+            if fresh is not None:
+                target = find_node(fresh.root, node_id)
+                if target is not None:
+                    target["detail"] = full_text.strip()
+                    fresh.root = normalize_node(fresh.root, fresh.title)
+                    await fresh_db.commit()
+                    persisted = True
+    except Exception:
+        logger.exception("节点详情持久化失败: mindmap=%s node=%s", mindmap.id, node_id)
+
+    yield {"type": "done", "detail": full_text.strip(), "node_id": node_id, "persisted": persisted}
 
 
 async def stream_node_qa(

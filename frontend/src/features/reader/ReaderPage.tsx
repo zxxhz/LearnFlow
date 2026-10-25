@@ -147,6 +147,12 @@ export default function ReaderPage() {
     });
   }, []);
   const contentRef = useRef<HTMLDivElement>(null);
+  // 正文滚动容器：Layout 与本页根容器均为 overflow-hidden，真正的滚动发生在内部 main 上
+  const scrollRef = useRef<HTMLElement | null>(null);
+  // 右侧面板 300ms 关闭动画定时器：重开/卸载时须清除，防止旧定时器关闭新面板
+  const closeTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  // 标注对话请求序号：快速连点不同标注时丢弃过期响应，防止会话串台
+  const annReqRef = useRef(0);
 
   const execBySection = useMemo(
     () => new Map((execsQuery.data ?? []).map((e) => [e.section_id, e])),
@@ -195,9 +201,18 @@ export default function ReaderPage() {
   }, [reAnchoring]);
 
   // ===== 右侧面板平滑关闭与调度 =====
+  const clearCloseTimer = (key: string) => {
+    const t = closeTimerRef.current[key];
+    if (t) {
+      clearTimeout(t);
+      delete closeTimerRef.current[key];
+    }
+  };
+
   const closeAnnotation = useCallback(() => {
     setIsClosingCard(true);
-    setTimeout(() => {
+    clearCloseTimer("card");
+    closeTimerRef.current.card = setTimeout(() => {
       setActiveAnn(null);
       setConvId(null);
       setIsClosingCard(false);
@@ -206,7 +221,8 @@ export default function ReaderPage() {
 
   const closeDrawer = useCallback(() => {
     setIsClosingDrawer(true);
-    setTimeout(() => {
+    clearCloseTimer("drawer");
+    closeTimerRef.current.drawer = setTimeout(() => {
       setDrawerOpen(false);
       setIsClosingDrawer(false);
     }, 300);
@@ -214,7 +230,8 @@ export default function ReaderPage() {
 
   const closeExercise = useCallback(() => {
     setIsClosingExercise(true);
-    setTimeout(() => {
+    clearCloseTimer("exercise");
+    closeTimerRef.current.exercise = setTimeout(() => {
       setExerciseOpen(false);
       setExerciseFocus(null);
       setIsClosingExercise(false);
@@ -224,7 +241,8 @@ export default function ReaderPage() {
 
   const closeKp = useCallback(() => {
     setIsClosingKp(true);
-    setTimeout(() => {
+    clearCloseTimer("kp");
+    closeTimerRef.current.kp = setTimeout(() => {
       setKpOpen(false);
       setIsClosingKp(false);
     }, 300);
@@ -235,6 +253,7 @@ export default function ReaderPage() {
     if (activeAnn) closeAnnotation();
     if (exerciseOpen) closeExercise();
     if (kpOpen) closeKp();
+    clearCloseTimer("drawer");
     setIsClosingDrawer(false);
     setDrawerOpen(true);
   }, [activeAnn, exerciseOpen, kpOpen, closeAnnotation, closeExercise, closeKp]);
@@ -244,6 +263,7 @@ export default function ReaderPage() {
       if (activeAnn) closeAnnotation();
       if (drawerOpen) closeDrawer();
       if (kpOpen) closeKp();
+      clearCloseTimer("exercise");
       setIsClosingExercise(false);
       setExerciseOpen(true);
       setExerciseFocus(focusId ?? null);
@@ -255,6 +275,7 @@ export default function ReaderPage() {
     if (activeAnn) closeAnnotation();
     if (drawerOpen) closeDrawer();
     if (exerciseOpen) closeExercise();
+    clearCloseTimer("kp");
     setIsClosingKp(false);
     setKpOpen(true);
   }, [activeAnn, drawerOpen, exerciseOpen, closeAnnotation, closeDrawer, closeExercise]);
@@ -279,24 +300,29 @@ export default function ReaderPage() {
         setReAnchoring(null);
         if (activeAnn) closeAnnotation();
         if (drawerOpen) closeDrawer();
-        if (exerciseOpen) closeExercise();
+        if (exerciseOpen) {
+          // 全屏时 Esc 仅退出全屏（与 ExerciseDrawer 语义一致），非全屏才关闭抽屉
+          if (isExerciseFullscreen) setIsExerciseFullscreen(false);
+          else closeExercise();
+        }
         if (kpOpen) closeKp();
       }
     };
     // 触屏：长按选择后 touchend 捕获选区（PRD §5.9 平板适配）
     document.addEventListener("mouseup", onMouseUp);
     document.addEventListener("touchend", onMouseUp);
-    document.addEventListener("keyup", onKey);
+    document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("touchend", onMouseUp);
-      document.removeEventListener("keyup", onKey);
+      document.removeEventListener("keydown", onKey);
     };
   }, [
     captureSelection,
     activeAnn,
     drawerOpen,
     exerciseOpen,
+    isExerciseFullscreen,
     kpOpen,
     closeAnnotation,
     closeDrawer,
@@ -330,6 +356,7 @@ export default function ReaderPage() {
     if (drawerOpen) closeDrawer();
     if (exerciseOpen) closeExercise();
     if (kpOpen) closeKp();
+    clearCloseTimer("card");
     setIsClosingCard(false);
     setActiveAnn(a);
     const cached = knownConvId ?? convIdCache[a.id];
@@ -337,12 +364,15 @@ export default function ReaderPage() {
       setConvId(cached);
       return;
     }
+    const reqId = ++annReqRef.current;
+    setConvId(null); // 先清空旧会话，避免新卡片短暂显示上一个标注的对话
     try {
       const r = await api.annotations.conversation(a.id);
+      if (reqId !== annReqRef.current) return; // 已切换到其他标注，丢弃过期响应
       setConvIdCache((prev) => ({ ...prev, [a.id]: r.conversation_id }));
       setConvId(r.conversation_id);
     } catch {
-      setConvId(null);
+      if (reqId === annReqRef.current) setConvId(null);
     }
   };
 
@@ -389,20 +419,54 @@ export default function ReaderPage() {
     return () => document.removeEventListener("mouseup", onMouseUp);
   }, [reAnchoring, invalidate]);
 
-  // ===== 阅读进度记忆 =====
+  // ===== 阅读进度记忆（滚动容器为内部 main，window.scrollY 恒为 0） =====
   useEffect(() => {
     if (!documentId || !content) return;
+    const el = scrollRef.current;
+    if (!el) return;
     const saved = localStorage.getItem(`reading-progress-${documentId}`);
-    if (saved) window.scrollTo(0, Number(saved));
+    if (saved) el.scrollTop = Number(saved);
     const onScroll = () => {
-      const pct = window.scrollY;
-      localStorage.setItem(`reading-progress-${documentId}`, String(pct));
+      localStorage.setItem(`reading-progress-${documentId}`, String(el.scrollTop));
     };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
   }, [documentId, content]);
 
+  // ===== 切换章节时重置章节级 UI 状态，防止上一章的抽屉/卡片/错误提示残留 =====
+  useEffect(() => {
+    setActiveAnn(null);
+    setConvId(null);
+    setConvIdCache({});
+    annReqRef.current += 1;
+    setSelection(null);
+    setDrawerOpen(false);
+    setIsClosingDrawer(false);
+    setKpOpen(false);
+    setIsClosingKp(false);
+    setExerciseOpen(false);
+    setIsClosingExercise(false);
+    setExerciseFocus(null);
+    setIsExerciseFullscreen(false);
+    setReAnchoring(null);
+    setRegenMsg("");
+    setRunError("");
+    setRunningSection(null);
+    for (const key of Object.keys(closeTimerRef.current)) {
+      clearTimeout(closeTimerRef.current[key]);
+      delete closeTimerRef.current[key];
+    }
+  }, [documentId]);
+
   // ===== 重新生成本章 =====
+  const progressAbortRef = useRef<AbortController | null>(null);
+  // 卸载时中断章节生成进度订阅
+  useEffect(() => {
+    return () => {
+      progressAbortRef.current?.abort();
+    };
+  }, []);
+
   const regenerate = useMutation({
     mutationFn: () =>
       api.documents.regenerate(
@@ -413,18 +477,24 @@ export default function ReaderPage() {
     onSuccess: () => {
       setRegenOpen(false);
       setRegenMsg("重新生成中…");
+      progressAbortRef.current?.abort();
       const ac = new AbortController();
-      subscribeSSE(
+      progressAbortRef.current = ac;
+      subscribeSSE<ProgressSSEEvent>(
         `/courses/${courseId}/progress`,
-        (ev: ProgressSSEEvent) => {
+        (ev) => {
+          // 只响应当前章节的事件，其他章节的重生成进度不干扰本页提示
+          if (ev.document_id && ev.document_id !== documentId) return;
           if (ev.type === "chapter_done") {
             setRegenMsg("");
+            progressAbortRef.current?.abort();
             queryClient.invalidateQueries({ queryKey: ["doc", documentId] });
             invalidate();
             queryClient.invalidateQueries({ queryKey: ["doc-kps", documentId] });
             queryClient.invalidateQueries({ queryKey: ["exercises", documentId] });
           } else if (ev.type === "chapter_failed") {
             setRegenMsg(`重新生成失败：${ev.error ?? "未知错误"}`);
+            progressAbortRef.current?.abort();
           }
         },
         ac.signal
@@ -543,6 +613,7 @@ export default function ReaderPage() {
 
       {/* 正文主区域：独立纵向滚动，右侧面板打开时平滑向左避让，关闭或全屏时丝滑复原 */}
       <main
+        ref={scrollRef}
         className={`flex-1 h-full overflow-y-auto min-w-0 transition-all duration-300 ease-out ${
           isRightPanelOpen && !isExerciseFullscreen ? "md:mr-[420px]" : "mr-0"
         }`}

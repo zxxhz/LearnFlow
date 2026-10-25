@@ -2,10 +2,11 @@
 
 //! LearnFlow 桌面壳（PRD §5.9 / §7.1）：
 //! 启动时拉起本地后端，就绪后加载 127.0.0.1:8420；
-//! 托盘常驻（显示窗口 / 开机自启 / 退出），关窗最小化到托盘，退出时回收后端进程。
+//! 托盘常驻（显示窗口 / 退出），关窗最小化到托盘，退出时回收后端进程树。
 //! 打包版（release）：拉起随包分发的 PyInstaller 后端（resources/backend/）；
 //! 开发版（debug）：uv run python -m app.main（需已安装 uv）。
 
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command};
@@ -44,7 +45,22 @@ fn backend_dir() -> PathBuf {
 }
 
 fn backend_ready(port: u16) -> bool {
-    TcpStream::connect(("127.0.0.1", port)).is_ok()
+    // TCP 可连只说明端口被占用；必须验证是 LearnFlow 后端（HTTP /api/system/access-info 返回 200），
+    // 防止端口被其他无关服务占住时把 WebView 指向错误目标。回环来源免令牌（_AccessGuard）。
+    let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) else {
+        return false;
+    };
+    let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+    let _ = s.set_write_timeout(Some(Duration::from_secs(2)));
+    if s.write_all(b"GET /api/system/access-info HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    let mut buf = [0u8; 128];
+    let n = s.read(&mut buf).unwrap_or(0);
+    let head = String::from_utf8_lossy(&buf[..n]);
+    head.starts_with("HTTP/") && head.contains(" 200 ")
 }
 
 fn packaged_backend_exe(app: &AppHandle) -> Option<PathBuf> {
@@ -179,6 +195,23 @@ fn main() {
                     if ready {
                         break;
                     }
+                    // 后端进程已闪退（如缺依赖）时提前报错，不必等满 60s
+                    if spawned {
+                        let died = {
+                            let state = handle.state::<Backend>();
+                            let mut guard = state.0.lock().unwrap();
+                            match guard.as_mut() {
+                                Some(child) => child
+                                    .try_wait()
+                                    .map(|o| o.is_some())
+                                    .unwrap_or(false),
+                                None => true,
+                            }
+                        };
+                        if died {
+                            break;
+                        }
+                    }
                     std::thread::sleep(Duration::from_millis(600));
                     ready = backend_ready(port);
                 }
@@ -214,7 +247,21 @@ fn main() {
         .run(|app, event| {
             if let RunEvent::Exit = event {
                 if let Some(mut child) = app.state::<Backend>().0.lock().unwrap().take() {
-                    let _ = child.kill();
+                    // Windows 下 kill() 只杀直接子进程：后端自身的孙进程（编译器/沙箱代码等）
+                    // 会成为孤儿继续锁住安装目录。taskkill /T 级联终止整棵进程树。
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::process::CommandExt;
+                        let _ = Command::new("taskkill")
+                            .args(["/F", "/T", "/PID", &child.id().to_string()])
+                            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+                            .output();
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        let _ = child.kill();
+                    }
+                    let _ = child.wait();
                 }
             }
         });

@@ -3,7 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { UpdateCheckResult } from "../lib/types";
-import { getTheme, applyTheme, type Theme } from "../lib/theme";
+import { useTheme } from "../lib/theme";
 import { isTauri, openExternalUrl } from "../lib/updater";
 import UpdateDialog from "./UpdateDialog";
 
@@ -85,14 +85,9 @@ export default function Layout() {
   const isMindMapCanvas = pathname.startsWith("/mindmap/") && pathname !== "/mindmap";
   const isImmersive = isReader || isMindMapCanvas;
   const [navOpen, setNavOpen] = useState(false);
-  const [theme, setThemeState] = useState<Theme>(() => getTheme());
+  // 与阅读页共享同一主题订阅，阅读页内切换后侧栏按钮状态保持同步
+  const { theme, toggle: toggleTheme } = useTheme();
   const [dialogUpdate, setDialogUpdate] = useState<UpdateCheckResult | null>(null);
-
-  const toggleTheme = () => {
-    const next: Theme = theme === "dark" ? "light" : "dark";
-    applyTheme(next);
-    setThemeState(next);
-  };
 
   // 打开应用时静默检查新版本（后端节流 1h；失败静默）→ 发现更新弹窗；
   // 同一会话内点过「稍后」的版本不再自动弹（PRD 实现备注 15）

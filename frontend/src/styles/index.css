@@ -24,11 +24,13 @@ mark.hl-blue   { background-color: var(--hl-blue, rgba(191, 219, 254, 0.8)); }
 mark.hl-pink   { background-color: var(--hl-pink, rgba(251, 207, 232, 0.8)); }
 mark.hl-fuzzy  { box-shadow: inset 0 -2px 0 rgba(148, 163, 184, 0.8); }
 mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
-/* 深色下降低高亮饱和度、提高文字对比 */
-.dark mark.hl-yellow { background-color: rgba(250, 204, 21, 0.32); }
-.dark mark.hl-green  { background-color: rgba(74, 222, 128, 0.28); }
-.dark mark.hl-blue   { background-color: rgba(96, 165, 250, 0.3); }
-.dark mark.hl-pink   { background-color: rgba(244, 114, 182, 0.3); }
+/* 深色下降低高亮饱和度、提高文字对比：
+   用 color-mix 把用户自定义的 --hl-* 色混入透明，而不是硬编码 rgba，
+   保证自定义高亮色在深色模式下同样生效 */
+.dark mark.hl-yellow { background-color: rgba(250, 204, 21, 0.32); background-color: color-mix(in srgb, var(--hl-yellow, #fde68a) 35%, transparent); }
+.dark mark.hl-green  { background-color: rgba(74, 222, 128, 0.28); background-color: color-mix(in srgb, var(--hl-green, #bbf7d0) 32%, transparent); }
+.dark mark.hl-blue   { background-color: rgba(96, 165, 250, 0.3); background-color: color-mix(in srgb, var(--hl-blue, #bfdbfe) 34%, transparent); }
+.dark mark.hl-pink   { background-color: rgba(244, 114, 182, 0.3); background-color: color-mix(in srgb, var(--hl-pink, #fbcfe8) 34%, transparent); }
 .dark mark.hl-fuzzy  { box-shadow: inset 0 -2px 0 rgba(148, 163, 184, 0.7); }
 
 /* 代码块整块标注（PRD §5.2：代码块标注整块呈现） */

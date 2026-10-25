@@ -104,7 +104,7 @@ def backups_dir() -> Path:
 
 
 def create_backup() -> Path:
-    """打包数据目录核心资产（app.db + courses/）到 backups/。返回 zip 路径。"""
+    """打包数据目录核心资产（app.db + courses/ + banks/ + 镜像配置）到 backups/。返回 zip 路径。"""
     from app.core.db import engine
 
     dest = backups_dir() / f"backup-{utcnow_compact()}.zip"
@@ -120,11 +120,17 @@ def create_backup() -> Path:
             conn.close()
         if settings.db_path.exists():
             z.write(settings.db_path, "app.db")
-        courses = settings.courses_dir
-        if courses.exists():
-            for f in courses.rglob("*"):
-                if f.is_file():
-                    z.write(f, f.relative_to(settings.data_dir).as_posix())
+        for sub in ("courses", "banks"):
+            d = settings.data_dir / sub
+            if d.exists():
+                for f in d.rglob("*"):
+                    if f.is_file():
+                        z.write(f, f.relative_to(settings.data_dir).as_posix())
+        # 自定义镜像源与手动锁定选择一并备份
+        for name in ("custom_mirrors.json", "mirror_selection.json"):
+            f = settings.data_dir / name
+            if f.exists():
+                z.write(f, name)
     return dest
 
 
@@ -150,21 +156,55 @@ def delete_backup(name: str) -> None:
         p.unlink()
 
 
+def _validate_backup_zip(zpath: Path) -> zipfile.ZipFile:
+    """恢复前校验备份完整性：必须是可读 zip 且包含 app.db，杜绝先删库后解压失败导致的数据丢失。"""
+    try:
+        z = zipfile.ZipFile(zpath)
+        z.testzip()
+    except Exception as e:
+        raise ValueError(f"备份文件损坏或不可读，已取消恢复：{e}") from e
+    names = z.namelist()
+    if "app.db" not in names:
+        z.close()
+        raise ValueError("备份缺少 app.db，已取消恢复")
+    # zip-slip 防护：拒绝绝对路径与 ../ 穿越条目
+    for n in names:
+        target = (settings.data_dir / n).resolve()
+        if not str(target).startswith(str(settings.data_dir.resolve())):
+            z.close()
+            raise ValueError(f"备份包含非法路径条目：{n}")
+    return z
+
+
 def apply_pending_restore() -> None:
-    """启动早于 init_db 调用：把标记的备份覆盖回数据目录。"""
+    """启动早于 init_db 调用：把标记的备份覆盖回数据目录。
+
+    先完整校验备份（完整性 + app.db 存在 + 无路径穿越），校验通过后才清理旧数据，
+    避免备份损坏时把用户原库删光。
+    """
     flag = settings.data_dir / RESTORE_FLAG
     if not flag.exists():
         return
     name = flag.read_text(encoding="utf-8").strip()
     zpath = backups_dir() / name
     logger.info("应用启动恢复备份：%s", name)
-    settings.db_path.unlink(missing_ok=True)
-    for suffix in ("-wal", "-shm"):
-        Path(str(settings.db_path) + suffix).unlink(missing_ok=True)
-    if settings.courses_dir.exists():
-        shutil.rmtree(settings.courses_dir, ignore_errors=True)
-    with zipfile.ZipFile(zpath) as z:
+    if not zpath.exists():
+        logger.error("备份文件不存在，取消恢复：%s", zpath)
+        flag.unlink(missing_ok=True)
+        return
+    z = _validate_backup_zip(zpath)
+    try:
+        settings.db_path.unlink(missing_ok=True)
+        for suffix in ("-wal", "-shm"):
+            Path(str(settings.db_path) + suffix).unlink(missing_ok=True)
+        if settings.courses_dir.exists():
+            shutil.rmtree(settings.courses_dir, ignore_errors=True)
+        banks_dir = settings.data_dir / "banks"
+        if banks_dir.exists():
+            shutil.rmtree(banks_dir, ignore_errors=True)
         z.extractall(settings.data_dir)
+    finally:
+        z.close()
     flag.unlink(missing_ok=True)
     logger.info("备份恢复完成")
 

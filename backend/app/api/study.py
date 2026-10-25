@@ -37,10 +37,21 @@ async def ping(body: StudyPing, db: AsyncSession = Depends(get_db)):
     if row is None:
         row = StudyDay(day=day, seconds=body.seconds, updated_at=utcnow_iso())
         db.add(row)
+        try:
+            await db.commit()
+        except Exception:
+            # 跨日第一跳并发插入竞态：另一请求已建行，回滚后按累加路径重试一次
+            await db.rollback()
+            row = await db.get(StudyDay, day)
+            if row is None:
+                raise
+            row.seconds += body.seconds
+            row.updated_at = utcnow_iso()
+            await db.commit()
     else:
         row.seconds += body.seconds
         row.updated_at = utcnow_iso()
-    await db.commit()
+        await db.commit()
     return {"ok": True, "day": day, "seconds": row.seconds}
 
 

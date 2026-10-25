@@ -8,7 +8,7 @@ import { Button, EmptyState, Spinner } from "../../components/ui";
 export default function SearchPage() {
   const [q, setQ] = useState("");
   const [submitted, setSubmitted] = useState("");
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, isError, error, refetch } = useQuery({
     queryKey: ["search", submitted],
     queryFn: () => api.search(submitted),
     enabled: submitted.trim().length > 0,
@@ -50,6 +50,18 @@ export default function SearchPage() {
           <Spinner />
         </div>
       )}
+      {isError && submitted && (
+        <EmptyState
+          icon="⚠️"
+          title="搜索失败"
+          hint={(error as Error)?.message ?? "服务暂时不可用，请稍后重试"}
+          action={
+            <Button className="mt-2" variant="secondary" onClick={() => refetch()}>
+              重试
+            </Button>
+          }
+        />
+      )}
       {!isFetching && submitted && data && data.results.length === 0 && (
         <EmptyState icon="🫥" title="没有找到相关内容" hint="换个关键词试试；只搜已生成/导入的章节正文。" />
       )}
@@ -59,7 +71,7 @@ export default function SearchPage() {
           {data.results.map((hit, i) => (
             <Link
               key={`${hit.section_id}-${i}`}
-              to={`/read/${hit.document_id}`}
+              to={`/read/${hit.document_id}?section=${encodeURIComponent(hit.section_id)}`}
               className="block rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 hover:border-brand-300"
             >
               <div className="text-xs text-gray-400 dark:text-gray-500">

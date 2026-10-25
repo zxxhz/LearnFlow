@@ -1,7 +1,7 @@
 // 字号调节器组件（A- / 当前字号重置 / A+，紧凑微型组件，支持浅色/深色主题）
 interface FontSizeControlProps {
   value: number;
-  onChange: (val: number | ((prev: number) => number)) => void;
+  onChange: (size: number) => void;
   min?: number;
   max?: number;
   defaultValue?: number;
@@ -31,7 +31,7 @@ export function FontSizeControl({
       <button
         type="button"
         disabled={value <= min}
-        onClick={() => onChange((prev) => Math.max(min, prev - 1))}
+        onClick={() => onChange(Math.max(min, value - 1))}
         className="flex h-6 w-6 items-center justify-center rounded text-[11px] font-bold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:pointer-events-none transition"
         title={`缩小字号 (A-)，当前 ${value}px`}
       >
@@ -48,7 +48,7 @@ export function FontSizeControl({
       <button
         type="button"
         disabled={value >= max}
-        onClick={() => onChange((prev) => Math.min(max, prev + 1))}
+        onClick={() => onChange(Math.min(max, value + 1))}
         className="flex h-6 w-6 items-center justify-center rounded text-[11px] font-bold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 disabled:pointer-events-none transition"
         title={`放大字号 (A+)，当前 ${value}px`}
       >

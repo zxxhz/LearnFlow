@@ -11,7 +11,10 @@ const STATUS_BADGE: Record<string, { label: string; color: "gray" | "green" | "b
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const { data: courses, isLoading } = useQuery({ queryKey: ["courses"], queryFn: api.courses.list });
+  const { data: courses, isLoading, isError, error, refetch } = useQuery({
+    queryKey: ["courses"],
+    queryFn: api.courses.list,
+  });
 
   const handleCourseClick = (c: { id: string; status: string; first_document_id?: string | null }) => {
     if (c.status === "ready" && c.first_document_id) {
@@ -37,6 +40,17 @@ export default function HomePage() {
         <div className="flex justify-center py-20">
           <Spinner className="h-6 w-6" />
         </div>
+      ) : isError ? (
+        <EmptyState
+          icon="⚠️"
+          title="课程列表加载失败"
+          hint={(error as Error)?.message ?? "服务暂时不可用，请稍后重试"}
+          action={
+            <Button className="mt-3" variant="secondary" onClick={() => refetch()}>
+              重试
+            </Button>
+          }
+        />
       ) : !courses || courses.length === 0 ? (
         <EmptyState
           icon="📚"

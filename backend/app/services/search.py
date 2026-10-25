@@ -100,14 +100,37 @@ async def search(db: AsyncSession, query: str, limit: int = 30) -> list[dict]:
     except Exception:  # noqa: BLE001 语法不支持等
         return []
 
-    docs = {d.id: d for d in (await db.scalars(select(Document))).all()}
-    courses = {c.id: c for c in (await db.scalars(select(Course))).all()}
+    # 只加载 FTS 命中的文档与课程；已归档课程的命中直接丢弃
+    doc_ids = {r[0] for r in rows}
+    docs: dict[str, Document] = {}
+    if doc_ids:
+        docs = {
+            d.id: d
+            for d in (
+                await db.scalars(select(Document).where(Document.id.in_(doc_ids)))
+            ).all()
+        }
+    course_ids = {d.course_id for d in docs.values()}
+    courses: dict[str, Course] = {}
+    if course_ids:
+        courses = {
+            c.id: c
+            for c in (
+                await db.scalars(
+                    select(Course).where(
+                        Course.id.in_(course_ids), Course.status != "archived"
+                    )
+                )
+            ).all()
+        }
     results = []
     for document_id, section_id, heading, snippet in rows:
         d = docs.get(document_id)
         if d is None:
             continue
         c = courses.get(d.course_id)
+        if c is None:
+            continue  # 课程已归档或缺失，不出现在搜索结果
         results.append(
             {
                 "course_id": d.course_id,

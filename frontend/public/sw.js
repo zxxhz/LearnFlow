@@ -1,5 +1,6 @@
 // LearnFlow PWA Service Worker
-const CACHE_NAME = "learnflow-v0.4.9";
+// 缓存名随版本 bump：发版 bump 版本号时同步更新此处，激活时自动清掉旧缓存
+const CACHE_NAME = "learnflow-v0.4.46";
 
 const PRECACHE_URLS = [
   "/",

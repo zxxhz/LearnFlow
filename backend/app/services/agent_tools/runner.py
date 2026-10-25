@@ -1,4 +1,5 @@
 """Agent 工具调度执行器：多轮 Tool Calling 闭环与流式生成。"""
+import asyncio
 import json
 import logging
 from typing import Any, AsyncIterator
@@ -29,6 +30,7 @@ async def stream_agent_with_tools(
     """
     tools_to_use = tools or AGENT_TOOLS_SCHEMA
     history = list(messages)
+    final_content: str | None = None
 
     for _ in range(max_tool_steps):
         try:
@@ -39,6 +41,8 @@ async def stream_agent_with_tools(
 
         tool_calls = getattr(msg, "tool_calls", None)
         if not tool_calls:
+            # 模型未触发工具，已在当前轮次获得完整回答内容
+            final_content = msg.content or ""
             break
 
         # 存在模型触发的工具调用
@@ -71,13 +75,27 @@ async def stream_agent_with_tools(
             result = await execute_tool(fn_name, args, db=db)
             yield {"type": "tool_result", "name": fn_name, "result": result}
 
+            # 大体积二进制产物（如 SVG 图像）只走前端事件，不进 LLM 历史，防止撑爆上下文
+            history_result = {k: v for k, v in result.items() if k != "svg"}
+            if "svg" in result:
+                history_result["note"] = "函数图像已生成并实时展示给学生，请基于该图像继续讲解"
             history.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": json.dumps(result, ensure_ascii=False),
+                "content": json.dumps(history_result, ensure_ascii=False),
             })
 
-    # 工具交互完成后，进行最终的流式回答
+    # 若已有完整的生成文本，以平滑打字机分块推送，避免二次调用 LLM 产生双倍费用和额外等待
+    if final_content:
+        chunk_size = 12
+        for i in range(0, len(final_content), chunk_size):
+            yield {"type": "delta", "text": final_content[i:i + chunk_size]}
+            if len(final_content) > chunk_size:
+                await asyncio.sleep(0.01)
+        yield {"type": "done"}
+        return
+
+    # 工具交互完成或未获得预生成文本时，进行流式回答
     deltas = await adapter.chat(history, stream=True)
     async for delta in deltas:
         yield {"type": "delta", "text": delta}

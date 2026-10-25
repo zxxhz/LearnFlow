@@ -56,7 +56,8 @@ def _parse_line(line: str, x: sp.Symbol) -> sp.Expr:
     if not expr:
         raise ValueError("存在空表达式行")
     try:
-        parsed = sp.sympify(expr, locals={"x": x})
+        # 用户习惯 x^2 表示幂；限制 locals 防止 sympify 内建 eval 注入任意调用
+        parsed = sp.sympify(expr.replace("^", "**"), locals={"x": x, "Symbol": sp.Symbol})
     except (sp.SympifyError, SyntaxError, TypeError) as e:
         raise ValueError(f"无法解析的表达式「{line.strip()}」：{e}")
     unknown = parsed.free_symbols - {x}
@@ -76,9 +77,15 @@ def render_sync(expressions: str, x_min: float, x_max: float) -> str:
     if not lines:
         raise ValueError("表达式为空")
 
-    fig, ax = plt.subplots(figsize=(7.2, 4.2), dpi=110)
-    xs = [x_min + (x_max - x_min) * i / MAX_POINTS for i in range(MAX_POINTS + 1)]
+    # 面向对象 Figure：不经过 pyplot 全局状态机，异常路径也确保释放资源
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    fig = Figure(figsize=(7.2, 4.2), dpi=110)
+    FigureCanvasAgg(fig)
+    ax = fig.add_subplot(1, 1, 1)
     try:
+        xs = [x_min + (x_max - x_min) * i / MAX_POINTS for i in range(MAX_POINTS + 1)]
         for line in lines:
             expr = _parse_line(line, x)
             f = sp.lambdify(x, expr, modules=["numpy"])
@@ -101,8 +108,7 @@ def render_sync(expressions: str, x_min: float, x_max: float) -> str:
                 seg_y.append(yv)
             if len(seg_x) > 1:
                 ax.plot(seg_x, seg_y, linewidth=1.8, label=line.strip())
-    except (sp.SympifyError, TypeError, SyntaxError) as e:
-        plt.close(fig)
+    except (ValueError, sp.SympifyError, TypeError, SyntaxError) as e:
         raise HTTPException(status_code=400, detail=f"表达式无法解析：{e}")
 
     ax.axhline(0, color="#9ca3af", linewidth=0.8)
@@ -114,7 +120,6 @@ def render_sync(expressions: str, x_min: float, x_max: float) -> str:
     buf = io.BytesIO()
     fig.tight_layout()
     fig.savefig(buf, format="svg", bbox_inches="tight")
-    plt.close(fig)
     return buf.getvalue().decode("utf-8")
 
 
