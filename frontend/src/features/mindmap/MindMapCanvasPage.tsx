@@ -3,8 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
-import type { MindMapDetail, MindMapNode } from "../../lib/types";
-import { Button, Modal, Spinner, Textarea } from "../../components/ui";
+import type { MindMapCrossLink, MindMapDetail, MindMapNode } from "../../lib/types";
+import { Button, Input, Modal, Spinner, Textarea } from "../../components/ui";
 import FontSizeControl from "../../components/FontSizeControl";
 import { useFontSize } from "../../lib/fontSize";
 import NodeDetailDrawer from "./NodeDetailDrawer";
@@ -92,6 +92,11 @@ export default function MindMapCanvasPage() {
     enabled: !!mapId,
   });
 
+  const [crossLinks, setCrossLinks] = useState<MindMapCrossLink[]>([]);
+  const [linkingFromId, setLinkingFromId] = useState<string | null>(null);
+  const [pendingLinkTarget, setPendingLinkTarget] = useState<{ sourceId: string; targetId: string } | null>(null);
+  const [linkRelationLabel, setLinkRelationLabel] = useState("底层基于");
+
   useEffect(() => {
     if (mapDetail?.root) {
       setTreeData((prev) => {
@@ -100,7 +105,24 @@ export default function MindMapCanvasPage() {
         return mapDetail.root;
       });
     }
-  }, [mapDetail?.id, mapDetail?.updated_at]);
+    if (mapDetail?.settings?.cross_links) {
+      setCrossLinks(mapDetail.settings.cross_links);
+    }
+  }, [mapDetail?.id, mapDetail?.updated_at, mapDetail?.settings?.cross_links]);
+
+  const saveCrossLinks = async (nextLinks: MindMapCrossLink[]) => {
+    setCrossLinks(nextLinks);
+    if (!mapId) return;
+    const newSettings = { ...(mapDetail?.settings || {}), cross_links: nextLinks };
+    try {
+      await api.mindmaps.update(mapId, { settings: newSettings });
+      queryClient.setQueryData<MindMapDetail>(["mindmap", mapId], (old) =>
+        old ? { ...old, settings: newSettings } : old
+      );
+    } catch (e) {
+      console.error("Failed to save cross links:", e);
+    }
+  };
 
   // 防抖异步自动保存树数据
   const saveTreeDebounced = useCallback(
@@ -436,6 +458,21 @@ export default function MindMapCanvasPage() {
     return { positionedNodes: nodesList, connections: connsList, bounds: { minX, maxX, minY, maxY } };
   }, [treeData]);
 
+  const nodePosMap = useMemo(
+    () => new Map(positionedNodes.map((p) => [p.node.id, p])),
+    [positionedNodes]
+  );
+
+  const linkedPartnerIds = useMemo(() => {
+    if (!selectedNodeId) return new Set<string>();
+    const partners = new Set<string>();
+    for (const l of crossLinks) {
+      if (l.sourceId === selectedNodeId) partners.add(l.targetId);
+      if (l.targetId === selectedNodeId) partners.add(l.sourceId);
+    }
+    return partners;
+  }, [selectedNodeId, crossLinks]);
+
   // 视口平移与缩放手势
   const handleMouseDown = (e: React.MouseEvent) => {
     // 仅在画布背景点击时触发视口拖动
@@ -649,6 +686,29 @@ export default function MindMapCanvasPage() {
               label="字号"
             />
 
+            {/* 跨分支横向关系连线模式开关 */}
+            <button
+              type="button"
+              onClick={() => {
+                if (linkingFromId) {
+                  setLinkingFromId(null);
+                } else if (selectedNodeId) {
+                  setLinkingFromId(selectedNodeId);
+                } else {
+                  alert("请先在画布上点击选中一个起点节点，再开启横向连线。");
+                }
+              }}
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold shadow-2xs transition ${
+                linkingFromId
+                  ? "border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300 ring-2 ring-amber-400"
+                  : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:border-amber-400 hover:text-amber-600"
+              }`}
+              title="连接两个跨分支节点建立概念横向关联关系（树变网）"
+            >
+              <span>🔗</span>
+              <span className="hidden sm:inline">{linkingFromId ? "选择目标节点中…" : "横向连线"}</span>
+            </button>
+
             {/* 伴学 Agent 开关按钮 */}
             <button
               type="button"
@@ -670,6 +730,19 @@ export default function MindMapCanvasPage() {
             </button>
           </div>
         </header>
+
+        {/* 连线模式提示条 */}
+        {linkingFromId && (
+          <div className="absolute top-16 left-1/2 -translate-x-1/2 z-30 rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50/95 dark:bg-amber-950/95 backdrop-blur px-4 py-2 text-xs text-amber-800 dark:text-amber-200 shadow-lg flex items-center gap-3 animate-fadeIn">
+            <span>🔗 <strong>横向连线模式开启</strong>：请在画布上点击目标节点以完成连线</span>
+            <button
+              onClick={() => setLinkingFromId(null)}
+              className="underline text-amber-900 dark:text-amber-100 hover:text-red-600 font-medium"
+            >
+              取消 (Esc)
+            </button>
+          </div>
+        )}
 
         {/* 原生 SVG + HTML 视口容器 */}
         <div
@@ -701,11 +774,37 @@ export default function MindMapCanvasPage() {
               transformOrigin: "0 0",
             }}
           >
-            {/* 1. SVG 贝塞尔曲线连接线层 */}
+            {/* 1. SVG 贝塞尔曲线连接线层（树层级连线 + 跨分支横向语义网状连线） */}
             <svg
               className="absolute left-0 top-0 overflow-visible pointer-events-none"
               style={{ width: "1px", height: "1px" }}
             >
+              <defs>
+                <marker
+                  id="cross-link-arrow"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="6"
+                  markerHeight="6"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#f59e0b" />
+                </marker>
+                <marker
+                  id="cross-link-arrow-active"
+                  viewBox="0 0 10 10"
+                  refX="8"
+                  refY="5"
+                  markerWidth="6"
+                  markerHeight="6"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#ea580c" />
+                </marker>
+              </defs>
+
+              {/* 树分支连接线 */}
               {connections.map((c) => {
                 const dx = Math.max(35, (c.x2 - c.x1) * 0.5);
                 const pathData = `M ${c.x1} ${c.y1} C ${c.x1 + dx} ${c.y1}, ${c.x2 - dx} ${c.y2}, ${c.x2} ${c.y2}`;
@@ -722,6 +821,60 @@ export default function MindMapCanvasPage() {
                   />
                 );
               })}
+
+              {/* 跨分支横向网状语义关系线（§10 树变网） */}
+              {crossLinks.map((link) => {
+                const src = nodePosMap.get(link.sourceId);
+                const tgt = nodePosMap.get(link.targetId);
+                if (!src || !tgt) return null;
+
+                const isRelated = selectedNodeId === link.sourceId || selectedNodeId === link.targetId;
+                const forward = tgt.x >= src.x;
+                const x1 = forward ? src.x + src.width : src.x;
+                const y1 = src.y + src.height / 2;
+                const x2 = forward ? tgt.x : tgt.x + tgt.width;
+                const y2 = tgt.y + tgt.height / 2;
+
+                const dx = Math.max(40, Math.abs(x2 - x1) * 0.45);
+                const pathData = `M ${x1} ${y1} C ${x1 + (forward ? dx : -dx)} ${y1}, ${x2 + (forward ? -dx : dx)} ${y2}, ${x2} ${y2}`;
+                const midX = (x1 + x2) / 2;
+                const midY = (y1 + y2) / 2;
+
+                return (
+                  <g key={link.id} className="pointer-events-auto">
+                    <path
+                      d={pathData}
+                      fill="none"
+                      stroke={isRelated ? "#ea580c" : "#f59e0b"}
+                      strokeWidth={isRelated ? "3" : "2"}
+                      strokeDasharray="6,4"
+                      strokeOpacity={isRelated ? "1" : "0.8"}
+                      markerEnd={`url(#${isRelated ? "cross-link-arrow-active" : "cross-link-arrow"})`}
+                      className="transition-all duration-200"
+                    />
+                    {/* 关系标签气泡 */}
+                    <foreignObject x={midX - 45} y={midY - 12} width={90} height={24}>
+                      <div
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(`删除横向关联关系「${link.label}」？`)) {
+                            saveCrossLinks(crossLinks.filter((l) => l.id !== link.id));
+                          }
+                        }}
+                        className={`flex items-center justify-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold select-none shadow-2xs backdrop-blur-xs transition cursor-pointer ${
+                          isRelated
+                            ? "border-orange-400 bg-orange-100 dark:bg-orange-950/90 text-orange-800 dark:text-orange-200 ring-2 ring-orange-300"
+                            : "border-amber-300 dark:border-amber-700 bg-amber-50/90 dark:bg-amber-950/80 text-amber-800 dark:text-amber-200 hover:scale-105"
+                        }`}
+                        title={`点击删除「${link.label}」关系连线`}
+                      >
+                        <span className="truncate max-w-[65px]">{link.label}</span>
+                        <span className="text-[9px] text-gray-400 hover:text-red-500">✕</span>
+                      </div>
+                    </foreignObject>
+                  </g>
+                );
+              })}
             </svg>
 
             {/* 2. HTML 交互式节点卡片层 */}
@@ -732,11 +885,23 @@ export default function MindMapCanvasPage() {
               const branchStyle = BRANCH_COLORS[p.branchIndex] || BRANCH_COLORS[0];
               const totalChildren = countAllSubNodes(p.node);
 
+              const isLinkedPartner = linkedPartnerIds.has(p.node.id);
+              const isLinkingSource = linkingFromId === p.node.id;
+
               return (
                 <div
                   key={p.node.id}
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (linkingFromId) {
+                      if (p.node.id === linkingFromId) {
+                        setLinkingFromId(null);
+                        return;
+                      }
+                      setPendingLinkTarget({ sourceId: linkingFromId, targetId: p.node.id });
+                      setLinkingFromId(null);
+                      return;
+                    }
                     openDetailDrawer(p.node.id);
                   }}
                   className={`mindmap-node-card group absolute flex items-center justify-between rounded-xl transition-all select-none cursor-pointer ${
@@ -748,6 +913,10 @@ export default function MindMapCanvasPage() {
                   } ${
                     isSelected
                       ? "ring-2 ring-brand-500 ring-offset-2 dark:ring-offset-gray-900 scale-102 z-10"
+                      : isLinkingSource
+                      ? "ring-2 ring-amber-500 ring-offset-2 dark:ring-offset-gray-900 scale-102 z-10 animate-pulse"
+                      : isLinkedPartner
+                      ? "ring-2 ring-amber-400 dark:ring-amber-500 ring-offset-1 z-5"
                       : "z-1"
                   }`}
                   style={{
@@ -891,6 +1060,10 @@ export default function MindMapCanvasPage() {
             setAddChildTargetId(nid);
           }}
           onDelete={(nid) => handleDeleteNode(nid)}
+          crossLinks={crossLinks}
+          onStartLink={(nid) => setLinkingFromId(nid)}
+          onDeleteLink={(lid) => saveCrossLinks(crossLinks.filter((l) => l.id !== lid))}
+          onSelectNode={(nid) => openDetailDrawer(nid)}
         />
       )}
 
@@ -1012,6 +1185,84 @@ export default function MindMapCanvasPage() {
           </div>
         </div>
       </Modal>
+
+      {/* 建立横向概念关联连线模态框 */}
+      {pendingLinkTarget && (
+        <Modal
+          open={true}
+          onClose={() => setPendingLinkTarget(null)}
+          title="🔗 建立横向概念关联连线"
+        >
+          <div className="space-y-4">
+            <div className="rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 p-3 text-xs space-y-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-gray-400">起点概念：</span>
+                <span className="font-semibold text-gray-800 dark:text-gray-200">
+                  {nodePosMap.get(pendingLinkTarget.sourceId)?.node.title ?? "起点"}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-gray-400">目标概念：</span>
+                <span className="font-semibold text-gray-800 dark:text-gray-200">
+                  {nodePosMap.get(pendingLinkTarget.targetId)?.node.title ?? "目标"}
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                关联关系标签
+              </label>
+              <div className="flex flex-wrap gap-1.5 my-2">
+                {["底层基于", "容易混淆", "前置依赖", "协同实现", "概念延伸"].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => setLinkRelationLabel(preset)}
+                    className={`rounded-lg border px-2 py-1 text-xs transition ${
+                      linkRelationLabel === preset
+                        ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-950/50 dark:text-brand-300 font-bold"
+                        : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                    }`}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+              <Input
+                value={linkRelationLabel}
+                onChange={(e) => setLinkRelationLabel(e.target.value)}
+                placeholder="自定义关系标签，如「对立对比」「替代方案」…"
+                className="text-xs mt-1"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="secondary" onClick={() => setPendingLinkTarget(null)} className="text-xs">
+                取消
+              </Button>
+              <Button
+                variant="primary"
+                disabled={!linkRelationLabel.trim()}
+                onClick={() => {
+                  const newLink: MindMapCrossLink = {
+                    id: `link-${Date.now()}`,
+                    sourceId: pendingLinkTarget.sourceId,
+                    targetId: pendingLinkTarget.targetId,
+                    label: linkRelationLabel.trim() || "关联",
+                  };
+                  saveCrossLinks([...crossLinks, newLink]);
+                  setPendingLinkTarget(null);
+                }}
+                className="text-xs font-medium"
+              >
+                确认建立连线
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

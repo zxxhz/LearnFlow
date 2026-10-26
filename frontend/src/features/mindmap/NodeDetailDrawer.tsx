@@ -1,6 +1,6 @@
 // 节点详情抽屉：面包屑层级定位、Markdown 知识深入剖析、AI Agent 针对性生成与多轮专属追问
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MindMapNode, MindMapNodeDetailSSEEvent, MindMapNodeQASSEEvent } from "../../lib/types";
+import type { MindMapCrossLink, MindMapNode, MindMapNodeDetailSSEEvent, MindMapNodeQASSEEvent } from "../../lib/types";
 import { api } from "../../lib/api";
 import { Button, Spinner, Textarea } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
@@ -17,6 +17,10 @@ interface Props {
   onAddChild?: (nodeId: string) => void;
   /** 删除该分支（含确认） */
   onDelete?: (nodeId: string) => void;
+  crossLinks?: MindMapCrossLink[];
+  onStartLink?: (nodeId: string) => void;
+  onDeleteLink?: (linkId: string) => void;
+  onSelectNode?: (nodeId: string) => void;
 }
 
 function findNodeInTree(node: MindMapNode, targetId: string): MindMapNode | null {
@@ -47,6 +51,10 @@ export default function NodeDetailDrawer({
   onNodeUpdate,
   onAddChild,
   onDelete,
+  crossLinks = [],
+  onStartLink,
+  onDeleteLink,
+  onSelectNode,
 }: Props) {
   const [mounted, setMounted] = useState(false);
   const { fontSize } = useFontSize("course");
@@ -60,6 +68,11 @@ export default function NodeDetailDrawer({
     if (!nodeId) return [];
     return getNodePath(rootNode, nodeId) || [];
   }, [rootNode, nodeId]);
+
+  const connectedLinks = useMemo(() => {
+    if (!nodeId || !crossLinks) return [];
+    return crossLinks.filter((l) => l.sourceId === nodeId || l.targetId === nodeId);
+  }, [nodeId, crossLinks]);
 
   // 编辑态
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -250,6 +263,19 @@ export default function NodeDetailDrawer({
                 ＋ 添加子分支
               </button>
             )}
+            {onStartLink && nodeId && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onStartLink(nodeId);
+                }}
+                className="rounded-lg border border-amber-200 dark:border-amber-800 bg-white dark:bg-gray-800 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/40 transition"
+                title="以此概念为起点，连接到其他分支概念"
+              >
+                🔗 建立横向连线
+              </button>
+            )}
             {onDelete && nodeId && rootNode.id !== nodeId && (
               <button
                 type="button"
@@ -325,6 +351,58 @@ export default function NodeDetailDrawer({
             </div>
           )}
         </div>
+
+        {/* 跨分支横向网状关联关系 */}
+        {connectedLinks.length > 0 && (
+          <div className="rounded-xl border border-amber-200/80 dark:border-amber-900/50 bg-amber-50/40 dark:bg-amber-950/20 p-3.5 text-xs space-y-2">
+            <div className="flex items-center justify-between font-semibold text-amber-900 dark:text-amber-200">
+              <span className="flex items-center gap-1.5">
+                <span>🔗</span>
+                <span>跨分支横向概念网络 ({connectedLinks.length})</span>
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              {connectedLinks.map((l) => {
+                const isSource = l.sourceId === nodeId;
+                const partnerId = isSource ? l.targetId : l.sourceId;
+                const partnerNode = findNodeInTree(rootNode, partnerId);
+                return (
+                  <div
+                    key={l.id}
+                    className="flex items-center justify-between gap-2 rounded-lg bg-white/90 dark:bg-gray-800/90 border border-amber-200/60 dark:border-amber-900/40 px-2.5 py-1.5 shadow-2xs"
+                  >
+                    <div className="flex items-center gap-1.5 truncate">
+                      <span className="rounded bg-amber-100 dark:bg-amber-900/60 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:text-amber-300 shrink-0">
+                        {l.label}
+                      </span>
+                      <span className="text-[11px] text-gray-400">
+                        {isSource ? "➔" : "⬅"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onSelectNode?.(partnerId)}
+                        className="truncate text-gray-800 dark:text-gray-200 hover:text-brand-600 dark:hover:text-brand-400 font-medium hover:underline text-left"
+                        title="点击聚焦该关联概念"
+                      >
+                        {partnerNode?.title ?? "关联概念"}
+                      </button>
+                    </div>
+                    {onDeleteLink && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteLink(l.id)}
+                        className="text-gray-400 hover:text-red-600 text-xs px-1 shrink-0"
+                        title="删除关联连线"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* 详细知识点剖析板块 */}
         <div className="rounded-xl border border-gray-200 dark:border-gray-700/80 bg-white dark:bg-gray-800/40 p-4 shadow-2xs space-y-3">

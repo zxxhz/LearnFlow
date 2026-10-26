@@ -621,6 +621,13 @@ export interface MindMapSummary {
   updated_at: string;
 }
 
+export interface MindMapCrossLink {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  label: string;
+}
+
 export interface MindMapDetail {
   id: string;
   title: string;
@@ -629,6 +636,7 @@ export interface MindMapDetail {
   settings: {
     layout?: "lr" | "radial";
     zoom?: number;
+    cross_links?: MindMapCrossLink[];
     [key: string]: any;
   };
   created_at: string;
