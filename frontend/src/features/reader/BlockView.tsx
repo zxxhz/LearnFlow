@@ -57,6 +57,7 @@ interface Props {
   onRun: (sectionId: string, lang: string, code: string) => void;
   adhdMode?: AdhdMode;
   pIndex?: number;
+  onReviseSection?: (sectionId: string, raw: string) => void;
 }
 
 
@@ -204,6 +205,7 @@ export default function BlockView({
   onRun,
   adhdMode = "off",
   pIndex = 0,
+  onReviseSection,
 }: Props) {
   const innerRef = useRef<HTMLDivElement>(null);
   const codeRef = useRef<HTMLDivElement>(null);
@@ -408,6 +410,16 @@ export default function BlockView({
                 {plotBusy ? "绘制中…" : "📐 绘图"}
               </button>
             )}
+            {onReviseSection && sectionId && (
+              <button
+                type="button"
+                onClick={() => onReviseSection(sectionId, block.raw)}
+                className="rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-0.5 text-xs text-gray-500 hover:text-brand-600 dark:hover:text-brand-400 transition"
+                title="对本代码块提出质疑或请求重写"
+              >
+                🚩 质疑/重写
+              </button>
+            )}
           </div>
         </div>
         {/* Jupyter 单元格：Shiki/划线渲染层在下定高度，透明 textarea 叠在上直接编辑 */}
@@ -438,13 +450,29 @@ export default function BlockView({
   }
 
   return (
-    <div
-      ref={innerRef}
-      data-section-id={sectionId}
-      className={`doc-content ${adhdClass} ${flash ? "outline outline-2 outline-brand-400 rounded-lg" : ""}`}
-      dangerouslySetInnerHTML={{ __html: html }}
-      onClick={onClick}
-    />
+    <div className="group relative">
+      {onReviseSection && sectionId && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onReviseSection(sectionId, block.raw);
+          }}
+          className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-1 -top-2.5 z-10 inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-gray-700 bg-white/95 dark:bg-gray-800/95 px-2 py-0.5 text-[11px] text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 shadow-xs backdrop-blur-xs select-none"
+          title="对本段落提出质疑或重写建议"
+        >
+          <span>🚩</span>
+          <span>质疑/重写</span>
+        </button>
+      )}
+      <div
+        ref={innerRef}
+        data-section-id={sectionId}
+        className={`doc-content ${adhdClass} ${flash ? "outline outline-2 outline-brand-400 rounded-lg" : ""}`}
+        dangerouslySetInnerHTML={{ __html: html }}
+        onClick={onClick}
+      />
+    </div>
   );
 
 }

@@ -63,6 +63,22 @@ export interface HighlightComparisonOut {
   candidates: CompareHighlightItem[];
 }
 
+export interface SectionReviseRequest {
+  instruction: string;
+  apply?: boolean;
+  revised_markdown?: string | null;
+}
+
+export interface SectionReviseResponse {
+  section_id: string;
+  original_markdown: string;
+  verification_status: "confirmed_error" | "improved" | "verified_correct" | string;
+  explanation: string;
+  revised_markdown: string;
+  applied: boolean;
+  updated_full_markdown?: string | null;
+}
+
 export interface CourseDetail extends Course {
   documents: ChapterProgress[];
 }

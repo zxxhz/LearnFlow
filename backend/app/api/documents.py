@@ -13,9 +13,12 @@ from app.schemas.document import (
     DocumentOut,
     HighlightComparisonOut,
     SectionOut,
+    SectionReviseRequest,
+    SectionReviseResponse,
 )
 from app.services.generation import pipeline
 from app.services.generation.highlight import find_candidate_anchors
+from app.services.revision import apply_section_revision, review_section_revision
 from app.services.sections_text import load_document_markdown
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -125,6 +128,62 @@ async def compare_highlights(document_id: str, db: AsyncSession = Depends(get_db
         summary=summary,
         candidates=candidates,
     )
+
+
+@router.post(
+    "/{document_id}/sections/{section_id}/revise",
+    response_model=SectionReviseResponse,
+)
+async def revise_section(
+    document_id: str,
+    section_id: str,
+    body: SectionReviseRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """单段落手术式重写与核验（决策4）：支持核查质疑并局部替换，无需整章推倒重来。"""
+    doc = await _get_doc(db, document_id)
+    sec = (
+        await db.scalars(
+            select(Section).where(
+                Section.document_id == document_id, Section.id == section_id
+            )
+        )
+    ).first()
+    if sec is None:
+        raise HTTPException(status_code=404, detail="指定的段落不存在")
+
+    if not body.apply:
+        # 审校与方案生成阶段
+        if not body.instruction.strip():
+            raise HTTPException(status_code=400, detail="质疑或调整要求不能为空")
+        orig_raw, result = await review_section_revision(
+            db, doc, sec, body.instruction.strip()
+        )
+        return SectionReviseResponse(
+            section_id=section_id,
+            original_markdown=orig_raw,
+            verification_status=result.verification_status,
+            explanation=result.explanation,
+            revised_markdown=result.revised_markdown,
+            applied=False,
+        )
+    else:
+        # 应用修订替换阶段
+        revised_text = body.revised_markdown
+        if not revised_text or not revised_text.strip():
+            raise HTTPException(status_code=400, detail="修订后的正文不能为空")
+        new_full_md = await apply_section_revision(
+            db, doc, sec, revised_text.strip()
+        )
+        return SectionReviseResponse(
+            section_id=section_id,
+            original_markdown="",
+            verification_status="improved",
+            explanation="修订已成功替换应用",
+            revised_markdown=revised_text.strip(),
+            applied=True,
+            updated_full_markdown=new_full_md,
+        )
 
 
 @router.post("/{document_id}/regenerate")

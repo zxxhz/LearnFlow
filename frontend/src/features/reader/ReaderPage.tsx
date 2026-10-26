@@ -15,6 +15,7 @@ import TocSidebar, { buildToc } from "./TocSidebar";
 import AnnotationsDrawer from "./AnnotationsDrawer";
 import ExerciseDrawer from "./ExerciseDrawer";
 import { ChapterHighlightCompare } from "./ChapterHighlightCompare";
+import { SectionReviseModal } from "./SectionReviseModal";
 import { hlColorVars, useHlColors } from "./colors";
 import { useTheme } from "../../lib/theme";
 import { useAdhdMode } from "./adhd";
@@ -132,6 +133,7 @@ export default function ReaderPage() {
   const [regenInstruction, setRegenInstruction] = useState("");
   const [regenAutoHighlight, setRegenAutoHighlight] = useState(false);
   const [regenMsg, setRegenMsg] = useState("");
+  const [reviseTarget, setReviseTarget] = useState<{ sectionId: string; raw: string } | null>(null);
   const [runningSection, setRunningSection] = useState<string | null>(null);
   const [runError, setRunError] = useState("");
   const [tocOpen, setTocOpen] = useState(false);
@@ -832,6 +834,7 @@ export default function ReaderPage() {
                 onRun={onRunCode}
                 adhdMode={adhdMode}
                 pIndex={paragraphIndices[i]}
+                onReviseSection={(sid, raw) => setReviseTarget({ sectionId: sid, raw })}
               />
             );
           })}
@@ -1067,6 +1070,25 @@ export default function ReaderPage() {
           </Button>
         </div>
       </Modal>
+
+      {/* 单段落手术式重写与核验弹窗 */}
+      {reviseTarget && documentId && (
+        <SectionReviseModal
+          isOpen={true}
+          onClose={() => setReviseTarget(null)}
+          documentId={documentId}
+          sectionId={reviseTarget.sectionId}
+          sectionRaw={reviseTarget.raw}
+          onSuccess={(updatedFullMd) => {
+            queryClient.invalidateQueries({ queryKey: ["doc", documentId] });
+            invalidate();
+            queryClient.invalidateQueries({ queryKey: ["doc-kps", documentId] });
+            queryClient.invalidateQueries({ queryKey: ["compare-highlights", documentId] });
+            setFlashSection(reviseTarget.sectionId);
+            setTimeout(() => setFlashSection(null), 2500);
+          }}
+        />
+      )}
     </div>
   );
 }

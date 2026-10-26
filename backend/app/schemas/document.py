@@ -56,3 +56,19 @@ class HighlightComparisonOut(BaseModel):
     missed_count: int
     summary: str
     candidates: list[CompareHighlightItem]
+
+
+class SectionReviseRequest(BaseModel):
+    instruction: str
+    apply: bool = False
+    revised_markdown: str | None = None
+
+
+class SectionReviseResponse(BaseModel):
+    section_id: str
+    original_markdown: str
+    verification_status: str  # confirmed_error | improved | verified_correct
+    explanation: str
+    revised_markdown: str
+    applied: bool = False
+    updated_full_markdown: str | None = None

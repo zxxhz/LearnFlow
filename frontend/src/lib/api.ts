@@ -13,6 +13,8 @@ import type {
   Exercise,
   ExerciseAttempt,
   HighlightComparisonOut,
+  SectionReviseRequest,
+  SectionReviseResponse,
   ImportAnalysis,
   ImportSpec,
   KnowledgePoint,
@@ -298,6 +300,11 @@ export const api = {
       request<CodeExecution[]>(`/documents/${id}/executions`),
     compareHighlights: (id: string) =>
       request<HighlightComparisonOut>(`/documents/${id}/compare-highlights`),
+    reviseSection: (documentId: string, sectionId: string, body: SectionReviseRequest) =>
+      request<SectionReviseResponse>(`/documents/${documentId}/sections/${sectionId}/revise`, {
+        method: "POST",
+        ...jsonBody(body),
+      }),
   },
   executions: {
     run: (body: { document_id: string; section_id: string; language: string; code: string }) =>

@@ -29,7 +29,11 @@ def build_heading_path(blocks: list[ParsedBlock], upto: int) -> list[str]:
 
 
 async def rebuild_sections(
-    db: AsyncSession, document: Document, new_markdown: str, new_version: int
+    db: AsyncSession,
+    document: Document,
+    new_markdown: str,
+    new_version: int,
+    force_inherited: dict[int, str] | None = None,
 ) -> list[Section]:
     """重建该文档的 Section 索引：旧块 ID 尽力继承；标注 orphan/恢复由 sweep 完成。
 
@@ -48,6 +52,10 @@ async def rebuild_sections(
     ]
     new_blocks = parse_blocks(new_markdown)
     inherited = align_ids(old, new_blocks)
+    if force_inherited:
+        for idx, sec_id in force_inherited.items():
+            if 0 <= idx < len(inherited):
+                inherited[idx] = sec_id
 
     await db.execute(delete(Section).where(Section.document_id == document.id))
     await db.flush()
