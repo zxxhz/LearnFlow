@@ -199,7 +199,7 @@ async def run_chapter(
             await db.flush()
 
     if auto_highlight is None:
-        should_highlight = bool(prefs.get("auto_highlight", True))
+        should_highlight = bool(prefs.get("auto_highlight", False))
     else:
         should_highlight = bool(auto_highlight)
 

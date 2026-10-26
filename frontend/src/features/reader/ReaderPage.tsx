@@ -6,7 +6,7 @@ import { api } from "../../lib/api";
 import { subscribeSSE } from "../../lib/sse";
 import { alignSections, parseBlocks } from "../../lib/markdown";
 import { anchorFromSelection, type AnchorRange } from "../../lib/anchor";
-import type { Annotation, AnnotationColor, ProgressSSEEvent } from "../../lib/types";
+import type { Annotation, AnnotationColor, CompareHighlightItem, ProgressSSEEvent } from "../../lib/types";
 import { Button, Modal, Spinner, Textarea } from "../../components/ui";
 import BlockView from "./BlockView";
 import SelectionToolbar from "./SelectionToolbar";
@@ -14,6 +14,7 @@ import AnnotationCard from "./AnnotationCard";
 import TocSidebar, { buildToc } from "./TocSidebar";
 import AnnotationsDrawer from "./AnnotationsDrawer";
 import ExerciseDrawer from "./ExerciseDrawer";
+import { ChapterHighlightCompare } from "./ChapterHighlightCompare";
 import { hlColorVars, useHlColors } from "./colors";
 import { useTheme } from "../../lib/theme";
 import { useAdhdMode } from "./adhd";
@@ -129,7 +130,7 @@ export default function ReaderPage() {
   const [flashSection, setFlashSection] = useState<string | null>(null);
   const [regenOpen, setRegenOpen] = useState(false);
   const [regenInstruction, setRegenInstruction] = useState("");
-  const [regenAutoHighlight, setRegenAutoHighlight] = useState(true);
+  const [regenAutoHighlight, setRegenAutoHighlight] = useState(false);
   const [regenMsg, setRegenMsg] = useState("");
   const [runningSection, setRunningSection] = useState<string | null>(null);
   const [runError, setRunError] = useState("");
@@ -350,6 +351,21 @@ export default function ReaderPage() {
     },
     onError: (e) => alert((e as Error).message),
   });
+
+  const handleAdoptHighlight = async (item: CompareHighlightItem) => {
+    if (!documentId) return;
+    await api.annotations.create(documentId, {
+      section_id: item.section_id,
+      exact: item.exact,
+      prefix: item.prefix,
+      suffix: item.suffix,
+      start_offset: item.start_offset,
+      end_offset: item.end_offset,
+      color: item.color || "yellow",
+    });
+    await invalidate();
+    queryClient.invalidateQueries({ queryKey: ["compare-highlights", documentId] });
+  };
 
   // ===== 卡片与定位 =====
   const openAnnotation = async (a: Annotation, knownConvId?: string) => {
@@ -819,6 +835,39 @@ export default function ReaderPage() {
               />
             );
           })}
+
+          {/* 章末自主重点对比自测 */}
+          {documentId && (
+            <ChapterHighlightCompare
+              documentId={documentId}
+              userAnnotationCount={annotations.length}
+              onAdoptHighlight={handleAdoptHighlight}
+              onJumpToSection={jumpTo}
+            />
+          )}
+
+          {/* 底部章节翻页导航 */}
+          <div className="mt-8 mb-16 pt-6 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between">
+            <Button
+              variant="secondary"
+              className="text-xs"
+              disabled={!prevDoc}
+              onClick={() => prevDoc && navigate(`/read/${prevDoc.document_id}`)}
+            >
+              ← 上一章
+            </Button>
+            <span className="text-xs text-gray-400 dark:text-gray-500">
+              第 {doc.chapter_index} 章 / 共 {docs.length} 章
+            </span>
+            <Button
+              variant="secondary"
+              className="text-xs"
+              disabled={!nextDoc}
+              onClick={() => nextDoc && navigate(`/read/${nextDoc.document_id}`)}
+            >
+              下一章 →
+            </Button>
+          </div>
         </div>
 
       </div>

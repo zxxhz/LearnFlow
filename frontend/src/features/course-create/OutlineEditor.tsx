@@ -18,7 +18,7 @@ export default function OutlineEditor({ course }: Props) {
   );
   const [regenOpen, setRegenOpen] = useState(false);
   const [regenInstruction, setRegenInstruction] = useState("");
-  const [autoHighlight, setAutoHighlight] = useState(true);
+  const [autoHighlight, setAutoHighlight] = useState(false);
   const [error, setError] = useState("");
 
   const update = (i: number, patch: Partial<OutlineItem>) =>

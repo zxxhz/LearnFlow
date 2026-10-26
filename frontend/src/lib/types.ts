@@ -42,6 +42,27 @@ export interface ChapterProgress {
   source: "generated" | "imported";
 }
 
+export interface CompareHighlightItem {
+  section_id: string;
+  exact: string;
+  prefix: string;
+  suffix: string;
+  start_offset: number;
+  end_offset: number;
+  note: string;
+  color: AnnotationColor;
+  is_matched: boolean;
+}
+
+export interface HighlightComparisonOut {
+  user_highlight_count: number;
+  ai_candidate_count: number;
+  matched_count: number;
+  missed_count: number;
+  summary: string;
+  candidates: CompareHighlightItem[];
+}
+
 export interface CourseDetail extends Course {
   documents: ChapterProgress[];
 }

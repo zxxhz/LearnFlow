@@ -12,6 +12,7 @@ import type {
   DocumentContent,
   Exercise,
   ExerciseAttempt,
+  HighlightComparisonOut,
   ImportAnalysis,
   ImportSpec,
   KnowledgePoint,
@@ -295,6 +296,8 @@ export const api = {
       }),
     executions: (id: string) =>
       request<CodeExecution[]>(`/documents/${id}/executions`),
+    compareHighlights: (id: string) =>
+      request<HighlightComparisonOut>(`/documents/${id}/compare-highlights`),
   },
   executions: {
     run: (body: { document_id: string; section_id: string; language: string; code: string }) =>

@@ -35,3 +35,24 @@ class DocumentContentOut(BaseModel):
     document: DocumentOut
     markdown: str
     blocks: list[SectionOut]
+
+
+class CompareHighlightItem(BaseModel):
+    section_id: str
+    exact: str
+    prefix: str = ""
+    suffix: str = ""
+    start_offset: int = 0
+    end_offset: int = 0
+    note: str = ""
+    color: str = "yellow"
+    is_matched: bool = False
+
+
+class HighlightComparisonOut(BaseModel):
+    user_highlight_count: int
+    ai_candidate_count: int
+    matched_count: int
+    missed_count: int
+    summary: str
+    candidates: list[CompareHighlightItem]

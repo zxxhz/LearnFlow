@@ -5,10 +5,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.models import Document, Section
+from app.models import Annotation, Document, Section
 from app.schemas.course import RegenerateRequest
-from app.schemas.document import DocumentContentOut, DocumentOut, SectionOut
+from app.schemas.document import (
+    CompareHighlightItem,
+    DocumentContentOut,
+    DocumentOut,
+    HighlightComparisonOut,
+    SectionOut,
+)
 from app.services.generation import pipeline
+from app.services.generation.highlight import find_candidate_anchors
 from app.services.sections_text import load_document_markdown
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -45,6 +52,78 @@ async def content(document_id: str, db: AsyncSession = Depends(get_db)):
         document=DocumentOut.model_validate(doc),
         markdown=markdown,
         blocks=blocks,
+    )
+
+
+@router.get("/{document_id}/compare-highlights", response_model=HighlightComparisonOut)
+async def compare_highlights(document_id: str, db: AsyncSession = Depends(get_db)):
+    """章末自主重点对照：提取 AI 推荐重点与用户当前手动划线进行对比。"""
+    doc = await _get_doc(db, document_id)
+    markdown = load_document_markdown(doc)
+    sections = (
+        await db.scalars(
+            select(Section)
+            .where(Section.document_id == document_id)
+            .order_by(Section.order_index)
+        )
+    ).all()
+
+    candidates_raw = find_candidate_anchors(sections, markdown)
+
+    # 查出用户自己在本章的所有有效划线标注
+    user_anns = (
+        await db.scalars(
+            select(Annotation).where(
+                Annotation.document_id == document_id,
+                Annotation.status == "active",
+            )
+        )
+    ).all()
+
+    candidates: list[CompareHighlightItem] = []
+    for c in candidates_raw:
+        # 重叠与匹配判定：同一 section 内有重叠或子串包含
+        is_matched = False
+        for u in user_anns:
+            if u.section_id == c["section_id"]:
+                c_start, c_end = c["start_offset"], c["end_offset"]
+                u_start, u_end = u.start_offset, u.end_offset
+                if max(c_start, u_start) < min(c_end, u_end) or c["exact"] in u.exact or u.exact in c["exact"]:
+                    is_matched = True
+                    break
+        candidates.append(
+            CompareHighlightItem(
+                section_id=c["section_id"],
+                exact=c["exact"],
+                prefix=c["prefix"],
+                suffix=c["suffix"],
+                start_offset=c["start_offset"],
+                end_offset=c["end_offset"],
+                note=c["note"],
+                color=c["color"],
+                is_matched=is_matched,
+            )
+        )
+
+    user_count = len(user_anns)
+    ai_count = len(candidates)
+    matched_count = sum(1 for c in candidates if c.is_matched)
+    missed_count = ai_count - matched_count
+
+    if user_count == 0:
+        summary = f"你尚未在本章手动划线。AI 提炼出 {ai_count} 处核心概念与避坑要害，建议在阅读中自主标出重点，或点击下方采纳。"
+    elif missed_count == 0:
+        summary = f"太棒了！你标出的 {user_count} 处重点已完全覆盖 AI 识别的 {ai_count} 处核心要害！"
+    else:
+        summary = f"本章你标出了 {user_count} 处重点，与核心要害重合 {matched_count} 处；AI 建议额外关注 {missed_count} 处关键点。"
+
+    return HighlightComparisonOut(
+        user_highlight_count=user_count,
+        ai_candidate_count=ai_count,
+        matched_count=matched_count,
+        missed_count=missed_count,
+        summary=summary,
+        candidates=candidates,
     )
 
 

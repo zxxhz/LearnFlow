@@ -33,8 +33,8 @@ class Preferences(BaseModel):
     exercises_per_kp: int = 3
     # 划线高亮四色（hex），缺失/非法项回落默认
     highlight_colors: dict[str, str] = dict(DEFAULT_HL_COLORS)
-    # 生成章节时是否自动划重点
-    auto_highlight: bool = True
+    # 生成章节时是否自动划重点（默认关闭，倡导自主阅读并在章末对比）
+    auto_highlight: bool = False
     # ADHD 阅读辅助模式：off | a | b
     adhd_mode: Literal["off", "a", "b"] = "off"
     # 课程阅读器字号（px，默认 16，范围 12-28）

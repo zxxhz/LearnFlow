@@ -12,6 +12,7 @@ DEFAULT_PREFERENCES = {
     "chapter_length": 3000,
     "exercises_per_kp": 3,
     "highlight_colors": DEFAULT_HL_COLORS,
+    "auto_highlight": False,
     "adhd_mode": "off",
     "course_font_size": 16,
     "drill_font_size": 15,

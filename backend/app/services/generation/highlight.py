@@ -101,6 +101,126 @@ def extract_fallback_candidates(
     return candidates
 
 
+def find_candidate_anchors(
+    sections: Sequence[Section],
+    raw_markdown: str,
+    meta_highlights: list[HighlightItem] | None = None,
+) -> list[dict]:
+    """计算当前文档所有可锚定的重点候选列表（返回包含 exact, section_id, prefix, suffix, start_offset, end_offset, note, color 的字典）。"""
+    if not sections or not raw_markdown.strip():
+        return []
+
+    parsed_blocks = parse_blocks(raw_markdown)
+    block_map = {
+        s.id: parsed_blocks[s.order_index]
+        for s in sections
+        if s.order_index < len(parsed_blocks)
+    }
+    plain_map = {
+        sid: get_block_plain_text(b.raw)
+        for sid, b in block_map.items()
+    }
+
+    candidates: list[tuple[str, str, str]] = []
+    if meta_highlights:
+        for it in meta_highlights:
+            clean = clean_highlight_text(it.exact)
+            if clean:
+                color = it.color if it.color in ("yellow", "green", "blue", "pink") else "yellow"
+                candidates.append((clean, it.note or "重点提炼", color))
+
+    if len(candidates) < MIN_AUTO_HIGHLIGHTS:
+        fallbacks = extract_fallback_candidates(parsed_blocks)
+        for fb in fallbacks:
+            if not any(c[0] == fb[0] for c in candidates):
+                candidates.append(fb)
+
+    occupied_ranges: dict[str, list[tuple[int, int]]] = {s.id: [] for s in sections}
+    anchored_results: list[dict] = []
+
+    candidate_sections = [
+        s for s in sections
+        if s.id in plain_map and s.block_type in ("paragraph", "quote", "list")
+    ]
+    if not candidate_sections:
+        candidate_sections = [s for s in sections if s.id in plain_map]
+
+    for exact_text, note, color in candidates:
+        if len(anchored_results) >= MAX_AUTO_HIGHLIGHTS:
+            break
+        if len(exact_text) < 6 or len(exact_text) > 120:
+            continue
+
+        for sec in candidate_sections:
+            plain = plain_map.get(sec.id, "")
+            idx = plain.find(exact_text)
+            if idx < 0:
+                continue
+
+            end_idx = idx + len(exact_text)
+            is_overlap = any(
+                max(idx, o_start) < min(end_idx, o_end)
+                for o_start, o_end in occupied_ranges[sec.id]
+            )
+            if is_overlap:
+                continue
+
+            prefix = plain[max(0, idx - CONTEXT_CHARS) : idx]
+            suffix = plain[end_idx : end_idx + CONTEXT_CHARS]
+
+            anchored_results.append({
+                "section_id": sec.id,
+                "exact": exact_text,
+                "prefix": prefix,
+                "suffix": suffix,
+                "start_offset": idx,
+                "end_offset": end_idx,
+                "note": note,
+                "color": color,
+            })
+            occupied_ranges[sec.id].append((idx, end_idx))
+            break
+
+    # 模型候选 >=3 但全部锚定失败时，补一轮加粗/避坑语句兜底，避免整章零重点
+    if len(anchored_results) == 0 and len(candidates) >= MIN_AUTO_HIGHLIGHTS:
+        for fb in extract_fallback_candidates(parsed_blocks):
+            if len(anchored_results) >= MIN_AUTO_HIGHLIGHTS:
+                break
+            if any(c[0] == fb[0] for c in candidates):
+                continue
+            candidates.append(fb)
+            exact_text, note, color = fb
+            if len(exact_text) < 6 or len(exact_text) > 120:
+                continue
+            for sec in candidate_sections:
+                plain = plain_map.get(sec.id, "")
+                idx = plain.find(exact_text)
+                if idx < 0:
+                    continue
+                end_idx = idx + len(exact_text)
+                if any(
+                    max(idx, o_start) < min(end_idx, o_end)
+                    for o_start, o_end in occupied_ranges[sec.id]
+                ):
+                    continue
+                prefix = plain[max(0, idx - CONTEXT_CHARS) : idx]
+                suffix = plain[end_idx : end_idx + CONTEXT_CHARS]
+                anchored_results.append({
+                    "section_id": sec.id,
+                    "exact": exact_text,
+                    "prefix": prefix,
+                    "suffix": suffix,
+                    "start_offset": idx,
+                    "end_offset": end_idx,
+                    "note": note,
+                    "color": color,
+                })
+                occupied_ranges[sec.id].append((idx, end_idx))
+                break
+
+    return anchored_results
+
+
 async def create_auto_highlights(
     db: AsyncSession,
     doc: Document,
@@ -115,8 +235,6 @@ async def create_auto_highlights(
         return []
 
     # 1. 重新生成章节时：清理旧版本残留且未产生对话问答的自动划线。
-    # 按 is_auto 标志精确圈定（老库迁移后历史自动划线 is_auto=0 清不掉——
-    # 兜底：note 命中教学标签前缀且无对话的也视为自动残留）
     _AUTO_NOTE_PREFIXES = ("重点", "核心", "避坑", "黄金", "关键", "易错", "考点", "必看")
     existing_auto_anns = (
         await db.scalars(
@@ -156,145 +274,30 @@ async def create_auto_highlights(
         logger.info("auto-highlights disabled for document %s, skipped creation", doc.id)
         return []
 
-    parsed_blocks = parse_blocks(raw_markdown)
-    block_map = {
-        s.id: parsed_blocks[s.order_index]
-        for s in sections
-        if s.order_index < len(parsed_blocks)
-    }
-    plain_map = {
-        sid: get_block_plain_text(b.raw)
-        for sid, b in block_map.items()
-    }
-
-    # 2. 收集候选划线列表：模型输出优先 + 文本加粗提炼兜底
-    candidates: list[tuple[str, str, str]] = []
-    if meta_highlights:
-        for it in meta_highlights:
-            clean = clean_highlight_text(it.exact)
-            if clean:
-                color = it.color if it.color in ("yellow", "green", "blue", "pink") else "yellow"
-                candidates.append((clean, it.note or "重点提炼", color))
-
-    if len(candidates) < MIN_AUTO_HIGHLIGHTS:
-        fallbacks = extract_fallback_candidates(parsed_blocks)
-        for fb in fallbacks:
-            if not any(c[0] == fb[0] for c in candidates):
-                candidates.append(fb)
-
-    # 3. 逐个候选尝试锚定到最合适的小节
-    # 记录各 section 已占用的 [start, end] 区间，避免同一块内划线重叠
-    occupied_ranges: dict[str, list[tuple[int, int]]] = {s.id: [] for s in sections}
+    anchors = find_candidate_anchors(sections, raw_markdown, meta_highlights)
     created_anns: list[Annotation] = []
+    for a in anchors:
+        ann = Annotation(
+            document_id=doc.id,
+            section_id=a["section_id"],
+            version=doc.version,
+            exact=a["exact"],
+            prefix=a["prefix"],
+            suffix=a["suffix"],
+            start_offset=a["start_offset"],
+            end_offset=a["end_offset"],
+            color=a["color"],
+            note=a["note"],
+            status="active",
+            is_auto=True,
+        )
+        db.add(ann)
+        await db.flush()
 
-    # 优先在正文段落/引用/列表中寻找，跳过大标题
-    candidate_sections = [
-        s for s in sections
-        if s.id in plain_map and s.block_type in ("paragraph", "quote", "list")
-    ]
-    # 若无则补充其他块
-    if not candidate_sections:
-        candidate_sections = [s for s in sections if s.id in plain_map]
-
-    for exact_text, note, color in candidates:
-        if len(created_anns) >= MAX_AUTO_HIGHLIGHTS:
-            break
-        if len(exact_text) < 6 or len(exact_text) > 120:
-            continue
-
-        matched = False
-        for sec in candidate_sections:
-            plain = plain_map.get(sec.id, "")
-            idx = plain.find(exact_text)
-            if idx < 0:
-                continue
-
-            end_idx = idx + len(exact_text)
-            # 重叠检查
-            is_overlap = any(
-                max(idx, o_start) < min(end_idx, o_end)
-                for o_start, o_end in occupied_ranges[sec.id]
-            )
-            if is_overlap:
-                continue
-
-            # 命中并构造五元组
-            prefix = plain[max(0, idx - CONTEXT_CHARS) : idx]
-            suffix = plain[end_idx : end_idx + CONTEXT_CHARS]
-
-            ann = Annotation(
-                document_id=doc.id,
-                section_id=sec.id,
-                version=doc.version,
-                exact=exact_text,
-                prefix=prefix,
-                suffix=suffix,
-                start_offset=idx,
-                end_offset=end_idx,
-                color=color,
-                note=note,
-                status="active",
-                is_auto=True,
-            )
-            db.add(ann)
-            await db.flush()
-
-            conv = Conversation(kind="annotation", annotation_id=ann.id)
-            db.add(conv)
-
-            occupied_ranges[sec.id].append((idx, end_idx))
-            created_anns.append(ann)
-            matched = True
-            break
-
-        if not matched:
-            logger.debug("auto-highlight candidate could not be anchored: %s", exact_text[:30])
+        conv = Conversation(kind="annotation", annotation_id=ann.id)
+        db.add(conv)
+        created_anns.append(ann)
 
     await db.flush()
     logger.info("created %d auto-highlights for document %s", len(created_anns), doc.id)
-    # 模型候选 >=3 但全部锚定失败时，补一轮加粗/避坑语句兜底，避免整章零重点
-    if len(created_anns) == 0 and len(candidates) >= MIN_AUTO_HIGHLIGHTS:
-        for fb in extract_fallback_candidates(parsed_blocks):
-            if len(created_anns) >= MIN_AUTO_HIGHLIGHTS:
-                break
-            if any(c[0] == fb[0] for c in candidates):
-                continue
-            candidates.append(fb)
-            exact_text, note, color = fb
-            if len(exact_text) < 6 or len(exact_text) > 120:
-                continue
-            for sec in candidate_sections:
-                plain = plain_map.get(sec.id, "")
-                idx = plain.find(exact_text)
-                if idx < 0:
-                    continue
-                end_idx = idx + len(exact_text)
-                if any(
-                    max(idx, o_start) < min(end_idx, o_end)
-                    for o_start, o_end in occupied_ranges[sec.id]
-                ):
-                    continue
-                prefix = plain[max(0, idx - CONTEXT_CHARS) : idx]
-                suffix = plain[end_idx : end_idx + CONTEXT_CHARS]
-                ann = Annotation(
-                    document_id=doc.id,
-                    section_id=sec.id,
-                    version=doc.version,
-                    exact=exact_text,
-                    prefix=prefix,
-                    suffix=suffix,
-                    start_offset=idx,
-                    end_offset=end_idx,
-                    color=color,
-                    note=note,
-                    status="active",
-                    is_auto=True,
-                )
-                db.add(ann)
-                await db.flush()
-                db.add(Conversation(kind="annotation", annotation_id=ann.id))
-                occupied_ranges[sec.id].append((idx, end_idx))
-                created_anns.append(ann)
-                break
-
     return created_anns
