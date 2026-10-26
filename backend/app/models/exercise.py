@@ -43,6 +43,10 @@ class Exercise(UUIDPk, UserIdMixin, CreatedAt, Base):
     hints: Mapped[str] = mapped_column(Text, default="[]")
     # 通关后展示的完整参考实现（旧数据回落 skeleton_code）
     reference_code: Mapped[str] = mapped_column(Text, default="")
+    # 是否标记为攻坚“硬骨头”（允许先跳过继续后续章节，在首页与错题本置顶攻坚）
+    is_hard_bone: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 支线搭桥小题关联的主题 ID（非空 = 某道难题的支线小题）
+    parent_exercise_id: Mapped[str] = mapped_column(String(32), default="", index=True)
 
 
 class ExerciseAttempt(UUIDPk, UserIdMixin, CreatedAt, Base):

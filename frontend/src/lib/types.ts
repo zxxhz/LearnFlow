@@ -236,6 +236,8 @@ export interface Exercise {
   quiz_id: string;
   order_index: number;
   hints: string[];
+  is_hard_bone?: boolean;
+  parent_exercise_id?: string;
   created_at: string;
   /** 闯关：同一知识点内前一关通过后才可作答（小测题/非代码题恒为 true） */
   unlocked: boolean;

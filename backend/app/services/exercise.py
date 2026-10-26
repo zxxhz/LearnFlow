@@ -6,6 +6,7 @@
 import asyncio
 import json
 import logging
+from pydantic import BaseModel
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -288,7 +289,12 @@ async def _attach_meta(db: AsyncSession, exercises: list[Exercise]) -> list[Exer
     for chain in chains.values():
         chain.sort(key=lambda e: (e.order_index, e.created_at, e.id))
         for i, e in enumerate(chain):
-            if i == 0 or e.id in passed_ids or chain[i - 1].id in passed_ids:
+            if (
+                i == 0
+                or e.id in passed_ids
+                or chain[i - 1].id in passed_ids
+                or getattr(chain[i - 1], "is_hard_bone", False)
+            ):
                 unlocked_ids.add(e.id)
     out: list[ExerciseOut] = []
     for e in exercises:
@@ -474,8 +480,9 @@ async def _ensure_unlocked(db: AsyncSession, exercise: Exercise) -> None:
             )
         )
     )
-    if chain[idx - 1].id not in passed and exercise.id not in passed:
-        raise PermissionError("先通过上一关，才能挑战本关")
+    prev_e = chain[idx - 1]
+    if prev_e.id not in passed and not getattr(prev_e, "is_hard_bone", False) and exercise.id not in passed:
+        raise PermissionError("先通过上一关（或标记为硬骨头暂存），才能挑战本关")
 
 
 def _choice_fail_hint(exercise: Exercise) -> str:
@@ -530,6 +537,75 @@ async def delete_exercise(db: AsyncSession, exercise_id: str) -> None:
     )
     await db.execute(Exercise.__table__.delete().where(Exercise.id == exercise.id))
     await db.commit()
+
+
+class BridgeItem(BaseModel):
+    title: str
+    task: str
+    language: str
+    hints: list[str] = []
+    expected_output: str
+    reference_code: str = ""
+
+
+class BridgeExercisesOutput(BaseModel):
+    bridge_exercises: list[BridgeItem]
+
+
+async def toggle_hard_bone(db: AsyncSession, exercise_id: str) -> bool:
+    """切换题目的“硬骨头”攻坚标记（返回最新标记状态）。"""
+    ex = await db.get(Exercise, exercise_id)
+    if ex is None:
+        raise LookupError("练习题不存在")
+    ex.is_hard_bone = not bool(ex.is_hard_bone)
+    await db.commit()
+    return ex.is_hard_bone
+
+
+async def generate_bridge_exercises(db: AsyncSession, exercise_id: str) -> list[Exercise]:
+    """为攻坚受阻的主线练习题生成 1-2 道阶梯式支线搭桥小题（§4）。"""
+    ex = await db.get(Exercise, exercise_id)
+    if ex is None:
+        raise LookupError("练习题不存在")
+
+    prompt = render_prompt(
+        "exercise_bridge.md",
+        TITLE=ex.title,
+        LANGUAGE=ex.language or "python",
+        TASK=ex.task_md,
+        EXPECTED_OUTPUT=ex.expected_output,
+        REFERENCE_CODE=ex.reference_code or ex.skeleton_code,
+    )
+    adapter = await create_adapter_from_settings(db, scene="generation")
+    result = await adapter.chat_json(
+        [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": "请针对这道难题的核心卡点，拆解并输出 1-2 道微小支线搭桥代码关："},
+        ],
+        schema=BridgeExercisesOutput,
+    )
+
+    created: list[Exercise] = []
+    for i, item in enumerate(result.bridge_exercises, 1):
+        bridge_ex = Exercise(
+            knowledge_point_id=ex.knowledge_point_id,
+            document_id=ex.document_id,
+            kind=EXERCISE_CODE,
+            title=item.title.strip() or f"支线搭桥 {i}",
+            task_md=item.task.strip(),
+            language=item.language or ex.language or "python",
+            expected_output=item.expected_output.strip(),
+            reference_code=item.reference_code.strip(),
+            reference_answer=item.expected_output.strip(),
+            hints=json.dumps([h for h in item.hints if str(h).strip()][:3], ensure_ascii=False),
+            order_index=ex.order_index,
+            parent_exercise_id=ex.id,
+        )
+        db.add(bridge_ex)
+        created.append(bridge_ex)
+
+    await db.commit()
+    return created
 
 
 async def purge_document_exercises(db: AsyncSession, document_ids: list[str]) -> None:

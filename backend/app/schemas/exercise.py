@@ -114,6 +114,8 @@ class ExerciseOut(ORMModel):
     answer: str = ""
     quiz_id: str = ""
     order_index: int = 0
+    is_hard_bone: bool = False
+    parent_exercise_id: str = ""
     hints: list[str] = []
     created_at: str
     # 闯关状态：同一知识点内前一关通过后才可作答（小测题/非代码题恒为可作答）

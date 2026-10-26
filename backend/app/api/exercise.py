@@ -56,6 +56,28 @@ async def submit(exercise_id: str, body: ExerciseSubmitRequest, db: AsyncSession
     return ExerciseAttemptOut.model_validate(attempt)
 
 
+@router.post("/{exercise_id}/hard-bone")
+async def toggle_hard_bone(exercise_id: str, db: AsyncSession = Depends(get_db)):
+    """切换题目的“硬骨头”标记：标记后允许先跳过继续后续章节，在首页待攻克置顶（§4）。"""
+    try:
+        is_hard = await exercise_service.toggle_hard_bone(db, exercise_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"ok": True, "is_hard_bone": is_hard}
+
+
+@router.post("/{exercise_id}/bridge", response_model=list[ExerciseOut])
+async def generate_bridge(exercise_id: str, db: AsyncSession = Depends(get_db)):
+    """为攻坚受阻的难题生成 1-2 道微小支线搭桥小题（§4）。"""
+    try:
+        bridges = await exercise_service.generate_bridge_exercises(db, exercise_id)
+        return await exercise_service._attach_meta(db, bridges)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"生成支线小题失败：{e}") from e
+
+
 @router.delete("/{exercise_id}")
 async def remove(exercise_id: str, db: AsyncSession = Depends(get_db)):
     try:

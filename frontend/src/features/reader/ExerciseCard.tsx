@@ -110,6 +110,23 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
     onError: (e) => alert((e as Error).message),
   });
 
+  const toggleHardBone = useMutation({
+    mutationFn: () => api.exercises.toggleHardBone(exercise.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["exercises", documentId] });
+      queryClient.invalidateQueries({ queryKey: ["exercises-wrongbook"] });
+    },
+    onError: (e) => alert((e as Error).message),
+  });
+
+  const generateBridge = useMutation({
+    mutationFn: () => api.exercises.generateBridge(exercise.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["exercises", documentId] });
+    },
+    onError: (e) => alert((e as Error).message),
+  });
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key !== "Tab") return;
     e.preventDefault();
@@ -357,6 +374,20 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
             )}
           </>
         )}
+        {attempt && attempt.passed === false && isCode && !exercise.parent_exercise_id && (
+          <div className="pt-2">
+            <button
+              type="button"
+              onClick={() => generateBridge.mutate()}
+              disabled={generateBridge.isPending}
+              className="inline-flex items-center gap-1.5 text-[0.85em] font-medium text-brand-700 dark:text-brand-300 bg-brand-50/80 dark:bg-brand-950/40 border border-brand-200 dark:border-brand-800 rounded-lg px-2.5 py-1 hover:bg-brand-100 dark:hover:bg-brand-900/40 transition"
+              title="将当前综合难题拆解为 1~2 道微步骤阶梯小题辅助破局"
+            >
+              <span>🧱</span>
+              <span>{generateBridge.isPending ? "AI 正在拆解支线小题…" : "太难卡壳了？拆解做两道支线小题"}</span>
+            </button>
+          </div>
+        )}
       </div>
     );
 
@@ -372,11 +403,29 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
           {attempt?.passed === true && <Badge color="green">✅ 通关</Badge>}
           {attempt?.passed === false && <Badge color="red">❌ 未通过</Badge>}
           {attempt?.is_doubtful && <Badge color="amber">🤔 存疑作答</Badge>}
+          {exercise.is_hard_bone && <Badge color="amber">🦴 硬骨头暂存</Badge>}
+          {exercise.parent_exercise_id && <Badge color="purple">🧱 支线阶梯</Badge>}
           {attempt && isCode && STATUS_BADGE[attempt.status] && (
             <Badge color={STATUS_BADGE[attempt.status].color}>{STATUS_BADGE[attempt.status].label}</Badge>
           )}
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+          {isCode && !exercise.parent_exercise_id && (
+            <button
+              type="button"
+              onClick={() => toggleHardBone.mutate()}
+              disabled={toggleHardBone.isPending}
+              className={`inline-flex items-center gap-1 text-[0.8em] px-2 py-0.5 rounded border transition font-medium ${
+                exercise.is_hard_bone
+                  ? "border-amber-400 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200"
+                  : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:border-amber-300 hover:text-amber-700"
+              }`}
+              title={exercise.is_hard_bone ? "取消硬骨头标记" : "卡壳了？标记为硬骨头先跳过，解锁下一关并在首页留存待攻克"}
+            >
+              <span>🦴</span>
+              <span>{exercise.is_hard_bone ? "已标硬骨头" : "硬骨头跳过"}</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() => {

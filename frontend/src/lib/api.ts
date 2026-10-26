@@ -324,6 +324,10 @@ export const api = {
         method: "POST",
         ...jsonBody({ content, is_doubtful: is_doubtful ?? false }),
       }),
+    toggleHardBone: (id: string) =>
+      request<{ ok: boolean; is_hard_bone: boolean }>(`/exercises/${id}/hard-bone`, { method: "POST" }),
+    generateBridge: (id: string) =>
+      request<Exercise[]>(`/exercises/${id}/bridge`, { method: "POST" }),
     remove: (id: string) => request<{ ok: boolean }>(`/exercises/${id}`, { method: "DELETE" }),
   },
   quizzes: {
