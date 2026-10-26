@@ -5,7 +5,7 @@ import type { AdhdMode } from "../../lib/types";
 
 export const ADHD_MODE_OPTIONS: { value: AdhdMode; label: string; desc: string }[] = [
   { value: "off", label: "关闭", desc: "原生 Markdown 排版风格" },
-  { value: "a", label: "A 模式（段落交替底色 + 圆角）", desc: "各段落使用 6 色循环柔和护眼底色与圆角卡片，防止阅读串行" },
+  { value: "a", label: "A 模式（段落交替底色 + 圆角）", desc: "各段落使用 12 色循环柔和护眼底色与圆角卡片，防止阅读串行" },
   { value: "b", label: "B 模式（鼠标移入聚焦高亮）", desc: "鼠标移至段落时流畅点亮聚焦底色，平滑缓动切换视线焦点" },
 ];
 
@@ -21,11 +21,13 @@ export function useAdhdMode() {
 
   const mutation = useMutation({
     mutationFn: async (mode: AdhdMode) => {
-      const currentPrefs = query.data?.preferences ?? {
-        chapter_length: 3000,
-        exercises_per_kp: 3,
-        highlight_colors: {},
-      };
+      // 偏好未加载完成时不发起更新：fallback 默认值会把 highlight_colors /
+      // 字号 / auto_highlight 等全部用户的自定义偏好整体覆盖丢失（后端按整对象替换）
+      const currentPrefs = query.data?.preferences;
+      if (!currentPrefs) {
+        // 仅本地生效（本会话状态由 adhdMode 读取端兜底），等设置加载后再切换即可持久化
+        return null;
+      }
       return api.settings.update({
         preferences: {
           ...currentPrefs,

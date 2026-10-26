@@ -2,7 +2,6 @@
 
 独立于课程体系；答案只在提交后由后端下发，抽轮列表永不含 answer/explanation。
 """
-import asyncio
 import json
 import logging
 
@@ -22,7 +21,6 @@ from app.schemas.bank import (
     BankPromptPolishIn,
     BankPromptPolishOut,
     BankQuestionOut,
-    BankRenameIn,
     BankRoundOut,
     BankRoundRequest,
     BankSkippedRow,
@@ -34,7 +32,6 @@ from app.services import bank as bank_service
 from app.services.bank import BankParseError
 from app.services.llm import create_adapter_from_settings
 from app.services.profile import (
-    extract_and_update_learner_profile,
     format_profile_for_prompt,
     trigger_profile_evolution,
 )

@@ -120,11 +120,13 @@ def _windows_job():
     limits.BasicLimitInformation.LimitFlags = (
         0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         | 0x100  # JOB_OBJECT_LIMIT_PROCESS_MEMORY
-        | 0x4  # JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+        | 0x8  # JOB_OBJECT_LIMIT_ACTIVE_PROCESS（0x4 是 JOB_TIME，且未设 Job 时间会 err=87 整体失败）
     )
     limits.ProcessMemoryLimit = MEMORY_LIMIT_BYTES
     limits.BasicLimitInformation.ActiveProcessLimit = 64
     if not k32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
+        err = ctypes.get_last_error() if hasattr(ctypes, "get_last_error") else k32.GetLastError()
+        logger.error(f"SetInformationJobObject 失败（err={err}）：沙箱内存/进程红线全部失效，仍以超时兜底继续")
         k32.CloseHandle(job)
         return None
     return job, k32
@@ -177,9 +179,17 @@ def _run_process(
                 if timed_out:
                     k32.TerminateJobObject(job_handle, 0)
                 k32.CloseHandle(job_handle)  # KILL_ON_JOB_CLOSE 兜底清孤儿
-        out_f.seek(0)
-        err_f.seek(0)
-        return _tail(out_f.read()), _tail(err_f.read()), proc.returncode, timed_out
+        return _tail_from_file(out_f), _tail_from_file(err_f), proc.returncode, timed_out
+
+
+def _tail_from_file(f, max_chars: int = MAX_OUTPUT_CHARS) -> str:
+    """从临时文件读末尾 max_chars 字节，避免死循环程序把整个输出文件读进内存。"""
+    f.seek(0, os.SEEK_END)
+    size = f.tell()
+    f.seek(max(0, size - max_chars * 4))  # UTF-8 最宽 4 字节
+    data = f.read()
+    text = data.decode("utf-8", errors="replace")
+    return text[-max_chars:]
 
 
 def _unique_file(workdir: str, suffix: str) -> str:

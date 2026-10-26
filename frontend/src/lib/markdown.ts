@@ -89,16 +89,14 @@ export function parseBlocks(markdown: string): ParsedBlock[] {
 
 /**
  * 将前端解析块与后端 SectionBlock 对齐，返回 Map(前端块下标 → section_id)。
- * 优先按类型+顺序对齐；错位时按行号范围重叠兜底。
+ * 优先按类型+顺序对齐；错位时按"标题文本精确匹配 + 保序贪心"兜底
+ * （order_index 是块序号不是行号，与 lineStart/lineEnd 比较是单位错配，旧兜底基本随机命中）。
  */
 export function alignSections(
   parsed: ParsedBlock[],
   serverBlocks: SectionBlock[]
 ): Map<number, string> {
   const map = new Map<number, string>();
-  const byLine = new Map<string, SectionBlock>();
-  for (const b of serverBlocks) byLine.set(`${b.order_index}`, b);
-
   if (parsed.length === serverBlocks.length) {
     let allMatch = true;
     for (let i = 0; i < parsed.length; i++) {
@@ -113,20 +111,38 @@ export function alignSections(
     }
   }
 
-  // 兜底：行号重叠匹配
-  const used = new Set<string>();
-  parsed.forEach((p, i) => {
-    const hit = serverBlocks.find(
-      (b) =>
-        !used.has(b.id) &&
-        b.block_type === p.type &&
-        b.order_index < p.lineEnd + 1 &&
-        b.order_index > p.lineStart - 1
-    );
-    if (hit) {
-      used.add(hit.id);
-      map.set(i, hit.id);
+  // 兜底：同类型块内做保序对齐（LCS 风格），标题块额外要求文本一致
+  const norm = (t?: string) => (t ?? "").replace(/\s+/g, "").trim();
+  // 求保序最长公共子序列（类型一致 + 标题文本一致的元素）；
+  // 标题块用 heading_path 末段比对（其即该标题自身文本）
+  const n = parsed.length;
+  const m = serverBlocks.length;
+  const match = (i: number, j: number) => {
+    if (parsed[i].type !== serverBlocks[j].block_type) return false;
+    if (parsed[i].type !== "heading") return true;
+    const hp = serverBlocks[j].heading_path ?? [];
+    return norm(parsed[i].headingText) === norm(hp[hp.length - 1]);
+  };
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = match(i, j)
+        ? dp[i + 1][j + 1] + 1
+        : Math.max(dp[i + 1][j], dp[i][j + 1]);
     }
-  });
+  }
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (match(i, j)) {
+      map.set(i, serverBlocks[j].id);
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
   return map;
 }

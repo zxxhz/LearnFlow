@@ -88,7 +88,14 @@ async def generate_quiz(
         if not item.is_complete():
             logger.warning("skip incomplete quiz item: kind=%s title=%s", item.kind, item.title)
             continue
-        kp = kps[(item.kp_index - 1) % len(kps)] if item.kp_index >= 1 else kps[saved % len(kps)]
+        # kp_index 越界时钳制到有效范围（取模会把题静默归到错误知识点，污染薄弱榜）
+        if item.kp_index >= 1:
+            kp_idx = min(item.kp_index, len(kps)) - 1
+            if item.kp_index > len(kps):
+                logger.warning("quiz item kp_index=%d 超出知识点数 %d，已钳制", item.kp_index, len(kps))
+        else:
+            kp_idx = saved % len(kps)
+        kp = kps[kp_idx]
         db.add(
             Exercise(
                 knowledge_point_id=kp.id,

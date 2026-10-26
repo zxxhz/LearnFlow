@@ -7,6 +7,7 @@ import renderMathInElement from "katex/contrib/auto-render";
 import { api } from "../../lib/api";
 import type { AdhdMode, Annotation, CodeExecution, ExecStatus } from "../../lib/types";
 import type { ParsedBlock } from "../../lib/markdown";
+import { highlightCode } from "../../lib/highlight";
 import { applyHighlights } from "./highlight";
 
 const DELIMITERS = [
@@ -283,6 +284,8 @@ export default function BlockView({
   }, [html, annKey, isCode, sectionId]);
 
   // 代码块：Shiki 高亮 + 划线 mark + 偏移区间，一次完成（编辑时随 displayCode 重跑）
+  const activeAnnIdRef = useRef(activeAnnId);
+  activeAnnIdRef.current = activeAnnId;
   useEffect(() => {
     const el = codeRef.current;
     if (!isCode || !el || !sectionId) return;
@@ -290,13 +293,9 @@ export default function BlockView({
     (async () => {
       let inner: string;
       try {
-        const { codeToHtml } = await import("shiki");
-        // 双主题输出（defaultColor 用浅色令牌，深色由 index.css 的 CSS 变量切换）
-        inner = await codeToHtml(displayCode + "\n", {
-          lang: lang || "text",
-          themes: { light: "github-light", dark: "github-dark" },
-          defaultColor: "light",
-        });
+        // 按需加载（shiki/core + 指定语言/主题）：`import("shiki")` 会拉全量
+        // 279 个语言分块约 12MB 进安装包；正文代码块语言有限，未注册语言回落纯文本
+        inner = await highlightCode(displayCode + "\n", lang);
       } catch {
         inner = `<pre><code>${escapeHtml(displayCode)}\n</code></pre>`;
       }
@@ -305,6 +304,10 @@ export default function BlockView({
       el.classList.toggle("ann-code-flag", annotations.some((a) => a.status === "active"));
       applyHighlights(el, annotations);
       markRangesRef.current = collectMarkRanges(el);
+      // 编辑代码重建 innerHTML 会抹掉活动标注高亮，重建完成后按最新 activeAnnId 补套
+      if (activeAnnIdRef.current) {
+        el.querySelector(`mark[data-ann-id="${activeAnnIdRef.current}"]`)?.classList.add("hl-active");
+      }
     })();
     return () => {
       cancelled = true;

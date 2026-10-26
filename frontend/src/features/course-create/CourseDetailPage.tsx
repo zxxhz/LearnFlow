@@ -105,14 +105,71 @@ export default function CourseDetailPage() {
     return <EmptyState icon="😕" title={error ? error.message : "课程不存在"} action={<Link to="/" className="text-sm text-brand-600 underline">返回首页</Link>} />;
   }
 
-  const docs = course.status === "generating" && liveDocs ? liveDocs : course.documents;
+  const docs = liveDocs ?? course.documents;
   const doneCount = docs.filter((d) => d.status === "done").length;
   const firstDone = docs.find((d) => d.status === "done");
 
   const retry = async (documentId: string) => {
     try {
       await api.documents.regenerate(documentId);
-      setLiveDocs((prev) => (prev ?? docs).map((d) => (d.document_id === documentId ? { ...d, status: "pending", error: null } : d)));
+      // 单章重生成不把课程状态翻回 generating，须自行订阅进度流：
+      // 否则章节永远停在"待生成"（后端其实早已生成完成）
+      setLiveDocs(
+        (prev) =>
+          prev ??
+          course.documents.map((d) => ({
+            document_id: d.document_id,
+            chapter_index: d.chapter_index,
+            title: d.title,
+            status: d.status as ChapterProgress["status"],
+            version: d.version,
+            error: null,
+            source: (d.source ?? "generated") as ChapterProgress["source"],
+          }))
+      );
+      setLiveDocs((prev) =>
+        (prev ?? []).map((d) => (d.document_id === documentId ? { ...d, status: "generating", error: null } : d))
+      );
+      abortRef.current?.abort();
+      const ac = new AbortController();
+      abortRef.current = ac;
+      subscribeSSE<ProgressSSEEvent>(
+        `/courses/${courseId}/progress`,
+        (ev) => {
+          if (ev.document_id && ev.document_id !== documentId) return;
+          if (ev.type === "chapter_start" || ev.type === "chapter_done" || ev.type === "chapter_failed") {
+            setLiveDocs((prev) =>
+              (prev ?? []).map((d) =>
+                d.document_id === documentId
+                  ? {
+                      ...d,
+                      status:
+                        ev.type === "chapter_start"
+                          ? "generating"
+                          : ev.type === "chapter_done"
+                            ? "done"
+                            : "failed",
+                      error: ev.type === "chapter_failed" ? ev.error ?? "生成失败" : null,
+                    }
+                  : d
+              )
+            );
+            if (ev.type === "chapter_done" || ev.type === "chapter_failed") {
+              ac.abort();
+              queryClient.invalidateQueries({ queryKey: ["course", courseId] });
+              queryClient.invalidateQueries({ queryKey: ["courses"] });
+            }
+          } else if (ev.type === "course_done") {
+            ac.abort();
+            setDoneBanner(true);
+            queryClient.invalidateQueries({ queryKey: ["course", courseId] });
+            queryClient.invalidateQueries({ queryKey: ["courses"] });
+          }
+        },
+        ac.signal
+      ).catch(() => {
+        /* 流中断静默；查询兜底刷新 */
+      });
     } catch (e) {
       alert((e as Error).message);
     }

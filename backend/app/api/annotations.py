@@ -89,7 +89,18 @@ async def update_annotation(
     if body.status is not None:
         ann.status = body.status
     if body.anchor is not None:
-        # 重新挂载（PRD §9.3）：原位更新五元组，保留对话与创建时间
+        # 重新挂载（PRD §9.3）：原位更新五元组，保留对话与创建时间。
+        # section 必须仍属于该文档（与创建接口同规则，防止标注挂到其他文档的章节）
+        sec = (
+            await db.scalars(
+                select(Section).where(
+                    Section.document_id == ann.document_id,
+                    Section.id == body.anchor.section_id,
+                )
+            )
+        ).first()
+        if sec is None:
+            raise HTTPException(status_code=400, detail="划线位置无效，请刷新页面后重试")
         ann.section_id = body.anchor.section_id
         ann.exact = body.anchor.exact
         ann.prefix = body.anchor.prefix

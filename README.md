@@ -89,7 +89,7 @@
 ### 方式一：下载安装包（推荐，开箱即用）
 从 [Releases](https://github.com/zxxhz/LearnFlow/releases) 下载 `LearnFlow_x.x.x_x64-setup.exe` 安装运行。
 - 安装包已内置 Python 运行环境与核心依赖，**电脑无需安装 Python 或 Node.js**；
-- 只有运行文档里的 C++ 代码块需要本机装有 `g++`（如 [MinGW-w64](https://www.mingw-w64.org/)）并加入环境变量 PATH。
+- 运行 C++ 代码块需要编译器：本机已有 g++/clang++ 会直接使用；没有也不用手动装，设置页「代码运行环境」可一键下载便携版 MinGW-w64（解压到软件目录，不修改系统环境变量与注册表）。
 
 ### 方式二：从源码运行
 依赖环境：Python 3.11+（使用 [uv](https://docs.astral.sh/uv/) 管理）与 Node.js 18+（构建前端）：
@@ -146,7 +146,7 @@ npx tauri build   # 构建 Windows NSIS 安装包（产物位于 src-tauri/targe
 - **核心文件**：
   - `app.db`：SQLite 数据库（采用 WAL 模式），包含所有课程结构、高亮标注、对话历史、闯关记录、题库题目与作答、思维导图树以及学习者画像；
   - `courses/`：课程正文与版本历史，采用纯 Markdown 文件保存，便于使用 Git 或外部工具检索；
-  - 设置页提供「打开数据目录」按钮，直接备份该目录即可完成完整数据迁移。
+  - 设置页「数据与安全」提供一键 zip 备份与恢复（备份含题库与配置，恢复前自动校验压缩包完整性），也可直接复制数据目录完成迁移。
 
 ## 路线图
 

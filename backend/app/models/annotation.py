@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, Timestamps, UUIDPk, UserIdMixin
@@ -24,3 +24,5 @@ class Annotation(UUIDPk, UserIdMixin, Timestamps, Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     # active / orphan
     status: Mapped[str] = mapped_column(String(20), default="active")
+    # 自动划重点生成的标注（重生成章节时按此标志清理，不再猜 note 前缀误删用户手写备注）
+    is_auto: Mapped[bool] = mapped_column(Boolean, default=False)

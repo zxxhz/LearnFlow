@@ -887,6 +887,10 @@ export default function MindMapCanvasPage() {
           closing={isClosingDetail}
           onClose={closeDetailDrawer}
           onNodeUpdate={updateTreeNode}
+          onAddChild={(nid) => {
+            setAddChildTargetId(nid);
+          }}
+          onDelete={(nid) => handleDeleteNode(nid)}
         />
       )}
 
@@ -898,7 +902,17 @@ export default function MindMapCanvasPage() {
           closing={isClosingAgent}
           onTreeUpdate={(newTree) => {
             // Agent 服务端已落库，这里仅同步本地树与详情缓存，不再重复 PUT
-            setTreeData(newTree);
+            setTreeData((prev) => {
+              // 选中节点已被 Agent 删除时同步清理选中态，防止详情抽屉静默消失
+              if (selectedNodeId) {
+                const stillThere = JSON.stringify(newTree).includes(`"${selectedNodeId}"`);
+                if (!stillThere) {
+                  setSelectedNodeId(null);
+                  setDetailDrawerOpen(false);
+                }
+              }
+              return newTree;
+            });
             setSaveStatus("saved");
             saveStatusRef.current = "saved";
             if (saveTimerRef.current) {

@@ -1,9 +1,9 @@
 {
   "identifier": "default",
-  "description": "LearnFlow 主窗口能力：本地壳启动页 + :8420 服务页面的通知与自动更新（远端页面须显式 remote 授权）",
+  "description": "LearnFlow 主窗口能力：本地壳启动页 + :8420 服务页面的通知与自动更新（远端页面须显式 remote 授权；钉定实际端口，不给任意本地端口上的无关服务授予 updater/process 能力）",
   "windows": ["main"],
   "permissions": ["core:default", "notification:default", "updater:default", "process:default"],
   "remote": {
-    "urls": ["http://127.0.0.1:*", "http://localhost:*"]
+    "urls": ["http://127.0.0.1:8420", "http://localhost:8420"]
   }
 }

@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../lib/api";
+import { api, downloadFile } from "../../lib/api";
 import type { MindMapSummary } from "../../lib/types";
 import { Button, EmptyState, Modal, Spinner, Textarea } from "../../components/ui";
 
@@ -268,6 +268,19 @@ export default function MindMapListPage() {
                       title="导出 Markdown"
                     >
                       📤
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        downloadFile(`/mindmaps/${m.id}/export.json`).catch(
+                          (err) => alert(`导出失败: ${(err as Error).message}`)
+                        );
+                      }}
+                      className="p-1 rounded text-xs text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition"
+                      title="导出 JSON"
+                    >
+                      🗂
                     </button>
                     <button
                       type="button"

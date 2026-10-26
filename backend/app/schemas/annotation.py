@@ -1,6 +1,12 @@
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, field_validator
 
 from app.schemas.common import ORMModel
+
+# 标注颜色与状态枚举（与前端四色/两种挂载态一一对应，防止任意字符串入库）
+AnnotationColor = Literal["yellow", "green", "blue", "pink"]
+AnnotationStatus = Literal["active", "orphan"]
 
 
 class AnchorIn(BaseModel):
@@ -11,15 +17,22 @@ class AnchorIn(BaseModel):
     start_offset: int = 0
     end_offset: int = 0
 
+    @field_validator("exact")
+    @classmethod
+    def _exact_non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("划线内容为空")
+        return v
+
 
 class AnnotationCreate(AnchorIn):
-    color: str = "yellow"
+    color: AnnotationColor = "yellow"
 
 
 class AnnotationUpdate(BaseModel):
-    color: str | None = None
+    color: AnnotationColor | None = None
     note: str | None = None
-    status: str | None = None
+    status: AnnotationStatus | None = None
     anchor: AnchorIn | None = None
 
 

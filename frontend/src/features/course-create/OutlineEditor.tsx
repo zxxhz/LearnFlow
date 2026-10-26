@@ -1,5 +1,6 @@
 // 大纲编辑器：章节增删/排序/编辑要点，保存后开始生成（PRD FR-1.2）
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import type { Course, OutlineItem } from "../../lib/types";
@@ -11,6 +12,7 @@ interface Props {
 
 export default function OutlineEditor({ course }: Props) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [items, setItems] = useState<OutlineItem[]>(() =>
     course.outline.map((o, i) => ({ ...o, index: i + 1 }))
   );
@@ -55,8 +57,10 @@ export default function OutlineEditor({ course }: Props) {
       }),
     onSuccess: (res) => {
       setRegenOpen(false);
+      setRegenInstruction("");
       queryClient.invalidateQueries({ queryKey: ["courses"] });
-      window.location.assign(`/courses/${res.course.id}`);
+      // 路由内跳转（整页 reload 会丢客户端缓存并闪白屏）
+      navigate(`/courses/${res.course.id}`);
     },
   });
 

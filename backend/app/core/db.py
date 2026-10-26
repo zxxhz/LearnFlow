@@ -63,6 +63,8 @@ async def init_db() -> None:
             # v0.4.22 题库自定义提示词与已生成 AI 解析保留
             "ALTER TABLE question_banks ADD COLUMN ai_prompt TEXT DEFAULT ''",
             "ALTER TABLE bank_questions ADD COLUMN ai_explanation TEXT DEFAULT ''",
+            # v0.4.47 自动划重点来源标志（清理逻辑依赖，不再按 note 前缀猜测）
+            "ALTER TABLE annotations ADD COLUMN is_auto INTEGER DEFAULT 0",
         ]
         for ddl in migrations:
             try:
@@ -75,49 +77,51 @@ async def init_db() -> None:
     # feynman_session_id 列受 FK 约束无法 DROP COLUMN，按 SQLite 流程重建表。
     # 新库没有这些表/列，全部幂等跳过。
     # 注意：PRAGMA 是连接级状态，该连接归还连接池前必须恢复 foreign_keys=ON，
-    # 否则池内这条连接在进程生命周期内永久失去外键约束。
+    # 否则池内这条连接在进程生命周期内永久失去外键约束（迁移中途抛错也不能漏）。
     async with engine.connect() as legacy:
         await legacy.exec_driver_sql("PRAGMA foreign_keys=OFF")
-        tables = {
-            r[0] for r in (
-                await legacy.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
-            )
-        }
-        has_session_col = False
-        if "conversations" in tables:
-            cols = [r[1] for r in (await legacy.execute(text("PRAGMA table_info(conversations)")))]
-            has_session_col = "feynman_session_id" in cols
+        try:
+            tables = {
+                r[0] for r in (
+                    await legacy.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+                )
+            }
+            has_session_col = False
+            if "conversations" in tables:
+                cols = [r[1] for r in (await legacy.execute(text("PRAGMA table_info(conversations)")))]
+                has_session_col = "feynman_session_id" in cols
+                if has_session_col:
+                    await legacy.execute(text(
+                        "DELETE FROM messages WHERE conversation_id IN "
+                        "(SELECT id FROM conversations WHERE kind = 'feynman')"
+                    ))
+                    await legacy.execute(text("DELETE FROM conversations WHERE kind = 'feynman'"))
+            for t in ("review_logs", "review_cards", "feynman_sessions"):
+                if t in tables:
+                    await legacy.execute(text(f"DROP TABLE {t}"))
             if has_session_col:
                 await legacy.execute(text(
-                    "DELETE FROM messages WHERE conversation_id IN "
-                    "(SELECT id FROM conversations WHERE kind = 'feynman')"
+                    "CREATE TABLE conversations_new ("
+                    "id VARCHAR(32) NOT NULL PRIMARY KEY, "
+                    "user_id VARCHAR(32), "
+                    "kind VARCHAR(20), "
+                    "annotation_id VARCHAR(32) REFERENCES annotations(id), "
+                    "created_at VARCHAR(40))"
                 ))
-                await legacy.execute(text("DELETE FROM conversations WHERE kind = 'feynman'"))
-        for t in ("review_logs", "review_cards", "feynman_sessions"):
-            if t in tables:
-                await legacy.execute(text(f"DROP TABLE {t}"))
-        if has_session_col:
-            await legacy.execute(text(
-                "CREATE TABLE conversations_new ("
-                "id VARCHAR(32) NOT NULL PRIMARY KEY, "
-                "user_id VARCHAR(32), "
-                "kind VARCHAR(20), "
-                "annotation_id VARCHAR(32) REFERENCES annotations(id), "
-                "created_at VARCHAR(40))"
-            ))
-            await legacy.execute(text(
-                "INSERT INTO conversations_new (id, user_id, kind, annotation_id, created_at) "
-                "SELECT id, user_id, kind, annotation_id, created_at FROM conversations"
-            ))
-            await legacy.execute(text("DROP TABLE conversations"))
-            await legacy.execute(text("ALTER TABLE conversations_new RENAME TO conversations"))
-            await legacy.execute(text(
-                "CREATE INDEX ix_conversations_user_id ON conversations (user_id)"
-            ))
-            await legacy.execute(text(
-                "CREATE INDEX ix_conversations_annotation_id ON conversations (annotation_id)"
-            ))
-        await legacy.commit()
-        # 归还连接池前恢复外键约束，避免污染池内连接
-        await legacy.exec_driver_sql("PRAGMA foreign_keys=ON")
+                await legacy.execute(text(
+                    "INSERT INTO conversations_new (id, user_id, kind, annotation_id, created_at) "
+                    "SELECT id, user_id, kind, annotation_id, created_at FROM conversations"
+                ))
+                await legacy.execute(text("DROP TABLE conversations"))
+                await legacy.execute(text("ALTER TABLE conversations_new RENAME TO conversations"))
+                await legacy.execute(text(
+                    "CREATE INDEX ix_conversations_user_id ON conversations (user_id)"
+                ))
+                await legacy.execute(text(
+                    "CREATE INDEX ix_conversations_annotation_id ON conversations (annotation_id)"
+                ))
+            await legacy.commit()
+        finally:
+            # 归还连接池前恢复外键约束（即使迁移中途抛错），避免污染池内连接
+            await legacy.exec_driver_sql("PRAGMA foreign_keys=ON")
     logger.info("数据库已就绪: %s", settings.db_path)

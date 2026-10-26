@@ -82,7 +82,10 @@ class UpdateProfileIn(BaseModel):
 @router.get("/profile", response_model=LearnerProfileOut)
 async def get_profile(db: AsyncSession = Depends(get_db)):
     """获取当前学习者画像及活跃认知盲区。"""
-    profile = await get_or_create_profile(db)
+    try:
+        profile = await get_or_create_profile(db)
+    except LookupError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
     misconceptions = await get_active_misconceptions(db, limit=20)
     return LearnerProfileOut(
         id=profile.id,
@@ -105,7 +108,10 @@ async def get_profile(db: AsyncSession = Depends(get_db)):
 @router.put("/profile", response_model=LearnerProfileOut)
 async def update_profile(body: UpdateProfileIn, db: AsyncSession = Depends(get_db)):
     """用户手动更新学习者画像（背景描述与苏格拉底教学模式开关）。"""
-    profile = await get_or_create_profile(db)
+    try:
+        profile = await get_or_create_profile(db)
+    except LookupError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
     if body.background_summary is not None:
         profile.background_summary = body.background_summary.strip()
     if body.socratic_mode is not None:
@@ -137,7 +143,10 @@ async def update_profile(body: UpdateProfileIn, db: AsyncSession = Depends(get_d
 @router.delete("/profile/reset", response_model=LearnerProfileOut)
 async def reset_profile(db: AsyncSession = Depends(get_db)):
     """重置学习者画像并清空所有认知盲区，冷启动重新学习。"""
-    profile = await get_or_create_profile(db)
+    try:
+        profile = await get_or_create_profile(db)
+    except LookupError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
     profile.background_summary = ""
     profile.socratic_mode = True
     profile.updated_at = utcnow_iso()
@@ -157,10 +166,16 @@ async def reset_profile(db: AsyncSession = Depends(get_db)):
 
 @router.delete("/profile/misconceptions/{misconception_id}")
 async def remove_misconception(misconception_id: str, db: AsyncSession = Depends(get_db)):
-    """移除已掌握/纠正的单个认知盲区。"""
+    """移除已掌握/纠正的单个认知盲区。
+
+    置 status=resolved 而非物理删除：物理删除后，后台画像演进会在下次交互中
+    把同 topic 的盲区原样"复活"，用户的移除操作被静默撤销。resolved 行
+    同时作为演进查重的排除依据（见 profile.py）。
+    """
     row = await db.get(LearnerMisconception, misconception_id)
     if not row:
         raise HTTPException(status_code=404, detail="认知盲区记录不存在")
-    await db.delete(row)
+    row.status = "resolved"
+    row.resolved_at = utcnow_iso()
     await db.commit()
     return {"ok": True}

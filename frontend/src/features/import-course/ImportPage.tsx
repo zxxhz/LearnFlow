@@ -19,15 +19,24 @@ export default function ImportPage() {
   const [title, setTitle] = useState("");
   const [chapters, setChapters] = useState<EditableChapter[]>([]);
   const [analyzeErr, setAnalyzeErr] = useState("");
+  // 请求序号：快速换选文件时丢弃过期分析响应，防止 A 文件的行号配上 B 文件内容
+  const analyzeReqRef = useRef(0);
 
   const analyze = useMutation({
-    mutationFn: (fs: File[]) => api.courses.importAnalyze(fs),
-    onSuccess: (res) => {
+    mutationFn: async ({ fs, reqId }: { fs: File[]; reqId: number }) => {
+      const res = await api.courses.importAnalyze(fs);
+      return { res, reqId };
+    },
+    onSuccess: ({ res, reqId }) => {
+      if (reqId !== analyzeReqRef.current) return; // 已换选其他文件，丢弃过期结果
       setAnalysis(res);
       setTitle(res.title);
       setChapters(res.chapters.map((c) => ({ ...c, include: true })));
     },
-    onError: (e) => setAnalyzeErr(e.message),
+    onError: (e, { reqId }) => {
+      if (reqId !== analyzeReqRef.current) return; // 旧文件的失败不覆盖新文件状态
+      setAnalyzeErr(e.message);
+    },
   });
 
   const confirm = useMutation({
@@ -54,11 +63,14 @@ export default function ImportPage() {
   const pick = (list: FileList | null) => {
     if (!list || list.length === 0) return;
     const fs = Array.from(list).sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+    // 请求序号前移使进行中的旧分析作废；清空 input.value 让"重选同一个文件"也能触发 change
+    const reqId = ++analyzeReqRef.current;
+    if (fileRef.current) fileRef.current.value = "";
     setFiles(fs);
     setAnalysis(null);
     setChapters([]);
     setAnalyzeErr("");
-    analyze.mutate(fs);
+    analyze.mutate({ fs, reqId });
   };
 
   const updateChapter = (i: number, patch: Partial<EditableChapter>) =>

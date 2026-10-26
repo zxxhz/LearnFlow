@@ -147,6 +147,28 @@ async def delete_mindmap(mindmap_id: str, db: AsyncSession = Depends(get_db)):
     return {"ok": True}
 
 
+@router.get("/{mindmap_id}/export.json")
+async def export_mindmap_json(mindmap_id: str, db: AsyncSession = Depends(get_db)):
+    """导出思维导图为 JSON 结构（与导入格式一致，README 承诺的双向 JSON）。"""
+    mm = await mindmap_service.get_mindmap(db, mindmap_id)
+    if not mm:
+        raise HTTPException(status_code=404, detail="思维导图不存在")
+    import json as _json
+
+    from fastapi.responses import Response
+
+    payload = _json.dumps({"title": mm.title, "topic": mm.topic, "root": mm.root}, ensure_ascii=False, indent=2)
+    from urllib.parse import quote
+
+    return Response(
+        content=payload,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(mm.title)} mindmap.json",
+        },
+    )
+
+
 @router.get("/{mindmap_id}/export")
 async def export_mindmap_markdown(mindmap_id: str, db: AsyncSession = Depends(get_db)):
     """导出思维导图为格式化 Markdown 大纲文本。"""

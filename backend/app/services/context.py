@@ -61,7 +61,11 @@ async def build_annotation_messages(
             .where(Message.conversation_id == conversation.id)
             .order_by(Message.created_at)
         )
-    ).all()
+        .limit(200)
+        .all()
+    )
+    # 超长对话只带最近 30 条（15 轮），防止历史无上限撑爆模型上下文
+    trimmed = history[-30:]
     messages = [{"role": "system", "content": system}]
-    messages += [{"role": m.role, "content": m.content} for m in history]
+    messages += [{"role": m.role, "content": m.content} for m in trimmed]
     return messages

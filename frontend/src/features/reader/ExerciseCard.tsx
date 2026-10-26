@@ -342,7 +342,9 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
             {isFill ? answerReveal() : isMath ? (exercise.expected_output || exercise.answer || exercise.reference_answer) : exercise.reference_answer}
           </pre>
         )}
-        {isCode && attempt.passed === true && (
+        {/* 与后端脱敏口径一致：reference_code 只要 ever_passed（任一次通过）就下发，
+            通关后改代码重跑失败不应把按钮藏回去 */}
+        {isCode && exercise.ever_passed && (
           <>
             <button className="text-[0.85em] text-gray-400 dark:text-gray-500 underline hover:text-gray-600 dark:hover:text-gray-300" onClick={() => setShowRef((v) => !v)}>
               {showRef ? "收起参考实现" : "查看参考实现"}

@@ -3,6 +3,7 @@
 代码关在同一知识点内按 order_index 成链，前一关通过后才解锁下一关；
 提交后由执行沙箱运行，stdout 与目标输出精确对比判定；做错的题进错题本。
 """
+import asyncio
 import json
 import logging
 
@@ -264,10 +265,13 @@ async def _attach_meta(db: AsyncSession, exercises: list[Exercise]) -> list[Exer
             ExerciseAttemptOut.model_validate(latest[e.id]) if e.id in latest else None
         )
         # 防作弊脱敏：尚未作答过时不明文下发答案；代码关参考实现仅在通关后下发。
-        # expected_output（代码关目标输出）必须保留——闯关界面常显目标。
+        # expected_output（代码关目标输出）必须保留——闯关界面常显目标；
+        # 但 math 题的参考式也存在 expected_output 里，未作答时同样脱敏。
         if o.latest_attempt is None:
             o.answer = ""
             o.reference_answer = ""
+            if o.kind == EXERCISE_MATH:
+                o.expected_output = ""
         if o.kind == EXERCISE_CODE and not o.ever_passed:
             o.reference_code = ""
         out.append(o)
@@ -358,7 +362,14 @@ async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAt
         )
     elif exercise.kind == EXERCISE_MATH:
         ref = exercise.expected_output or exercise.answer or exercise.reference_answer
-        passed = check_math_equality(content, ref)
+        # SymPy 化简在用户输入上无界（9**9**9**9 会冻住整个事件循环）：
+        # 移出事件循环并限时
+        try:
+            passed = await asyncio.wait_for(
+                asyncio.to_thread(check_math_equality, content, ref), timeout=8.0
+            )
+        except asyncio.TimeoutError:
+            passed = False
         attempt = ExerciseAttempt(
             exercise_id=exercise.id,
             content=content,

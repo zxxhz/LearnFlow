@@ -1,6 +1,6 @@
 // SSE 客户端：POST（发消息/触发动作）与 GET（订阅进度）两种
 import { fetchEventSource } from "@microsoft/fetch-event-source";
-import { getAccessToken } from "./api";
+import { getAccessToken, notifyAuthExpired } from "./api";
 
 function parseEvent<T>(data: string, onEvent: (payload: T) => void) {
   if (!data) return;
@@ -42,6 +42,7 @@ export async function streamSSE<T = unknown>(
     } catch {
       /* ignore */
     }
+    if (res.status === 401) notifyAuthExpired();
     throw new Error(detail);
   }
 

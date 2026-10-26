@@ -8,7 +8,7 @@
   沙箱使用（沙箱以 -I 隔离模式运行用户代码，不带第三方依赖）
 
 步骤：
-1. 前端构建产物（app/static/index.html）缺失时先构建前端
+1. 前端构建产物（app/static/）缺失或过期（frontend/src 有更新）时先构建前端
 2. 从 .venv/pyvenv.cfg 找到 uv 管理的基础解释器，精简复制到 build/python-runtime
 3. PyInstaller 按 learnflow_backend.spec 打包
 """
@@ -18,7 +18,9 @@ import sys
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
-STATIC_INDEX = BACKEND_ROOT / "app" / "static" / "index.html"
+FRONTEND_ROOT = BACKEND_ROOT.parent / "frontend"
+STATIC_DIR = BACKEND_ROOT / "app" / "static"
+STATIC_INDEX = STATIC_DIR / "index.html"
 RUNTIME_STAGE = BACKEND_ROOT / "build" / "python-runtime"
 
 # 沙箱运行时不带的目录/文件：体积大头且与 -I 隔离运行无关
@@ -30,12 +32,29 @@ PRUNE = shutil.ignore_patterns(
 )
 
 
+def _frontend_stale() -> bool:
+    """前端源码比静态产物新则视为过期：只看存在性会把旧 UI 静默打进安装包。"""
+    if not STATIC_INDEX.exists():
+        return True
+    index_mtime = STATIC_INDEX.stat().st_mtime
+    src_dir = FRONTEND_ROOT / "src"
+    public_dir = FRONTEND_ROOT / "public"
+    for root in (src_dir, public_dir):
+        if not root.exists():
+            continue
+        for f in root.rglob("*"):
+            if f.is_file() and f.stat().st_mtime > index_mtime:
+                print(f">>> 前端源码较新：{f.relative_to(FRONTEND_ROOT)}")
+                return True
+    return False
+
+
 def build_frontend() -> None:
-    print(">>> 前端产物缺失，先构建前端（npm run build → backend/app/static）…")
+    print(">>> 前端产物缺失或过期，先构建前端（npm run build → backend/app/static）…")
     npm = shutil.which("npm")
     if not npm:
         sys.exit("未找到 npm：请先安装 Node 18+，或手动执行 cd frontend && npm install && npm run build")
-    subprocess.run([npm, "run", "build"], cwd=BACKEND_ROOT.parent / "frontend", check=True)
+    subprocess.run([npm, "run", "build"], cwd=FRONTEND_ROOT, check=True)
     if not STATIC_INDEX.exists():
         sys.exit("前端构建后仍缺少 app/static/index.html")
 
@@ -76,7 +95,7 @@ def prune_matplotlib_sample_images(dist_backend_dir: Path) -> None:
 
 
 def main() -> None:
-    if not STATIC_INDEX.exists():
+    if _frontend_stale():
         build_frontend()
     stage_python_runtime()
     subprocess.run(

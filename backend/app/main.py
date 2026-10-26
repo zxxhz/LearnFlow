@@ -296,7 +296,18 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(LLMError)
     async def llm_error_handler(_: Request, exc: LLMError):
-        return JSONResponse(status_code=400, content={"detail": exc.message})
+        # 上游故障映射到合适的状态码：连接问题 502、限流 429，其余（配置/参数类）400
+        from app.services.llm.errors import (
+            LLMConnectionError,
+            LLMRateLimitError,
+        )
+
+        status = 400
+        if isinstance(exc, LLMConnectionError):
+            status = 502
+        elif isinstance(exc, LLMRateLimitError):
+            status = 429
+        return JSONResponse(status_code=status, content={"detail": exc.message})
 
     @app.exception_handler(RequestValidationError)
     async def validation_handler(_: Request, exc: RequestValidationError):

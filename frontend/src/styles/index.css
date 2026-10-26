@@ -344,3 +344,13 @@ mark.hl-active { outline: 2px solid #6366f1; outline-offset: 1px; }
   box-shadow: 0 4px 14px -2px rgba(0, 0, 0, 0.35);
   transform: translateX(3px);
 }
+
+/* 触屏设备无真实 hover：关闭 ADHD 模式 B 的粘滞悬停效果，
+   避免点按后段落横向位移 3px 干扰划线选择 */
+@media (hover: none) {
+  .adhd-mode-b:hover {
+    background-color: transparent !important;
+    transform: none !important;
+    box-shadow: none !important;
+  }
+}

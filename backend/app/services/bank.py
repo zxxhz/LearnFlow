@@ -21,6 +21,8 @@ from app.models.bank import (
     BankQuestion,
     QuestionBank,
 )
+from app.services.llm import create_adapter_from_settings
+from app.services.prompt import load_prompt, render_prompt
 
 BANK_EXTENSIONS = (".xls", ".xlsx")
 MAX_BANK_BYTES = 20 * 1024 * 1024
@@ -302,10 +304,34 @@ async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
         wrong_count += q_wrong
         by_type[r.qtype] = {"total": qtotal, "wrong": q_wrong}
 
+    # new_count 与 draw_round(mode="new") 同口径：指纹去重后从未作答的题数。
+    # 否则含重复题的库会出现"看板显示有新题、点击却提示已刷完"的口径分叉
+    new_count = question_count
+    if question_count and answered:
+        # 已作答题 id（来自最近一次作答子查询）
+        ans_ids = set(
+            (await db.execute(select(latest.c.qid).where(latest.c.qid.isnot(None)))).scalars()
+        )
+        # 只查指纹所需的轻量列（不拉解析/AI 解析长文本）
+        rows2 = (
+            await db.execute(
+                select(
+                    BankQuestion.id,
+                    BankQuestion.qtype,
+                    BankQuestion.title,
+                    BankQuestion.options,
+                    BankQuestion.answer,
+                ).where(BankQuestion.bank_id == bank.id)
+            )
+        ).all()
+        fp_by_id = {r.id: _question_dedup_key(r) for r in rows2}
+        answered_fp = {fp_by_id[q] for q in ans_ids if q in fp_by_id}
+        new_count = sum(1 for key in fp_by_id.values() if key not in answered_fp)
+
     return {
         "question_count": question_count,
         "answered": answered,
-        "new_count": question_count - answered,
+        "new_count": new_count,
         "attempts": total_attempts,
         "correct": correct_latest,
         "accuracy": round(correct_attempts / total_attempts * 100, 1) if total_attempts else 0,
@@ -315,7 +341,10 @@ async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
 
 
 def _question_dedup_key(q: BankQuestion) -> tuple:
-    """提取题目内容归一化指纹，用于识别完全相同的题目。"""
+    """提取题目内容归一化指纹，用于识别完全相同的题目。
+
+    含 answer：题干/选项相同但正确答案不同的变体是不同题目（做新题模式不能跳过）。
+    """
     norm_title = " ".join((q.title or "").split())
     norm_opts = ()
     if q.qtype != QUESTION_JUDGE and q.options:
@@ -325,7 +354,7 @@ def _question_dedup_key(q: BankQuestion) -> tuple:
                 norm_opts = tuple(" ".join(str(o).split()) for o in raw_opts if str(o).strip())
         except Exception:
             norm_opts = (" ".join(q.options.split()),)
-    return (q.qtype, norm_title, norm_opts)
+    return (q.qtype, norm_title, norm_opts, " ".join((q.answer or "").split()))
 
 
 def _dedup_question_list(questions: list[BankQuestion]) -> list[BankQuestion]:
@@ -404,18 +433,7 @@ async def delete_bank(db: AsyncSession, bank: QuestionBank) -> None:
     shutil.rmtree(settings.data_dir / "banks" / bank.id, ignore_errors=True)
 
 
-DEFAULT_BANK_AI_PROMPT = """你是一位资深、启发式且富有耐心的金牌名师。学生在刷题练习中做错了这道题，请针对该题提供循序渐进、透彻清晰的错题解析与答疑辅导。
-
-请按以下结构进行输出：
-1. 【核心考点】：简明扼要指出本题考查的核心知识点与概念定义。
-2. 【错因诊断】：深入分析学生选择错误选项的思维误区与常见思维陷阱。
-3. 【详解推导】：一步步严密推导正确答案的得出过程，逻辑清晰通俗易懂。
-4. 【举一反三】：总结解题口诀或同类题目的秒杀与避坑技巧。
-
-要求：
-- 语言生动亲切，富有鼓励性；
-- 数学/物理/化学公式使用规范的 LaTeX 语法（行内 $...$，行间 $$...$$）；
-- 使用清晰的 Markdown 结构与分级标题。"""
+DEFAULT_BANK_AI_PROMPT = load_prompt("bank_default_ai")
 
 
 def build_explain_messages(
@@ -452,18 +470,15 @@ def build_explain_messages(
     else:
         student_display = "、".join(sorted(x.upper() for x in picked_letters)) or "（未选）"
 
-    user_content = f"""【题目信息】
-- 题型：{type_display}
-- 题干：{question.title}
-- 选项列表：
-{opts_formatted}
-- 正确答案：{correct_display}
-- 原题参考解析：{question.explanation or "（暂无原题解析）"}
-
-【学生作答情况】
-- 学生选了：{student_display}（回答错误）
-
-请根据系统设定的指导原则与角色，针对本题及学生的做错情况进行详细解析和思维辅导。"""
+    user_content = render_prompt(
+        "bank_explain",
+        TYPE=type_display,
+        TITLE=question.title,
+        OPTIONS=opts_formatted,
+        CORRECT=correct_display,
+        EXPLANATION=question.explanation or "（暂无原题解析）",
+        PICKED=student_display,
+    )
 
     return [
         {"role": "system", "content": sys_prompt},
@@ -471,25 +486,12 @@ def build_explain_messages(
     ]
 
 
-POLISH_SYSTEM_PROMPT = """你是一位顶尖的 AI 提示词工程专家（Prompt Engineer）和资深教学督导。
-你的任务是将用户提供的「题库 AI 错题解答提示词」进行深度润色与结构化优化。
-
-优化目标：
-1. 明确名师角色定位与答疑教学风格（耐心、启发式、通俗严谨）；
-2. 规范输出模块结构（如：核心考点、错因诊断、详解推导、避坑与举一反三技巧等）；
-3. 规范数学/科学公式（必须要求 LaTeX 格式 $...$ 与 $$...$$）和清晰的 Markdown 排版；
-4. 保持语言精炼、直指核心，指令清晰明确，便于大语言模型严格遵循。
-
-注意：
-- 只输出润色优化后的 Prompt 正文内容；
-- 严禁包含任何前缀、附带说明或外层引号（例如不要输出“以下是润色后的内容：”）。"""
+POLISH_SYSTEM_PROMPT = load_prompt("bank_polish")
 
 
 async def polish_prompt_with_llm(
     db: AsyncSession, prompt: str, bank_name: str = ""
 ) -> str:
-    from app.services.llm import create_adapter_from_settings
-
     source_prompt = prompt.strip() or DEFAULT_BANK_AI_PROMPT
     user_msg = f"题库名称：{bank_name or '综合题库'}\n\n待润色的原提示词：\n{source_prompt}"
     adapter = await create_adapter_from_settings(db, scene="generation")

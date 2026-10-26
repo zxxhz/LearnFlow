@@ -10,7 +10,6 @@ from app.services.llm.errors import LLMParseError
 
 T = TypeVar("T", bound=BaseModel)
 
-JsonShape = list[dict] | None
 
 
 class LLMAdapter(ABC):

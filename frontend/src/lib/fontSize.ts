@@ -68,7 +68,7 @@ export function useFontSize(target: FontSizeTarget) {
   const mutation = useMutation({
     mutationFn: async (newSize: number) => {
       // 设置未加载完成时跳过服务端持久化，避免用 fallback 默认值覆盖 auto_highlight 等其他偏好
-      const currentPrefs = query.data?.preferences;
+      const currentPrefs = prefsRef.current;
       if (!currentPrefs) return null;
       return api.settings.update({
         preferences: {
@@ -82,17 +82,35 @@ export function useFontSize(target: FontSizeTarget) {
     },
   });
 
+  // 偏好可用性放 ref：卸载冲刷用的 [] 依赖 effect 闭包不能引用首次渲染的 query（恒为 undefined）
+  const prefsRef = useRef(query.data?.preferences ?? null);
+  prefsRef.current = query.data?.preferences ?? null;
+
   // 连续点击 A+/A- 时防抖合并服务端请求（本地 localStorage 即时生效）
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSizeRef = useRef<number | null>(null);
   useEffect(() => {
     return () => {
-      if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
+      // 卸载时冲刷待写值：只清定时器会把最后一次字号调整静默丢掉（服务端偏好停在旧值）
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+      if (pendingSizeRef.current != null && prefsRef.current != null) {
+        mutation.mutate(pendingSizeRef.current);
+        pendingSizeRef.current = null;
+      }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const persistDebounced = useCallback(
     (newSize: number) => {
+      pendingSizeRef.current = newSize;
       if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
-      persistTimerRef.current = setTimeout(() => mutation.mutate(newSize), 600);
+      persistTimerRef.current = setTimeout(() => {
+        pendingSizeRef.current = null;
+        mutation.mutate(newSize);
+      }, 600);
     },
     [mutation]
   );

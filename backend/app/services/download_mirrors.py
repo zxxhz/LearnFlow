@@ -79,16 +79,33 @@ def load_mirror_selection() -> dict[str, str]:
     return {"mode": "auto", "selected_id": "auto"}
 
 
-def save_mirror_selection(mode: str, selected_id: str) -> None:
-    """持久化保存用户锁定的下载源策略配置。"""
+def _atomic_write_json(path: Path, data: Any) -> None:
+    """临时文件 + os.replace 原子落盘：进程崩溃/断电不会留下截断的 JSON。"""
+    import os
+    import tempfile
+
     try:
         app_settings.data_dir.mkdir(parents=True, exist_ok=True)
-        _selection_path().write_text(
-            json.dumps({"mode": mode, "selected_id": selected_id}, ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        fd, tmp = tempfile.mkstemp(
+            dir=str(app_settings.data_dir), prefix=path.name + ".", suffix=".tmp"
         )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(data, ensure_ascii=False, indent=2))
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
     except OSError as e:
-        logger.warning("保存下载源锁定配置失败: %s", e)
+        logger.warning("原子写入 %s 失败: %s", path.name, e)
+
+
+def save_mirror_selection(mode: str, selected_id: str) -> None:
+    """持久化保存用户锁定的下载源策略配置。"""
+    _atomic_write_json(_selection_path(), {"mode": mode, "selected_id": selected_id})
 
 
 _init_sel = load_mirror_selection()
@@ -122,13 +139,7 @@ def load_custom_mirrors() -> list[dict[str, Any]]:
 
 def save_custom_mirrors(mirrors: list[dict[str, Any]]) -> None:
     """持久化保存用户自定义镜像源列表。"""
-    try:
-        app_settings.data_dir.mkdir(parents=True, exist_ok=True)
-        _custom_mirrors_path().write_text(
-            json.dumps(mirrors, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-    except OSError as e:
-        logger.warning("保存自定义镜像配置失败: %s", e)
+    _atomic_write_json(_custom_mirrors_path(), mirrors)
 
 
 def get_all_mirrors() -> list[dict[str, Any]]:
@@ -385,6 +396,10 @@ def set_mirror_selection(mode: str, selected_id: str) -> dict[str, Any]:
         # 若未指定具体镜像 ID 或误传了 auto，则以当前最快源或官方源作为初始锁定项
         if not selected_id or selected_id == "auto":
             selected_id = _cache.get("fastest_id") or "official"
+        # 锁定的源必须真实存在（官方/内置/自定义），拒绝把悬空 ID 落盘
+        valid_ids = {m["id"] for m in get_all_mirrors()}
+        if selected_id not in valid_ids:
+            raise ValueError(f"镜像源不存在：{selected_id}")
         _cache["selected_id"] = selected_id
     else:
         _cache["selected_id"] = "auto"

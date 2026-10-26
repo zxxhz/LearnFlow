@@ -229,8 +229,33 @@ fn main() {
                     }
                 }
                 if !spawned {
-                    // 已有外部后端在跑，清空占位避免误杀
-                    *handle.state::<Backend>().0.lock().unwrap() = None;
+                    // 已有外部后端在跑：不持有其句柄（避免退出时误杀别人的进程），
+                    // 但仍需 watchdog——更新重启竞态中旧壳会 taskkill 掉这个后端，
+                    // 新壳若不接管重拉，WebView 将指向死端口
+                    std::thread::spawn(move || loop {
+                        std::thread::sleep(Duration::from_secs(3));
+                        if backend_ready(port) {
+                            continue;
+                        }
+                        eprintln!("[learnflow] 外部后端已失联，尝试重新拉起…");
+                        let child = spawn_backend(&handle, port);
+                        *handle.state::<Backend>().0.lock().unwrap() = child;
+                        // 等待自拉后端就绪；进程闪退则回到循环重试
+                        for _ in 0..20 {
+                            std::thread::sleep(Duration::from_millis(600));
+                            if backend_ready(port) {
+                                break;
+                            }
+                        }
+                        if backend_ready(port) {
+                            eprintln!("[learnflow] 后端已恢复");
+                            if let Some(win) = handle.get_webview_window("main") {
+                                let _ = win.eval(&format!(
+                                    "if(!location.href.startsWith('http://127.0.0.1:{port}'))location.replace('http://127.0.0.1:{port}/');"
+                                ));
+                            }
+                        }
+                    });
                 }
             });
             Ok(())
@@ -249,13 +274,15 @@ fn main() {
                 if let Some(mut child) = app.state::<Backend>().0.lock().unwrap().take() {
                     // Windows 下 kill() 只杀直接子进程：后端自身的孙进程（编译器/沙箱代码等）
                     // 会成为孤儿继续锁住安装目录。taskkill /T 级联终止整棵进程树。
+                    // 用 spawn 而非 output()：不阻塞退出路径（AV 拦截 taskkill 时不让关机卡死），
+                    // 子进程独立存活不受本进程退出影响。
                     #[cfg(windows)]
                     {
                         use std::os::windows::process::CommandExt;
                         let _ = Command::new("taskkill")
                             .args(["/F", "/T", "/PID", &child.id().to_string()])
                             .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-                            .output();
+                            .spawn();
                     }
                     #[cfg(not(windows))]
                     {

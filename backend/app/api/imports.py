@@ -4,6 +4,7 @@ POST /api/courses/import/analyze  上传 md → 章节切分预览（+LLM 修饰
 POST /api/courses/import          按确认的切片创建课程（原文归档 + 知识点提取 + 自动出卡）
 """
 import json
+import shutil
 import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -52,6 +53,22 @@ class ImportChapterSpec(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("章节标题为空")
+        return v
+
+    @field_validator("file_index", "start_line", "end_line")
+    @classmethod
+    def _bounds(cls, v: int, info) -> int:
+        # Python 切片对负数会静默取到文件尾部（负索引=倒数），必须显式拒绝
+        if v < 0:
+            raise ValueError(f"{info.field_name} 不能为负数")
+        return v
+
+    @field_validator("end_line")
+    @classmethod
+    def _order(cls, v: int, info) -> int:
+        start = info.data.get("start_line")
+        if start is not None and v <= start:
+            raise ValueError("end_line 必须大于 start_line")
         return v
 
 
@@ -195,72 +212,85 @@ async def import_confirm(
 
     outline_items: list[OutlineItem] = []
     kp_extracted = 0
-    for j, ch in enumerate(spec_obj.chapters):
-        if ch.file_index < 0 or ch.file_index >= len(texts):
-            raise HTTPException(status_code=400, detail="章节引用的文件不存在")
-        content = slice_text(texts[ch.file_index], ch.start_line, ch.end_line)
-        if not content.strip():
-            raise HTTPException(status_code=400, detail=f"章节「{ch.title}」内容为空")
+    try:
+        for j, ch in enumerate(spec_obj.chapters):
+            if ch.file_index < 0 or ch.file_index >= len(texts):
+                raise HTTPException(status_code=400, detail="章节引用的文件不存在")
+            content = slice_text(texts[ch.file_index], ch.start_line, ch.end_line)
+            if not content.strip():
+                raise HTTPException(status_code=400, detail=f"章节「{ch.title}」内容为空")
 
-        doc = Document(
-            course_id=course.id,
-            chapter_index=j + 1,
-            title=ch.title,
-            version=1,
-            status="done",
-            source="imported",
-        )
-        db.add(doc)
-        await db.flush()
+            doc = Document(
+                course_id=course.id,
+                chapter_index=j + 1,
+                title=ch.title,
+                version=1,
+                status="done",
+                source="imported",
+            )
+            db.add(doc)
+            await db.flush()
 
-        doc_dir = settings.courses_dir / course.id / doc.id
-        doc_dir.mkdir(parents=True, exist_ok=True)
-        current = doc_dir / "current.md"
-        current.write_text(content, encoding="utf-8")
-        doc.file_path = current.relative_to(settings.data_dir).as_posix()
+            doc_dir = settings.courses_dir / course.id / doc.id
+            doc_dir.mkdir(parents=True, exist_ok=True)
+            current = doc_dir / "current.md"
+            current.write_text(content, encoding="utf-8")
+            doc.file_path = current.relative_to(settings.data_dir).as_posix()
 
-        await rebuild_sections(db, doc, content, 1)
+            await rebuild_sections(db, doc, content, 1)
 
-        # 大纲要点：章内的二级标题
-        blocks = parse_blocks(content)
-        points = [
-            b.text
-            for b in blocks
-            if b.block_type == "heading"
-            and (len(b.raw) - len(b.raw.lstrip("#"))) == 2
-        ][:8]
-        outline_items.append(OutlineItem(index=j + 1, title=ch.title, points=points))
+            # 大纲要点：章内"下一级"标题（analyze 预览按切分层下一级取要点，此处保持同口径；
+            # H1 切分取 H2，H2 切分（无 H1 的笔记）取 H3——硬编码 level==2 会漏掉后者）
+            blocks = parse_blocks(content)
+            heading_levels = [
+                len(b.raw) - len(b.raw.lstrip("#"))
+                for b in blocks
+                if b.block_type == "heading"
+            ]
+            chapter_level = heading_levels[0] if heading_levels else 1
+            points = [
+                b.text
+                for b in blocks
+                if b.block_type == "heading"
+                and (len(b.raw) - len(b.raw.lstrip("#"))) == chapter_level + 1
+            ][:8]
+            outline_items.append(OutlineItem(index=j + 1, title=ch.title, points=points))
 
-        # 知识点提取 + 自动出卡（LLM 不可用时静默跳过）
-        if adapter is not None:
-            meta = await _extract_kp(adapter, content)
-            if meta:
-                doc.summary = meta.summary
-                kp_extracted += len(meta.knowledge_points)
-                rows = (
-                    await db.scalars(
-                        select(Section).where(Section.document_id == doc.id)
-                    )
-                ).all()
-                section_by_heading: dict[str, str] = {}
-                for row in rows:
-                    hp = json.loads(row.heading_path)
-                    if hp:
-                        section_by_heading.setdefault(hp[-1], row.id)
-                for item in meta.knowledge_points:
-                    sec_ids = (
-                        [section_by_heading[item.heading]]
-                        if item.heading and item.heading in section_by_heading
-                        else []
-                    )
-                    kp = KnowledgePoint(
-                        document_id=doc.id,
-                        title=item.title,
-                        summary=item.summary,
-                        section_ids=json.dumps(sec_ids, ensure_ascii=False),
-                    )
-                    db.add(kp)
-                    await db.flush()
+            # 知识点提取 + 自动出卡（LLM 不可用时静默跳过）
+            if adapter is not None:
+                meta = await _extract_kp(adapter, content)
+                if meta:
+                    doc.summary = meta.summary
+                    kp_extracted += len(meta.knowledge_points)
+                    rows = (
+                        await db.scalars(
+                            select(Section).where(Section.document_id == doc.id)
+                        )
+                    ).all()
+                    section_by_heading: dict[str, str] = {}
+                    for row in rows:
+                        hp = json.loads(row.heading_path)
+                        if hp:
+                            section_by_heading.setdefault(hp[-1], row.id)
+                    for item in meta.knowledge_points:
+                        sec_ids = (
+                            [section_by_heading[item.heading]]
+                            if item.heading and item.heading in section_by_heading
+                            else []
+                        )
+                        kp = KnowledgePoint(
+                            document_id=doc.id,
+                            title=item.title,
+                            summary=item.summary,
+                            section_ids=json.dumps(sec_ids, ensure_ascii=False),
+                        )
+                        db.add(kp)
+                        await db.flush()
+    except Exception:
+        # 中途失败：DB 回滚，但已写入的 courses/{cid}/ 目录会变成无主孤儿——一并清掉
+        await db.rollback()
+        shutil.rmtree(settings.courses_dir / course.id, ignore_errors=True)
+        raise
 
     course.outline = json.dumps([o.model_dump() for o in outline_items], ensure_ascii=False)
     course.updated_at = utcnow_iso()

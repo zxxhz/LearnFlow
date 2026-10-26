@@ -105,7 +105,8 @@ async def update_settings(body: SettingsUpdate, db: AsyncSession = Depends(get_d
 async def test_llm(db: AsyncSession = Depends(get_db)):
     t0 = time.perf_counter()
     try:
-        adapter = await create_adapter_from_settings(db)
+        # 测试连接用 15s 短超时：不可达的 base_url 不该把"测试"按钮卡住几分钟
+        adapter = await create_adapter_from_settings(db, request_timeout=15.0)
         reply = await adapter.chat(
             [{"role": "user", "content": "请只回复两个字母：OK"}]
         )
@@ -198,7 +199,10 @@ async def select_mirror(body: MirrorSelectBody):
     """设置下载源选择模式与指定源（auto 自动最快或 manual 手动指定）。"""
     from app.services.download_mirrors import set_mirror_selection
 
-    return set_mirror_selection(body.mode, body.selected_id)
+    try:
+        return set_mirror_selection(body.mode, body.selected_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/settings/mirrors/custom")
@@ -236,29 +240,41 @@ async def delete_custom_mirror(mirror_id: str):
 
 @router.get("/update/fast-latest.json")
 async def fast_latest_json():
-    """返回动态注入了最快下载源直链的 latest.json，供 Tauri Updater 极速下载。"""
+    """返回动态注入了最快下载源直链的 latest.json，供 Tauri Updater 极速下载。
+
+    GitHub 直连被墙时本接口也要能用（镜像存在的意义），因此 manifest 本身
+    也按测速优先级依次尝试各镜像前缀，全部失败才重定向官方源。
+    """
     import httpx
     from fastapi.responses import JSONResponse, RedirectResponse
 
     from app.core.config import settings as app_settings
-    from app.services.download_mirrors import apply_mirror
+    from app.services.download_mirrors import apply_mirror, get_ordered_mirror_prefixes
 
     repo = (app_settings.github_repo or "zxxhz/LearnFlow").strip("/")
-    url = f"https://github.com/{repo}/releases/latest/download/latest.json"
+    raw = f"https://github.com/{repo}/releases/latest/download/latest.json"
     headers = {"User-Agent": "LearnFlow-Updater/1.0"}
-    try:
-        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-            platforms = data.get("platforms", {})
-            for plat_info in platforms.values():
-                if isinstance(plat_info, dict) and "url" in plat_info:
-                    plat_info["url"] = apply_mirror(plat_info["url"])
-            return JSONResponse(content=data)
-    except Exception as e:
-        logger.warning("获取 fast-latest.json 失败: %s", e)
-        return RedirectResponse(url)
+    candidates = [raw]
+    for prefix in get_ordered_mirror_prefixes():
+        u = f"{prefix}{raw}" if prefix else raw
+        if u not in candidates:
+            candidates.append(u)
+
+    async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+        for url in candidates:
+            try:
+                resp = await client.get(url, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+                platforms = data.get("platforms", {})
+                for plat_info in platforms.values():
+                    if isinstance(plat_info, dict) and "url" in plat_info:
+                        plat_info["url"] = apply_mirror(plat_info["url"])
+                return JSONResponse(content=data)
+            except Exception as e:
+                logger.warning("获取 fast-latest.json 失败(%s): %s", url, e)
+                continue
+    return RedirectResponse(raw)
 
 
 @router.get("/update/in-app-install")

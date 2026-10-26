@@ -1,6 +1,6 @@
 // LearnFlow PWA Service Worker
 // 缓存名随版本 bump：发版 bump 版本号时同步更新此处，激活时自动清掉旧缓存
-const CACHE_NAME = "learnflow-v0.4.46";
+const CACHE_NAME = "learnflow-v0.4.47";
 
 const PRECACHE_URLS = [
   "/",
@@ -53,14 +53,20 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 页面导航请求（HTML）：网络优先，失败时回落到缓存 index.html
+  // 页面导航请求（HTML）：网络优先，网络失败或 5xx 时回落到缓存 index.html
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request)
-        .then((response) => {
+        .then(async (response) => {
           if (response && response.status === 200) {
             const clone = response.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+            return response;
+          }
+          if (response && response.status >= 500) {
+            // 服务端 5xx（如后端重启瞬间）：同样回落缓存，而非把错误页直接渲染给用户
+            const cached = (await caches.match(request)) || (await caches.match("/index.html"));
+            if (cached) return cached;
           }
           return response;
         })

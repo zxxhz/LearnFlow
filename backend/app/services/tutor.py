@@ -1,5 +1,4 @@
 """助教伴学服务（Agent 观察与引导）：针对练习作答与卡点提供启发式诊断，严格不泄露完整代码。"""
-import asyncio
 import json
 import logging
 from typing import AsyncIterator
@@ -15,7 +14,6 @@ from app.services.exercise import normalize_output
 from app.services.llm.base import LLMAdapter
 from app.services.llm.errors import LLMError
 from app.services.profile import (
-    extract_and_update_learner_profile,
     format_profile_for_prompt,
     trigger_profile_evolution,
 )

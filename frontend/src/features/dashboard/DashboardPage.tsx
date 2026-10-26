@@ -169,7 +169,7 @@ export default function DashboardPage() {
       </div>
 
       {/* LLM Token 用量 */}
-      {data.llm_usage && (
+      {data.llm_usage ? (
         <div className="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Token 用量（近 30 天）</h3>
           <div className="mt-2 flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
@@ -188,6 +188,13 @@ export default function DashboardPage() {
               </span>
             ))}
           </div>
+        </div>
+      ) : (
+        <div className="mt-4 rounded-xl border border-dashed border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">Token 用量（近 30 天）</h3>
+          <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+            暂无用量记录——配置模型并开始生成/答疑后，这里会展示消耗统计。
+          </p>
         </div>
       )}
 

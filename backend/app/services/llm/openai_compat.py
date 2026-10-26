@@ -38,9 +38,11 @@ def translate_openai_error(e: Exception) -> Exception:
 
 
 class OpenAICompatAdapter(LLMAdapter):
-    def __init__(self, base_url: str, api_key: str, model: str, scene: str = "chat"):
+    def __init__(self, base_url: str, api_key: str, model: str, scene: str = "chat",
+                 request_timeout: float | None = None):
         self.client = AsyncOpenAI(
-            base_url=base_url or None, api_key=api_key or "EMPTY", timeout=180
+            base_url=base_url or None, api_key=api_key or "EMPTY",
+            timeout=request_timeout if request_timeout is not None else 180,
         )
         self.model = model
         self.scene = scene
@@ -97,7 +99,7 @@ class OpenAICompatAdapter(LLMAdapter):
                 return self._stream(kwargs, allow_json_fallback=json_mode)
             t0 = time.perf_counter()
             resp = await self.client.chat.completions.create(**kwargs)
-            self._record(resp, int((time.perf_counter() - t0) * 1000))
+            self._record(getattr(resp, "usage", None), int((time.perf_counter() - t0) * 1000))
             return resp.choices[0].message.content or ""
         except (LLMServiceError, LLMConnectionError, LLMAuthError, LLMRateLimitError):
             raise
@@ -113,7 +115,7 @@ class OpenAICompatAdapter(LLMAdapter):
                         return self._stream(kwargs, allow_json_fallback=False)
                     t0 = time.perf_counter()
                     resp = await self.client.chat.completions.create(**kwargs)
-                    self._record(resp, int((time.perf_counter() - t0) * 1000))
+                    self._record(getattr(resp, "usage", None), int((time.perf_counter() - t0) * 1000))
                     return resp.choices[0].message.content or ""
                 except Exception as e2:
                     raise translate_openai_error(e2) from e2
@@ -140,7 +142,7 @@ class OpenAICompatAdapter(LLMAdapter):
         try:
             t0 = time.perf_counter()
             resp = await self.client.chat.completions.create(**kwargs)
-            self._record(resp, int((time.perf_counter() - t0) * 1000))
+            self._record(getattr(resp, "usage", None), int((time.perf_counter() - t0) * 1000))
             return resp.choices[0].message
         except Exception as e:
             if isinstance(e, BadRequestError) and "tools" in kwargs:
@@ -148,7 +150,7 @@ class OpenAICompatAdapter(LLMAdapter):
                 try:
                     t0 = time.perf_counter()
                     resp = await self.client.chat.completions.create(**kwargs)
-                    self._record(resp, int((time.perf_counter() - t0) * 1000))
+                    self._record(getattr(resp, "usage", None), int((time.perf_counter() - t0) * 1000))
                     return resp.choices[0].message
                 except Exception as e2:
                     raise translate_openai_error(e2) from e2
@@ -203,12 +205,13 @@ SCENES = ("generation", "chat")
 
 
 async def create_adapter_from_settings(
-    db: AsyncSession, scene: str | None = None
+    db: AsyncSession, scene: str | None = None, *, request_timeout: float | None = None
 ) -> OpenAICompatAdapter:
     """从 app_settings 读取配置并构建适配器。
 
     scene ∈ {generation, chat}：场景槽位里非空的字段覆盖主配置，
     空字段回落主配置（PRD §5.7：便宜模型做生成）。未配置时抛友好错误。
+    request_timeout：可选的短超时（如设置页"测试连接"传 15s，避免不可达网关卡住几分钟）。
     """
     row = await db.get(AppSetting, "local")
     cfg = json.loads(row.llm) if row and row.llm else {}
@@ -231,4 +234,5 @@ async def create_adapter_from_settings(
         api_key=merged["api_key"],
         model=merged["model"],
         scene=scene or "chat",
+        request_timeout=request_timeout,
     )

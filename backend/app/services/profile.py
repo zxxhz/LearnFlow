@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import async_session_factory
 from app.models.base import utcnow_iso
 from app.models.study import LearnerMisconception, LearnerProfile
+from app.services.prompt import render_prompt
 from app.services.llm import create_adapter_from_settings, extract_json
 
 logger = logging.getLogger(__name__)
@@ -31,8 +32,6 @@ async def get_or_create_profile(db: AsyncSession, profile_id: str = DEFAULT_PROF
     """
     profile = await db.get(LearnerProfile, profile_id)
     if profile is None:
-        import asyncio as _asyncio
-
         from sqlalchemy.exc import IntegrityError
 
         try:
@@ -50,19 +49,13 @@ async def get_or_create_profile(db: AsyncSession, profile_id: str = DEFAULT_PROF
                     await s.commit()
         except IntegrityError:
             # 并发首建竞态：另一会话已创建，忽略即可
-            await _asyncio.sleep(0)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"默认画像创建失败（继续使用空画像）: {e}")
-        # 行已由短会话落库，从调用方会话读取（读事务不持写锁）
+            pass
+        # 行已由短会话落库，从调用方会话读取（读事务不持写锁）。
+        # 读不到说明落库失败——宁可抛错让上层降级，也不返回游离实例
+        # （游离实例上的画像演进写入会被静默丢弃）。
         profile = await db.get(LearnerProfile, profile_id)
         if profile is None:
-            # 极端兜底：库仍读不到时构造非持久化实例，功能不中断
-            profile = LearnerProfile(
-                id=profile_id,
-                background_summary="",
-                socratic_mode=True,
-                updated_at=utcnow_iso(),
-            )
+            raise LookupError("学习者画像初始化失败，请检查数据目录权限")
     return profile
 
 
@@ -84,8 +77,13 @@ async def format_profile_for_prompt(db: AsyncSession) -> str:
 
     若画像完全为空且无活跃盲区，返回空字符串；
     若包含信息，则组合成引导语。
+    画像初始化失败时降级为通用风格提示，不阻断生成/答疑主链路。
     """
-    profile = await get_or_create_profile(db)
+    try:
+        profile = await get_or_create_profile(db)
+    except LookupError as e:
+        logger.warning(f"画像不可用，Prompt 注入降级: {e}")
+        return "\n## 教学风格偏好\n- 答疑与引导风格：优先采用苏格拉底式启发提问，引导学生自主思考\n"
     misconceptions = await get_active_misconceptions(db, limit=8)
 
     bg = (profile.background_summary or "").strip()
@@ -111,31 +109,7 @@ async def format_profile_for_prompt(db: AsyncSession) -> str:
     return "\n".join(lines)
 
 
-EVOLVE_PROMPT = """你是一个认知诊断与学习者画像分析专家。
-分析以下学生的近期学习交互内容（提问、报错、对话），提炼该学生的认知特征和知识薄弱点。
 
-已知该学生当前画像：
-{current_summary}
-
-学生交互内容：
-{dialogue_snippet}
-
-请完成两项分析：
-1. updated_summary: 综合已有画像与最新表现，给出一段连贯精炼的学习者画像总结（100字以内，涵盖：专业背景/基础强弱/思维习惯/学习偏好。如果本次交互未显露新的特征，则保留或微调原画像）。
-2. new_misconceptions: 本次交互中学生显露出的【明确概念理解误区或薄弱点】（0~2个）。每个包含：
-   - topic: 知识点名称（如 "C++ 指针运算"、"递归栈溢出"、"微积分链式法则"）
-   - tag: 简短错误类型标签（如 "语法混淆"、"边界条件缺失"、"概念错位"）
-   - evidence: 错误具体表现（20字以内）
-
-请以 JSON 格式输出，不要有额外解释：
-```json
-{{
-  "updated_summary": "...",
-  "new_misconceptions": [
-    {{"topic": "...", "tag": "...", "evidence": "..."}}
-  ]
-}}
-```"""
 
 
 async def evolve_profile_from_interaction(
@@ -172,9 +146,10 @@ async def evolve_profile_from_interaction(
             profile = await get_or_create_profile(db)
             current_summary = profile.background_summary or "（暂无，尚待建立）"
 
-            prompt = EVOLVE_PROMPT.format(
-                current_summary=current_summary,
-                dialogue_snippet=snippet,
+            prompt = render_prompt(
+                "profile_evolve",
+                CURRENT_SUMMARY=current_summary,
+                SNIPPET=snippet,
             )
 
             adapter = await create_adapter_from_settings(db, scene="chat")
@@ -198,12 +173,12 @@ async def evolve_profile_from_interaction(
                     if isinstance(item, dict) and item.get("topic"):
                         topic_str = str(item["topic"])[:64]
                         tag_str = str(item.get("tag", "理解偏差"))[:32]
-                        # 避免重复插入相同 topic 和 tag 的未解决盲区
+                        # 去重看全部历史行（含 resolved）：用户已判定掌握的盲区
+                        # 不得被 LLM 再诊断复活
                         existing = await db.scalar(
                             select(LearnerMisconception).where(
                                 LearnerMisconception.topic == topic_str,
                                 LearnerMisconception.tag == tag_str,
-                                LearnerMisconception.status == "active",
                             )
                         )
                         if existing:

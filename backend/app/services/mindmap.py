@@ -21,6 +21,7 @@ from app.schemas.mindmap import (
     MindMapUpdate,
 )
 from app.services.llm import create_adapter_from_settings, extract_json
+from app.services.prompt import render_prompt
 from app.services.profile import format_profile_for_prompt
 
 logger = logging.getLogger(__name__)
@@ -320,13 +321,15 @@ async def list_mindmaps(db: AsyncSession) -> list[MindMapSummary]:
     """
     sql = text(
         "SELECT id, title, topic, created_at, updated_at, "
-        "(SELECT COUNT(*) FROM json_tree(mindmaps.root, '$') jt "
+        "(SELECT COUNT(*) FROM json_tree(mind_maps.root, '$') jt "
         " WHERE jt.key = 'title' AND jt.type = 'text') AS node_count "
-        "FROM mindmaps ORDER BY updated_at DESC"
+        "FROM mind_maps ORDER BY updated_at DESC"
     )
     try:
         rows = (await db.execute(sql)).all()
-    except Exception:
+    except Exception as e:
+        # 老版本 SQLite 无 json1 扩展：记日志并回退为整树加载
+        logger.warning("json_tree 快速计数不可用，回退整树加载: %s", e)
         # 老版本 SQLite 无 json_tree：回退为整树加载
         records = (await db.scalars(select(MindMap).order_by(desc(MindMap.updated_at)))).all()
         return [
@@ -408,45 +411,7 @@ async def delete_mindmap(db: AsyncSession, mindmap_id: str) -> bool:
 # 4. LLM Agent 一键生成思维导图树 (严格去冒号化，多分支深层展开，接入用户画像)
 # ==============================================================================
 
-MINDMAP_GEN_SYSTEM_PROMPT = """你是一个专业的知识架构师与思维导图生成 Agent。
-你的任务是根据用户给出的主题或材料，构建结构严密、层级分明的高质量思维导图树。
 
-【必须严格遵守的命名与格式规范】：
-1. 节点标题 (title) 必须是纯粹、精炼、直观的概念短语（如「虚拟内存管理」、「页表机制」、「TLB 快表」、「缺页异常处理」）。
-2. 【绝对禁止】在节点标题中出现类似「xxx：xxxx」或「key: value」的冒号键值对格式！严禁使用类似「机制：基于页面的置换」或「原理：利用空间局部性」！直接命名为「页面置换」或「空间局部性原理」！
-3. 分支层次丰富（至少 3 层，包含根节点、4~6 个一级大分支、每个一级分支 2~4 个二级子分支，重要概念继续深挖三级/四级分支）。
-4. 每个节点可包含简短的 `summary`（10~25字以内的本质总结或记忆要点）。
-
-{learner_profile}
-
-请严格输出合法的 JSON 格式，不要包含任何额外的 Markdown 解释说明，根结构如下：
-```json
-{{
-  "title": "主题名称",
-  "root": {{
-    "title": "中心主题",
-    "summary": "全局核心定位",
-    "children": [
-      {{
-        "title": "一级分支名称",
-        "summary": "简短要点",
-        "children": [
-          {{
-            "title": "二级子分支名称",
-            "summary": "说明",
-            "children": [
-              {{
-                "title": "三级深度分支",
-                "summary": "说明"
-              }}
-            ]
-          }}
-        ]
-      }}
-    ]
-  }}
-}}
-```"""
 
 
 async def generate_mindmap_tree(
@@ -458,7 +423,7 @@ async def generate_mindmap_tree(
     """结合用户画像与深度要求，生成多层级纯净思维导图。"""
     adapter = await create_adapter_from_settings(db, scene="generation")
     profile_snippet = await format_profile_for_prompt(db)
-    system_prompt = MINDMAP_GEN_SYSTEM_PROMPT.format(learner_profile=profile_snippet)
+    system_prompt = render_prompt("mindmap_gen", LEARNER_PROFILE=profile_snippet)
 
     user_content = f"请围绕以下主题与材料，构建层级深度为 {depth} 层的思维导图：\n\n【核心主题】\n{prompt.strip()}"
     if import_content.strip():
@@ -617,21 +582,13 @@ async def stream_mindmap_agent(
         if target:
             focus_hint = f"\n当前用户在画布上选中的焦点节点为：[{selected_node_id}] {target.get('title')}"
 
-    system_prompt = f"""你是一个智能思维导图伴学 Agent。
-你正在协助学生协同构建和优化一张关于「{mindmap.title}」的思维导图。
-
-当前思维导图的完整结构大纲如下（带节点 ID）：
-{outline}
-{focus_hint}
-
-【你的职责与规则】：
-1. 你可以调用工具直接对导图结构进行增删改（add_nodes, delete_nodes, update_node, expand_branch）。
-2. 如果用户表达了修改意图（如“在xx下加几个子节点”、“把xx分支删了”、“重命名xx”、“再展开详细一点”），【必须优先调用相应工具】执行修改！
-3. 所有节点标题必须精炼纯粹，【坚决杜绝】类似「xxx：xxxx」的冒号格式！
-4. 在调用工具后，向学生用亲切、清晰、富有启发性的语言解释你做了哪些调整，以及为什么这样组织知识体系。
-5. 结合学生的认知偏好与学习画像因材施教，并保持多轮对话连贯性（理解代词如“它”、“这个”、“刚才说的第二点”等）。
-
-{profile_snippet}"""
+    system_prompt = render_prompt(
+        "mindmap_agent",
+        MAP_TITLE=mindmap.title,
+        OUTLINE=outline,
+        FOCUS_HINT=focus_hint,
+        LEARNER_PROFILE=profile_snippet,
+    )
 
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
@@ -663,6 +620,7 @@ async def stream_mindmap_agent(
 
     # 1. 尝试函数调用
     tree_changed = False
+    raw_msg = None
     try:
         raw_msg = await adapter.chat_raw(messages, tools=MINDMAP_AGENT_TOOLS)
         tool_calls = getattr(raw_msg, "tool_calls", None) or []
@@ -671,7 +629,46 @@ async def stream_mindmap_agent(
         tool_calls = []
 
     if tool_calls:
-        # 执行工具调用更新本地内存树
+        # 执行工具调用：先在请求树上演算效果（判定成功/失败并给前端预览），
+        # 记录操作序列；持久化阶段用短会话重读最新树重放操作，避免旧树整列覆盖并发编辑
+        def _apply_op(root: dict[str, Any], fname: str, fargs: dict[str, Any]) -> tuple[bool, str]:
+            """在指定树上执行单个 Agent 工具操作，返回 (是否改变树, 失败说明)。"""
+            if fname == "add_nodes":
+                pid = fargs.get("parent_id") or selected_node_id or root.get("id")
+                nodes = fargs.get("nodes") or []
+                if not nodes:
+                    return False, "nodes 列表为空"
+                if add_nodes_to_parent(root, pid, nodes):
+                    return True, ""
+                return False, f"未找到父节点 {pid}"
+            if fname == "delete_nodes":
+                nids = fargs.get("node_ids") or []
+                deleted = [nid for nid in nids if delete_node_from_tree(root, nid)]
+                if deleted:
+                    return True, ""
+                return False, f"未找到待删节点：{nids}"
+            if fname == "update_node":
+                nid = fargs.get("node_id")
+                target = find_node(root, nid)
+                if target:
+                    if fargs.get("title"):
+                        target["title"] = clean_title(fargs["title"])
+                    if "summary" in fargs:
+                        target["summary"] = fargs["summary"]
+                    return True, ""
+                return False, f"未找到节点 {nid}"
+            if fname == "expand_branch":
+                nid = fargs.get("node_id") or selected_node_id
+                sub_branches = fargs.get("sub_branches") or []
+                if not sub_branches:
+                    return False, "sub_branches 列表为空"
+                if add_nodes_to_parent(root, nid, sub_branches):
+                    return True, ""
+                return False, f"未找到节点 {nid}"
+            return False, f"未注册的工具：{fname}"
+
+        ops: list[dict[str, Any]] = []
+        tool_outcomes: list[dict] = []
         for tc in tool_calls:
             fname = tc.function.name
             try:
@@ -680,41 +677,30 @@ async def stream_mindmap_agent(
                 fargs = {}
 
             yield {"type": "tool_call", "name": fname, "args": fargs}
-
-            if fname == "add_nodes":
-                pid = fargs.get("parent_id") or selected_node_id or mindmap.root.get("id")
-                nodes = fargs.get("nodes") or []
-                if add_nodes_to_parent(mindmap.root, pid, nodes):
-                    tree_changed = True
-
-            elif fname == "delete_nodes":
-                nids = fargs.get("node_ids") or []
-                for nid in nids:
-                    if delete_node_from_tree(mindmap.root, nid):
-                        tree_changed = True
-
-            elif fname == "update_node":
-                nid = fargs.get("node_id")
-                target = find_node(mindmap.root, nid)
-                if target:
-                    if fargs.get("title"):
-                        target["title"] = clean_title(fargs["title"])
-                    if "summary" in fargs:
-                        target["summary"] = fargs["summary"]
-                    tree_changed = True
-
-            elif fname == "expand_branch":
-                nid = fargs.get("node_id") or selected_node_id
-                sub_branches = fargs.get("sub_branches") or []
-                if add_nodes_to_parent(mindmap.root, nid, sub_branches):
-                    tree_changed = True
-
-            yield {"type": "tool_result", "name": fname, "success": True}
+            op_ok, op_detail = _apply_op(mindmap.root, fname, fargs)
+            if op_ok:
+                tree_changed = True
+                ops.append({"name": fname, "args": fargs})
+            outcome: dict[str, Any] = {"name": fname, "success": op_ok}
+            if op_detail:
+                outcome["detail"] = op_detail
+            tool_outcomes.append(outcome)
+            yield {"type": "tool_result", **outcome}
 
         if tree_changed:
-            mindmap.root = normalize_node(mindmap.root, mindmap.title)
-            await db.commit()
-            await db.refresh(mindmap)
+            from app.core.db import async_session_factory
+
+            try:
+                async with async_session_factory() as fresh_db:
+                    fresh = await fresh_db.get(MindMap, mindmap.id)
+                    if fresh is not None:
+                        for op in ops:
+                            _apply_op(fresh.root, op["name"], op["args"])
+                        fresh.root = normalize_node(fresh.root, fresh.title)
+                        await fresh_db.commit()
+                        mindmap.root = fresh.root
+            except Exception:
+                logger.exception("Agent 树修改持久化失败: mindmap=%s", mindmap.id)
             yield {"type": "tree_update", "tree": mindmap.root}
 
         # 组织后续解释消息
@@ -730,11 +716,11 @@ async def stream_mindmap_agent(
                 for tc in tool_calls
             ]
         })
-        for tc in tool_calls:
+        for tc, outcome in zip(tool_calls, tool_outcomes):
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": json.dumps({"status": "success", "tree_updated": tree_changed}, ensure_ascii=False)
+                "content": json.dumps(outcome, ensure_ascii=False),
             })
     else:
         # 模型未调用工具且已生成完整回答文本时，直接分块流式下发，消除二次调用与额外延迟
@@ -778,25 +764,15 @@ async def stream_node_detail(
     adapter = await create_adapter_from_settings(db, scene="generation")
     profile_snippet = await format_profile_for_prompt(db)
 
-    prompt = f"""你是一个顶尖的知识导师。请针对思维导图中的具体概念节点，撰写一份结构清晰、深入浅出、极具启发性的深度剖析文档。
-
-【节点信息】：
-- 概念名称：{node.get('title')}
-- 知识路径定位：{path_str}
-- 简短摘要：{node.get('summary') or '（暂无）'}
-{f'- 特别要求：{instruction.strip()}' if instruction.strip() else ''}
-
-【生成规范要求】：
-1. 使用清晰美观的 Markdown 格式输出。
-2. 包含以下核心板块：
-   - 📌 **本质定义**：用一两句一针见血的话阐明概念本质，避免套话。
-   - 🔍 **核心原理与运作机制**：拆解其底层工作方式，配以直观逻辑链条或步骤。
-   - 💡 **直观类比/现实对照**：根据学生画像，结合恰当的生活或工程比喻化抽象为具象。
-   - ⚠️ **认知误区澄清**：点出初学者最容易混淆或理解错的 1~2 个关键点。
-   - 🚀 **实战应用/关键代码或推导**（视具体学科给出简明示例）。
-3. 严格遵循学习者画像，量体裁衣，因材施教。
-
-{profile_snippet}"""
+    instruction_line = f"- 特别要求：{instruction.strip()}" if instruction.strip() else ""
+    prompt = render_prompt(
+        "mindmap_node_detail",
+        NODE_TITLE=node.get("title", ""),
+        NODE_PATH=path_str,
+        NODE_SUMMARY=node.get("summary") or "（暂无）",
+        EXTRA_INSTRUCTION=instruction_line,
+        LEARNER_PROFILE=profile_snippet,
+    )
 
     messages = [
         {"role": "system", "content": "你是一个善于深入剖析概念本质的高级伴学导师。"},
@@ -849,22 +825,15 @@ async def stream_node_qa(
     adapter = await create_adapter_from_settings(db, scene="chat")
     profile_snippet = await format_profile_for_prompt(db)
 
-    system_prompt = f"""你是学生在学习思维导图「{mindmap.title}」时的专属伴学助教。
-当前学生聚焦在特定知识节点上进行提问与探讨。
-
-【当前焦点节点】：
-- 概念名称：{node.get('title')}
-- 层级路径：{path_str}
-- 节点要点：{node.get('summary') or '（无）'}
-- 节点已有详尽解析：
-{node.get('detail') or '（暂无详细解析）'}
-
-【助教规则】：
-1. 聚焦解答学生关于该节点的疑问，若涉及更深的技术细节或横向对比，可联系上级分支与相邻概念。
-2. 保持启发性（Socratic式诱导思考），给出恰当的比喻与推导。
-3. 契合学习者认知画像。
-
-{profile_snippet}"""
+    system_prompt = render_prompt(
+        "mindmap_node_qa",
+        MAP_TITLE=mindmap.title,
+        NODE_TITLE=node.get("title", ""),
+        NODE_PATH=path_str,
+        NODE_SUMMARY=node.get("summary") or "（无）",
+        NODE_DETAIL=node.get("detail") or "（暂无详细解析）",
+        LEARNER_PROFILE=profile_snippet,
+    )
 
     messages = [{"role": "system", "content": system_prompt}]
     for h in history[-8:]:

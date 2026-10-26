@@ -8,14 +8,24 @@ const KEY = "learnflow-theme";
 const listeners = new Set<() => void>();
 
 export function getTheme(): Theme {
-  const saved = localStorage.getItem(KEY);
+  // 受限 WebView / 隐私模式下 localStorage 访问可能抛错（否则会在 main.tsx 启动时白屏）
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(KEY);
+  } catch {
+    /* fallthrough */
+  }
   if (saved === "light" || saved === "dark") return saved;
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 export function applyTheme(t: Theme): void {
   document.documentElement.classList.toggle("dark", t === "dark");
-  localStorage.setItem(KEY, t);
+  try {
+    localStorage.setItem(KEY, t);
+  } catch {
+    /* 存储不可用时仅影响记忆，不影响本次会话 */
+  }
 }
 
 export function useTheme() {

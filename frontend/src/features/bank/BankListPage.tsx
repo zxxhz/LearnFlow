@@ -224,7 +224,11 @@ function ImportModal({ open, onClose }: { open: boolean; onClose: () => void }) 
         type="file"
         accept=".xls,.xlsx"
         className="hidden"
-        onChange={(e) => pick(e.target.files?.[0])}
+        onChange={(e) => {
+          pick(e.target.files?.[0]);
+          // 清空 value：否则"重选同一个文件"不触发 change 事件，静默无反应
+          e.target.value = "";
+        }}
       />
 
       {!file ? (

@@ -1,5 +1,5 @@
 // 更新弹窗：启动自动检查 / 设置页手动检查发现新版本时弹出（PRD 实现备注 19）
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { UpdateCheckResult } from "../lib/types";
 import { Button, Modal } from "./ui";
 import { isTauri, inAppMirrorUpdate, tauriSelfUpdate, relaunchApp, openExternalUrl } from "../lib/updater";
@@ -12,6 +12,13 @@ function AutoUpdateButton({ update }: { update: UpdateCheckResult }) {
   const [phase, setPhase] = useState<"idle" | "downloading" | "installing">("idle");
   const [pct, setPct] = useState<number | null>(null);
   const [speed, setSpeed] = useState<number | null>(null);
+  // 用户点「稍后」关闭弹窗时中止下载流，防止后台下载完成后被动重启应用
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   if (!isTauri()) return null;
 
@@ -19,6 +26,9 @@ function AutoUpdateButton({ update }: { update: UpdateCheckResult }) {
     setPhase("downloading");
     setPct(null);
     setSpeed(null);
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
 
     try {
       // 1. 优先使用国内/自定义最优加速镜像源进行极速下载与静默安装
@@ -32,10 +42,13 @@ function AutoUpdateButton({ update }: { update: UpdateCheckResult }) {
           } else if (p.phase === "ready" || p.phase === "installing") {
             setPhase("installing");
           }
-        }
+        },
+        ctrl.signal
       );
+      if (ctrl.signal.aborted) return; // 用户已取消：不再走安装分支
       setPhase("installing");
     } catch (mirrorErr) {
+      if (ctrl.signal.aborted) return; // 用户已取消：不触发回退通道
       console.warn("镜像一键更新失败，尝试回退到官方 updater 直连通道:", mirrorErr);
       // 2. 备用回退机制：若镜像源出现网络异常，尝试回退到 Tauri 原生直连通道
       try {
@@ -119,11 +132,16 @@ export default function UpdateDialog({
                 href={update.accelerated_url}
                 target="_blank"
                 rel="noreferrer"
-                onClick={async (e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  await openExternalUrl(update.accelerated_url!);
-                  notify("已唤起浏览器下载", "正在通过加速镜像下载安装包，请查看您的浏览器下载列表。");
+                onClick={(e) => {
+                  if (isTauri()) {
+                    // 桌面壳：WebView 拦截新窗口，须委托系统浏览器
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openExternalUrl(update.accelerated_url!);
+                    notify("已唤起浏览器下载", "正在通过加速镜像下载安装包，请查看您的浏览器下载列表。");
+                  }
+                  // 浏览器/局域网模式：放行原生新标签导航，由客户端设备自己下载
+                  // （调用后端 open-url 会在"服务器"上开浏览器，平板上什么都不会发生）
                 }}
                 className="rounded-md bg-blue-600 dark:bg-blue-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700 dark:hover:bg-blue-800"
                 title="通过当前最快国内镜像在浏览器中下载完整安装包"
@@ -137,9 +155,11 @@ export default function UpdateDialog({
                 target="_blank"
                 rel="noreferrer"
                 onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  openExternalUrl(update.url!);
+                  if (isTauri()) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openExternalUrl(update.url!);
+                  }
                 }}
                 className="rounded-md border border-gray-300 dark:border-gray-600 px-2.5 py-1 text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
               >
@@ -153,11 +173,11 @@ export default function UpdateDialog({
           <div className="mt-3.5 rounded-lg bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-700/60 p-2.5 text-[11px] text-gray-500 dark:text-gray-400 space-y-1">
             <div className="flex items-start gap-1.5">
               <span className="font-semibold text-gray-700 dark:text-gray-300">⬇ 一键更新：</span>
-              <span>软件内自动静默下载、安装并重启，全程无需手动操作。</span>
+              <span>软件内经加速镜像下载安装包，完成后自动打开新版本安装程序，请按向导提示完成安装。</span>
             </div>
             <div className="flex items-start gap-1.5">
               <span className="font-semibold text-gray-700 dark:text-gray-300">⚡ 浏览器极速下载：</span>
-              <span>调用系统默认浏览器经国内最优镜像下载 <code>.exe</code> 安装包，用于手动覆盖安装（网络受阻时的备用方案）。</span>
+              <span>在浏览器中经国内最优镜像下载 <code>.exe</code> 安装包，手动覆盖安装（网络受阻时的备用方案）。</span>
             </div>
           </div>
         </>

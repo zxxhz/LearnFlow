@@ -17,7 +17,10 @@ export default function NewCoursePage() {
         topic: topic.trim(),
         level: level || null,
         scope: scope.trim() || null,
-        chapter_count: chapterCount ? Number(chapterCount) : null,
+        // 章节数钳制到 1~30（输入框无 min/max 约束，NaN/越界值直接发给后端）
+        chapter_count: chapterCount
+          ? Math.max(1, Math.min(30, Number(chapterCount) || 0)) || null
+          : null,
       }),
     onSuccess: (res) => navigate(`/courses/${res.course.id}`),
   });

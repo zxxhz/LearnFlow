@@ -97,6 +97,12 @@ export default function MindMapAgentPanel({
 
   // 卸载时中断进行中的流式请求：面板关闭后回复不再丢失出历史，后端也不再空烧 token
   useEffect(() => () => abortRef.current?.abort(), []);
+  // 切换到另一张导图时同样中断旧流：防止旧导图的 done 事件追加进新导图的消息列表
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, [mindmapId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -131,10 +137,12 @@ export default function MindMapAgentPanel({
     };
 
     // 收集先前的多轮对话历史供 Agent 保持上下文连贯（指代词理解、前文修改追问等）；
-    // 排除欢迎语与报错消息——报错不是模型的正常发言，回传会污染多轮上下文
+    // 排除欢迎语与报错消息——报错不是模型的正常发言，回传会污染多轮上下文。
+    // 从最新往前最多 10 轮（20 条）：历史无上限增长会撑爆请求体与 localStorage
     const historyToSend = messages
       .filter((m) => m.id !== "init" && !m.id.startsWith("err-") && m.content)
-      .map((m) => ({ role: m.role, content: m.content }));
+      .map((m) => ({ role: m.role, content: m.content }))
+      .slice(-20);
 
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
@@ -144,6 +152,8 @@ export default function MindMapAgentPanel({
 
     let accText = "";
     const collectedActions: Array<{ name: string; args: any }> = [];
+    // done/error 事件已把回复落历史时置 true：finally 里的"断流兜底"不再重复追加
+    const messagesHandledRef = { current: false };
 
     try {
       await api.mindmaps.agentSSE(
@@ -163,6 +173,7 @@ export default function MindMapAgentPanel({
             accText += ev.text;
             setStreamingText(accText);
           } else if (ev.type === "done") {
+            messagesHandledRef.current = true;
             if (ev.tree) {
               onTreeUpdate(ev.tree);
             }
@@ -179,6 +190,7 @@ export default function MindMapAgentPanel({
             setCurrentActions([]);
             setLoading(false);
           } else if (ev.type === "error") {
+            messagesHandledRef.current = true;
             setMessages((prev) => [
               ...prev,
               {
@@ -206,6 +218,22 @@ export default function MindMapAgentPanel({
         ]);
       }
     } finally {
+      // 流意外干净结束（无 done/error 事件，如代理切断连接）时，
+      // 已生成的部分回答也要落进历史，不能整段丢弃
+      if (accText && ctrl.signal.aborted === false) {
+        const wasHandled = messagesHandledRef.current;
+        if (!wasHandled) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `asst-${Date.now()}`,
+              role: "assistant",
+              content: accText + "\n\n（连接中断，回答可能不完整）",
+              actions: collectedActions.length > 0 ? collectedActions : undefined,
+            },
+          ]);
+        }
+      }
       setLoading(false);
       setStreamingText("");
       setCurrentActions([]);

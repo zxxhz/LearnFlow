@@ -5,7 +5,7 @@ import logging
 import re
 import shutil
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, true, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -59,6 +59,11 @@ def unsubscribe(course_id: str, q: asyncio.Queue) -> None:
 def is_running(course_id: str) -> bool:
     t = _tasks.get(course_id)
     return t is not None and not t.done()
+
+
+def any_running() -> bool:
+    """是否存在任何进行中的生成任务（备份一致性检查等用途）。"""
+    return any(t is not None and not t.done() for t in _tasks.values())
 
 
 def cancel(course_id: str) -> None:
@@ -216,10 +221,22 @@ async def run_chapter(
 
 
 async def _mark_failed(db: AsyncSession, doc: Document, exc: Exception) -> None:
-    doc.status = "failed"
-    doc.error = getattr(exc, "message", None) or str(exc)
-    doc.updated_at = utcnow_iso()
+    # 先回滚半套的索引/KP/高亮写入：直接在脏会话上标 failed 会把
+    # 半构建的 sections 与旧正文一起提交，锚点全部失配
+    try:
+        await db.rollback()
+    except Exception:  # noqa: BLE001
+        pass
+    # 回滚后 doc 可能脱离会话，重新取一次再标记
+    fresh = await db.get(Document, doc.id)
+    if fresh is None:
+        return
+    fresh.status = "failed"
+    fresh.error = getattr(exc, "message", None) or str(exc)
+    fresh.updated_at = utcnow_iso()
     await db.commit()
+    doc.status = fresh.status
+    doc.error = fresh.error
 
 
 async def run_course(course_id: str) -> None:
@@ -324,6 +341,23 @@ async def resume_pending_generations() -> None:
                 .values(status="pending")
             )
             await db.commit()
+        # 单章重生成的课程状态仍是 ready：崩溃时文档会卡在 generating/pending
+        # 且没有任何任务在跑，UI 永远转圈——一并复位为 pending 之外的可恢复态
+        stuck = (
+            await db.scalars(
+                select(Document).where(
+                    Document.status.in_(("generating", "pending")),
+                    Document.course_id.notin_(course_ids) if course_ids else true(),
+                )
+            )
+        ).all()
+        if stuck:
+            for d in stuck:
+                d.status = "failed"
+                d.error = "生成被中断（应用重启），请重试本章"
+                d.updated_at = utcnow_iso()
+            await db.commit()
+            logger.info("reset %d interrupted document(s) to failed", len(stuck))
     for cid in course_ids:
         logger.info("resuming course generation: %s", cid)
         start_course_generation(cid)

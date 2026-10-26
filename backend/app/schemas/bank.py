@@ -65,16 +65,6 @@ class BankStatsOut(BaseModel):
     by_type: dict[str, dict]
 
 
-class BankRenameIn(BaseModel):
-    name: str
-
-    @field_validator("name")
-    @classmethod
-    def _clean_name(cls, v):
-        v = v.strip()
-        if not v:
-            raise ValueError("题库名称不能为空")
-        return v[:200]
 
 
 class BankUpdateIn(BaseModel):

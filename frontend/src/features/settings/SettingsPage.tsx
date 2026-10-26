@@ -76,11 +76,17 @@ export default function SettingsPage() {
         },
       }),
     onSuccess: () => {
-      setSaveMsg("已保存");
+      setSaveErr("");
+      setSaveMsg("LLM 配置已保存");
       queryClient.invalidateQueries({ queryKey: ["settings"] });
       setTimeout(() => setSaveMsg(""), 2000);
     },
+    onError: (e) => {
+      setSaveErr(`LLM 配置保存失败：${(e as Error).message}`);
+    },
   });
+
+  const [saveErr, setSaveErr] = useState("");
 
   const savePrefs = useMutation({
     mutationFn: () => {
@@ -101,9 +107,14 @@ export default function SettingsPage() {
       return api.settings.update({ preferences: prefs });
     },
     onSuccess: () => {
-      setSaveMsg("已保存");
+      setSaveErr("");
+      setSaveMsg("偏好已保存");
       queryClient.invalidateQueries({ queryKey: ["settings"] });
       setTimeout(() => setSaveMsg(""), 2000);
+    },
+    onError: (e) => {
+      // 保存失败必须可见，否则用户以为已保存（字号/ADHD/高亮色等静默丢失）
+      setSaveErr(`偏好保存失败：${(e as Error).message}`);
     },
   });
 
@@ -166,6 +177,11 @@ export default function SettingsPage() {
     <div className="mx-auto max-w-5xl p-8">
       <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">设置</h1>
       {saveMsg && <span className="ml-3 text-sm text-green-600 dark:text-green-400">{saveMsg}</span>}
+      {saveErr && (
+        <p className="mt-2 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/30 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+          {saveErr}
+        </p>
+      )}
 
       {/* LLM 服务 */}
       <section className="mt-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6">
@@ -517,10 +533,18 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <Button className="mt-4" disabled={savePrefs.isPending} onClick={() => savePrefs.mutate()}>
-
-          保存偏好
-        </Button>
+        <div className="mt-4 flex items-center gap-3">
+          <Button disabled={savePrefs.isPending} onClick={() => savePrefs.mutate()}>
+            {savePrefs.isPending ? "保存中…" : "保存偏好"}
+          </Button>
+          {/* 就近反馈：成功/失败提示紧贴按钮，不再只出现在页面顶部 */}
+          {saveMsg.startsWith("偏好") && (
+            <span className="text-sm text-green-600 dark:text-green-400">{saveMsg}</span>
+          )}
+          {saveErr.startsWith("偏好") && (
+            <span className="text-sm text-red-600 dark:text-red-400">{saveErr}</span>
+          )}
+        </div>
       </section>
 
       {/* 学习者画像与认知档案（AI 动态提炼与因材施教） */}

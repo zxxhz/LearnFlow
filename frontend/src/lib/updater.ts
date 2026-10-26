@@ -77,46 +77,67 @@ export interface MirrorUpdateProgress {
 
 /**
  * 软件内走国内/自定义镜像源加速极速下载并自动静默安装重启
+ *
+ * - signal：用户关闭更新弹窗（"稍后"）时中止下载流，后端停止下载，不再被动重启
+ * - 流意外干净结束（无 installing/error 事件）时按完成处理，绝不悬挂 Promise
  */
 export async function inAppMirrorUpdate(
   version: string,
   acceleratedUrl: string | undefined,
-  onProgress: (p: MirrorUpdateProgress) => void
+  onProgress: (p: MirrorUpdateProgress) => void,
+  signal?: AbortSignal
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let settled = false;
-    api.update.inAppInstallSSE(
-      version,
-      acceleratedUrl,
-      (ev) => {
-        if (ev.type === "start") {
-          onProgress({ phase: "starting", percent: 0, message: ev.message });
-        } else if (ev.type === "progress") {
-          onProgress({
-            phase: "downloading",
-            percent: ev.percent ?? null,
-            speed_mb: ev.speed_mb,
-          });
-        } else if (ev.type === "ready") {
-          onProgress({ phase: "ready", percent: 100, message: ev.message });
-        } else if (ev.type === "installing") {
-          onProgress({ phase: "installing", percent: 100, message: ev.message });
-          if (!settled) {
-            settled = true;
-            resolve();
+    const settle = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (err) reject(err);
+      else resolve();
+    };
+    const ctrl = new AbortController();
+    const onAbort = () => ctrl.abort();
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    api.update
+      .inAppInstallSSE(
+        version,
+        acceleratedUrl,
+        (ev) => {
+          if (ev.type === "start") {
+            onProgress({ phase: "starting", percent: 0, message: ev.message });
+          } else if (ev.type === "progress") {
+            onProgress({
+              phase: "downloading",
+              percent: ev.percent ?? null,
+              speed_mb: ev.speed_mb,
+            });
+          } else if (ev.type === "ready") {
+            onProgress({ phase: "ready", percent: 100, message: ev.message });
+          } else if (ev.type === "installing") {
+            onProgress({ phase: "installing", percent: 100, message: ev.message });
+            settle();
+          } else if (ev.type === "error") {
+            settle(new Error(ev.detail || "下载安装更新失败"));
           }
-        } else if (ev.type === "error") {
-          if (!settled) {
-            settled = true;
-            reject(new Error(ev.detail || "下载安装更新失败"));
-          }
+        },
+        ctrl.signal
+      )
+      .then(() => {
+        // 流正常结束但没有 installing 事件（后端生成器提前取消等）：
+        // 视为完成，避免上层 await 永久悬挂
+        settle();
+      })
+      .catch((err) => {
+        if (signal?.aborted) {
+          // 用户主动取消：静默结束（不报错，不触发重试）
+          settle();
+          return;
         }
-      }
-    ).catch((err) => {
-      if (!settled) {
-        settled = true;
-        reject(err);
-      }
-    });
+        settle(err instanceof Error ? err : new Error(String(err)));
+      })
+      .finally(() => {
+        signal?.removeEventListener("abort", onAbort);
+      });
   });
 }

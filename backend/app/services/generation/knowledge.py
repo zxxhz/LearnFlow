@@ -29,10 +29,10 @@ def parse_chapter_output(raw: str) -> tuple[str, ChapterMeta | None]:
         return raw.strip(), None
     body, _, meta_part = raw.partition(META_SEPARATOR)
     meta_part = meta_part.strip()
-    # 兼容模型把 JSON 包进代码块的情况
+    # 兼容模型把 JSON 包进代码块的情况（```json / ```JSON / ```Json 均可能出现）
     if meta_part.startswith("```"):
         meta_part = meta_part.strip("`")
-        if meta_part.startswith("json"):
+        if meta_part[:4].lower() == "json":
             meta_part = meta_part[4:]
         meta_part = meta_part.strip()
     try:

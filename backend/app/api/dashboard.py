@@ -1,4 +1,3 @@
-import json
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends
@@ -7,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.models import (
+    BankAttempt,
     Course,
     Document,
     Exercise,
@@ -122,17 +122,21 @@ async def summary(db: AsyncSession = Depends(get_db)):
         )
     weak.sort(key=lambda w: (w.mastery, -w.exercise_fail))
 
-    # 热力图：用户消息（划线提问等），按本地日期聚合（只取 created_at 列，不拉正文）
+    # 热力图：学习动作 = 用户提问（划线/课程问答）+ 闯关作答 + 题库作答，
+    # 与 PRD §5.6「阅读、练习作答、对话研讨」口径一致（此前只数提问，纯阅读/刷题日是 0 格）
     today = local_today()
-    msg_rows = (
-        await db.execute(select(Message.created_at).where(Message.role == "user"))
-    ).all()
     counts: dict = {}
-    for (created_at,) in msg_rows:
-        d = parse_dt(created_at)
-        if d:
-            ld = d.astimezone().date()
-            counts[ld] = counts.get(ld, 0) + 1
+
+    def _acc(rows) -> None:
+        for (created_at,) in rows:
+            d = parse_dt(created_at)
+            if d:
+                ld = d.astimezone().date()
+                counts[ld] = counts.get(ld, 0) + 1
+
+    _acc((await db.execute(select(Message.created_at).where(Message.role == "user"))).all())
+    _acc((await db.execute(select(ExerciseAttempt.created_at))).all())
+    _acc((await db.execute(select(BankAttempt.created_at))).all())
     heatmap = []
     for i in range(83, -1, -1):
         day = today - timedelta(days=i)

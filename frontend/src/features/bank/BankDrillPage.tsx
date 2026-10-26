@@ -88,11 +88,38 @@ export default function BankDrillPage() {
   const [startError, setStartError] = useState("");
   const [promptOpen, setPromptOpen] = useState(false);
 
-  // 轮中任何变化即时落盘；round 为空（无轮）时不写，round 归属不符（路由复用残留）也不写
+  // 轮中任何变化落盘；round 为空（无轮）时不写，round 归属不符（路由复用残留）也不写。
+  // aiExplains 用防抖快照：AI 解析流式期间每个 token 都会更新它，直接进依赖
+  // 会导致整轮草稿 JSON 每秒写 localStorage 几十次（长题库明显卡顿）
+  const aiExplainsDebouncedRef = useRef<typeof aiExplains>({});
+  const aiExplainsDirtyRef = useRef(false);
+  useEffect(() => {
+    aiExplainsDebouncedRef.current = aiExplains;
+    aiExplainsDirtyRef.current = true;
+  }, [aiExplains]);
   useEffect(() => {
     if (!round || round.bank_id !== bankId) return;
     saveDraft(bankId!, { round, idx, results, aiExplains });
-  }, [bankId, round, idx, results, aiExplains]);
+    aiExplainsDirtyRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bankId, round, idx, results]);
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (!aiExplainsDirtyRef.current) return;
+      const r = round;
+      if (!r || r.bank_id !== bankId) return;
+      saveDraft(bankId!, { round: r, idx, results, aiExplains: aiExplainsDebouncedRef.current });
+      aiExplainsDirtyRef.current = false;
+    }, 3000);
+    return () => {
+      clearInterval(t);
+      // 卸载时冲刷：流式解析最后一截不因离开页面丢失
+      if (aiExplainsDirtyRef.current && round && round.bank_id === bankId) {
+        saveDraft(bankId!, { round, idx, results, aiExplains: aiExplainsDebouncedRef.current });
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bankId, round, idx, results]);
 
   const handleAiExplained = (qId: string, text: string) => {
     setAiExplains((prev) => ({ ...prev, [qId]: text }));
@@ -209,11 +236,13 @@ export default function BankDrillPage() {
           </div>
         )}
 
-        <div className="mt-6 flex gap-2">
+        <div className="mt-6 flex flex-wrap items-center gap-2">
           <Button
-            onClick={() =>
-              start.mutate(round.mode === "wrong" && round.wrong_pool_size === 0 ? "random" : round.mode)
-            }
+            onClick={() => {
+              // 错题池以最新 stats 为准（本轮答对后池可能已清空，抽卷时的 pool_size 是旧值）
+              const wrongLeft = bank.stats?.wrong_count ?? round.wrong_pool_size;
+              start.mutate(round.mode === "wrong" && wrongLeft === 0 ? "random" : round.mode);
+            }}
             disabled={start.isPending}
           >
             {start.isPending ? <Spinner className="h-3.5 w-3.5" /> : null}
@@ -225,6 +254,8 @@ export default function BankDrillPage() {
           <Link to="/bank" className="inline-flex items-center px-3 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
             ← 题库列表
           </Link>
+          {/* 后端 400 的友好文案（新题刷完/错题池空）必须可见，否则按钮点了像没反应 */}
+          {startError && <ErrorText>{startError}</ErrorText>}
         </div>
       </div>
     );
@@ -375,7 +406,9 @@ export default function BankDrillPage() {
                       </span>
                     </div>
                     <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                      只从剩余 {newCount} 道未作答的新题中抽取，同一套题内绝无重复题目，做一题少一题。
+                      {newCount === 0
+                        ? "🎉 全库新题已刷穿！可切换「做题模式」综合复习巩固。"
+                        : `只从剩余 ${newCount} 道未作答的新题中抽取，同一套题内绝无重复题目，做一题少一题。`}
                     </p>
                   </div>
                   <Select

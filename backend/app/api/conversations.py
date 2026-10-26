@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 
@@ -14,7 +13,7 @@ from app.schemas.conversation import MessageCreate, MessageOut
 from app.services.context import build_annotation_messages
 from app.services.llm import create_adapter_from_settings
 from app.services.llm.errors import LLMError
-from app.services.profile import extract_and_update_learner_profile, trigger_profile_evolution
+from app.services.profile import trigger_profile_evolution
 
 logger = logging.getLogger(__name__)
 

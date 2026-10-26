@@ -7,7 +7,7 @@ import re
 from typing import Sequence
 
 from markdown_it import MarkdownIt
-from sqlalchemy import delete, select
+from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Annotation, Conversation, Document, Message, Section
@@ -114,13 +114,22 @@ async def create_auto_highlights(
     if not sections or not raw_markdown.strip():
         return []
 
-    # 1. 重新生成章节时：清理旧版本残留且未产生对话问答的自动划线
+    # 1. 重新生成章节时：清理旧版本残留且未产生对话问答的自动划线。
+    # 按 is_auto 标志精确圈定（老库迁移后历史自动划线 is_auto=0 清不掉——
+    # 兜底：note 命中教学标签前缀且无对话的也视为自动残留）
+    _AUTO_NOTE_PREFIXES = ("重点", "核心", "避坑", "黄金", "关键", "易错", "考点", "必看")
     existing_auto_anns = (
         await db.scalars(
             select(Annotation).where(
                 Annotation.document_id == doc.id,
-                Annotation.note.in_(["重点提炼", "核心概念", "避坑要害", "黄金法则", "关键结论"])
-                | Annotation.note.startswith("重点"),
+                or_(
+                    Annotation.is_auto.is_(True),
+                    and_(
+                        Annotation.note.isnot(None),
+                        Annotation.note != "",
+                        or_(*[Annotation.note.startswith(p) for p in _AUTO_NOTE_PREFIXES]),
+                    ),
+                ),
             )
         )
     ).all()
@@ -225,6 +234,7 @@ async def create_auto_highlights(
                 color=color,
                 note=note,
                 status="active",
+                is_auto=True,
             )
             db.add(ann)
             await db.flush()
@@ -242,4 +252,49 @@ async def create_auto_highlights(
 
     await db.flush()
     logger.info("created %d auto-highlights for document %s", len(created_anns), doc.id)
+    # 模型候选 >=3 但全部锚定失败时，补一轮加粗/避坑语句兜底，避免整章零重点
+    if len(created_anns) == 0 and len(candidates) >= MIN_AUTO_HIGHLIGHTS:
+        for fb in extract_fallback_candidates(parsed_blocks):
+            if len(created_anns) >= MIN_AUTO_HIGHLIGHTS:
+                break
+            if any(c[0] == fb[0] for c in candidates):
+                continue
+            candidates.append(fb)
+            exact_text, note, color = fb
+            if len(exact_text) < 6 or len(exact_text) > 120:
+                continue
+            for sec in candidate_sections:
+                plain = plain_map.get(sec.id, "")
+                idx = plain.find(exact_text)
+                if idx < 0:
+                    continue
+                end_idx = idx + len(exact_text)
+                if any(
+                    max(idx, o_start) < min(end_idx, o_end)
+                    for o_start, o_end in occupied_ranges[sec.id]
+                ):
+                    continue
+                prefix = plain[max(0, idx - CONTEXT_CHARS) : idx]
+                suffix = plain[end_idx : end_idx + CONTEXT_CHARS]
+                ann = Annotation(
+                    document_id=doc.id,
+                    section_id=sec.id,
+                    version=doc.version,
+                    exact=exact_text,
+                    prefix=prefix,
+                    suffix=suffix,
+                    start_offset=idx,
+                    end_offset=end_idx,
+                    color=color,
+                    note=note,
+                    status="active",
+                    is_auto=True,
+                )
+                db.add(ann)
+                await db.flush()
+                db.add(Conversation(kind="annotation", annotation_id=ann.id))
+                occupied_ranges[sec.id].append((idx, end_idx))
+                created_anns.append(ann)
+                break
+
     return created_anns

@@ -13,6 +13,10 @@ interface Props {
   closing?: boolean;
   onClose: () => void;
   onNodeUpdate: (nodeId: string, updates: Partial<MindMapNode>) => void;
+  /** 打开"添加子分支"模态框（画布 hover 工具栏在触屏上不可达，抽屉内提供常显入口） */
+  onAddChild?: (nodeId: string) => void;
+  /** 删除该分支（含确认） */
+  onDelete?: (nodeId: string) => void;
 }
 
 function findNodeInTree(node: MindMapNode, targetId: string): MindMapNode | null {
@@ -41,6 +45,8 @@ export default function NodeDetailDrawer({
   closing = false,
   onClose,
   onNodeUpdate,
+  onAddChild,
+  onDelete,
 }: Props) {
   const [mounted, setMounted] = useState(false);
   const { fontSize } = useFontSize("course");
@@ -234,6 +240,26 @@ export default function NodeDetailDrawer({
       <div className="flex-1 space-y-4 overflow-y-auto p-4">
         {/* 概念标题卡片 */}
         <div className="rounded-xl border border-gray-200 dark:border-gray-700/80 bg-gray-50/60 dark:bg-gray-800/40 p-3.5">
+          <div className="mb-2 flex flex-wrap items-center gap-1.5">
+            {onAddChild && nodeId && (
+              <button
+                type="button"
+                onClick={() => onAddChild(nodeId)}
+                className="rounded-lg border border-brand-200 dark:border-brand-800 bg-white dark:bg-gray-800 px-2 py-1 text-[11px] font-medium text-brand-700 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-brand-900/40 transition"
+              >
+                ＋ 添加子分支
+              </button>
+            )}
+            {onDelete && nodeId && rootNode.id !== nodeId && (
+              <button
+                type="button"
+                onClick={() => onDelete(nodeId)}
+                className="rounded-lg border border-red-200 dark:border-red-900/60 bg-white dark:bg-gray-800 px-2 py-1 text-[11px] font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition"
+              >
+                🗑 删除此分支
+              </button>
+            )}
+          </div>
           {isEditingTitle ? (
             <div className="space-y-2">
               <input

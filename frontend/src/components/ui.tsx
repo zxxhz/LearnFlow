@@ -111,6 +111,9 @@ export function Spinner({ className = "" }: { className?: string }) {
   );
 }
 
+// 打开中的模态框栈：只有栈顶的模态框响应 Esc（叠放时一次 Esc 只关最上层）
+const _openModals: symbol[] = [];
+
 export function Modal({
   open,
   onClose,
@@ -124,17 +127,25 @@ export function Modal({
   children: ReactNode;
   width?: string;
 }) {
-  // Esc 关闭模态框
+  // Esc 关闭栈顶模态框；用 stopImmediatePropagation 防止同窗口上其他 Esc 监听
+  // （阅读页抽屉、导图面板等）在同一次按键里被同时触发
   useEffect(() => {
     if (!open) return;
+    const token = Symbol("modal");
+    _openModals.push(token);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
+      if (e.key !== "Escape") return;
+      if (_openModals[_openModals.length - 1] !== token) return; // 不是栈顶，交给上层模态框
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      onClose();
     };
     window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
+    return () => {
+      const i = _openModals.indexOf(token);
+      if (i >= 0) _openModals.splice(i, 1);
+      window.removeEventListener("keydown", onKey, true);
+    };
   }, [open, onClose]);
 
   if (!open) return null;

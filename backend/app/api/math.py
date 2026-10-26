@@ -10,7 +10,6 @@ import logging
 import matplotlib
 
 matplotlib.use("Agg")  # 无显示环境
-import matplotlib.pyplot as plt  # noqa: E402
 import sympy as sp  # noqa: E402
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator  # noqa: E402
@@ -69,8 +68,9 @@ def _parse_line(line: str, x: sp.Symbol) -> sp.Expr:
 
 
 def render_sync(expressions: str, x_min: float, x_max: float) -> str:
-    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "sans-serif"]
-    plt.rcParams["axes.unicode_minus"] = False
+    # 全局 rcParams 供所有 Figure 生效（不经过 pyplot 全局状态机）
+    matplotlib.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "sans-serif"]
+    matplotlib.rcParams["axes.unicode_minus"] = False
 
     x = sp.Symbol("x")
     lines = [l for l in expressions.strip().splitlines() if l.strip()][:MAX_LINES]

@@ -52,7 +52,6 @@ PYTHON_SHA256 = "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c
 ASSET_SHA256: dict[str, str] = {"cpp": MINGW_SHA256, "python": PYTHON_SHA256}
 
 # 镜像前缀按优先级排列，并发竞速试读择优；空串 = GitHub 直连
-_GITHUB_MIRRORS = ["", "https://ghproxy.net/", "https://gh-proxy.com/"]
 
 Component = Literal["python", "cpp"]
 

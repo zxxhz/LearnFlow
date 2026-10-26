@@ -229,50 +229,10 @@ async def check_update(db: AsyncSession, force: bool = False) -> dict:
     return result
 
 
-def _find_learnflow_desktop_exe() -> str:
-    """查找 LearnFlow 桌面端主程序（learnflow-desktop.exe）的绝对路径。"""
-    import os
-    import sys
-    from pathlib import Path
-
-    names = ["learnflow-desktop.exe", "LearnFlow.exe"]
-
-    # 1. 优先从当前可执行文件（如 .../LearnFlow/backend/learnflow-backend.exe）的父级目录查找
-    cur = Path(sys.executable).resolve()
-    for parent in [cur.parent, cur.parent.parent, cur.parent.parent.parent]:
-        for name in names:
-            candidate = parent / name
-            if candidate.exists():
-                return str(candidate)
-
-    # 2. 查找 LOCALAPPDATA 与 ProgramFiles 常见安装目录
-    search_dirs: list[Path] = []
-    local_appdata = os.environ.get("LOCALAPPDATA", "")
-    if local_appdata:
-        search_dirs.extend([
-            Path(local_appdata) / "LearnFlow",
-            Path(local_appdata) / "Programs" / "LearnFlow",
-        ])
-    prog_files = os.environ.get("ProgramFiles", "")
-    if prog_files:
-        search_dirs.append(Path(prog_files) / "LearnFlow")
-    prog_files_x86 = os.environ.get("ProgramFiles(x86)", "")
-    if prog_files_x86:
-        search_dirs.append(Path(prog_files_x86) / "LearnFlow")
-
-    for d in search_dirs:
-        for name in names:
-            candidate = d / name
-            if candidate.exists():
-                return str(candidate)
-
-    return ""
-
 
 def _launch_installer_and_exit(installer_path: "Path") -> None:
     """唤起已下载的最新安装包界面并平稳退出当前旧版本进程，彻底释放文件锁。"""
     import os
-    import sys
     import threading
     import time
     from pathlib import Path
@@ -290,17 +250,57 @@ def _launch_installer_and_exit(installer_path: "Path") -> None:
 
     # 2. 延迟 1.5 秒后主动终止旧版本前端壳与后端，释放所有文件占用
     def _delayed_exit():
-        time.sleep(1.5)
         import subprocess
+        import sys
+        time.sleep(1.5)
         if sys.platform == "win32":
             subprocess.run("taskkill /F /IM learnflow-desktop.exe >nul 2>&1", shell=True)
             subprocess.run("taskkill /F /IM LearnFlow.exe >nul 2>&1", shell=True)
             subprocess.run("taskkill /F /IM learnflow-backend.exe >nul 2>&1", shell=True)
-        sys.exit(0)
+        # sys.exit 在非主线程只结束本线程（开发模式后端会存活锁文件），必须硬退出进程
+        os._exit(0)
 
     t = threading.Thread(target=_delayed_exit, daemon=True)
     t.start()
     logger.info("已启动安装向导并安排旧进程退出: %s", installer_str)
+
+
+def _allowed_download_hosts() -> set[str]:
+    """下载源域名白名单：官方 GitHub 域 + 已配置镜像源的域。
+
+    该接口执行下载并唤起安装包，direct_url 不做白名单校验就是任意下载执行链
+    （回环免令牌 + GET，浏览器任意页面均可触发）。
+    """
+    from urllib.parse import urlparse
+
+    hosts = {
+        "github.com",
+        "api.github.com",
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com",
+        "codeload.github.com",
+    }
+    try:
+        for prefix in get_ordered_mirror_prefixes():
+            try:
+                host = urlparse(prefix if "://" in prefix else f"https://{prefix}").hostname
+                if host:
+                    hosts.add(host.lower())
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    return hosts
+
+
+def _sanitize_version(version: str) -> str:
+    """版本号只允许数字与点（防止拼进落盘文件名的路径穿越）。"""
+    import re
+
+    v = (version or "").strip().lstrip("vV")
+    if not re.fullmatch(r"\d+(\.\d+)*", v):
+        raise ValueError(f"非法版本号：{version!r}")
+    return v
 
 
 async def stream_download_and_install(target_version: str, direct_url: str | None = None):
@@ -308,15 +308,28 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
     import json
     import tempfile
     from pathlib import Path
+    from urllib.parse import urlparse
 
     repo = _effective_repo() or "zxxhz/LearnFlow"
-    clean_v = target_version.lstrip("vV")
+    try:
+        clean_v = _sanitize_version(target_version)
+    except ValueError as e:
+        yield f"data: {json.dumps({'type': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
+        return
     raw_github_exe = f"https://github.com/{repo}/releases/download/v{clean_v}/LearnFlow_{clean_v}_x64-setup.exe"
+
+    # 域名白名单校验：direct_url 只接受官方域或已配置镜像域
+    allowed_hosts = _allowed_download_hosts()
 
     # 确定候选下载 URL 列表（首选用已加速链接或当前最优镜像，随后按测速优先级排序）
     urls_to_try: list[str] = []
     if direct_url and direct_url.strip():
-        urls_to_try.append(direct_url.strip())
+        candidate = direct_url.strip()
+        parsed = urlparse(candidate)
+        if parsed.scheme in ("http", "https") and parsed.hostname and parsed.hostname.lower() in allowed_hosts:
+            urls_to_try.append(candidate)
+        else:
+            logger.warning("拒绝白名单外的 direct_url: %s", candidate)
 
     active_accelerated = apply_mirror(raw_github_exe)
     if active_accelerated not in urls_to_try:
@@ -329,6 +342,12 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
 
     temp_dir = Path(tempfile.gettempdir()) / "LearnFlow_Update"
     temp_dir.mkdir(parents=True, exist_ok=True)
+    # 清理历史残留的半截安装包，避免旧版本文件被误唤起
+    for stale in temp_dir.glob("LearnFlow_*-setup.exe"):
+        try:
+            stale.unlink()
+        except OSError:
+            pass
     installer_path = temp_dir / f"LearnFlow_{clean_v}_x64-setup.exe"
 
     headers = {"User-Agent": "LearnFlow-InAppUpdater/1.0"}

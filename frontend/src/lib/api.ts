@@ -56,6 +56,16 @@ import { streamSSE, subscribeSSE } from "./sse";
 
 const BASE = "/api";
 
+/** 令牌失效（401）时广播：AuthGate 弹出重录入弹窗，用户粘贴新地址/令牌自救 */
+export function notifyAuthExpired(): void {
+  try {
+    localStorage.removeItem("lf_access_token");
+  } catch {
+    /* ignore */
+  }
+  window.dispatchEvent(new CustomEvent("learnflow:auth-expired"));
+}
+
 export function getAccessToken(): string {
   if (typeof window === "undefined") return "";
   try {
@@ -93,7 +103,8 @@ export async function downloadFile(path: string): Promise<void> {
   a.href = url;
   a.download = name;
   a.click();
-  URL.revokeObjectURL(url);
+  // 下一 tick 再 revoke：WebKit 内核下同步 revoke 可能取消尚未开始的下载
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -120,6 +131,10 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
       }
     } catch {
       /* ignore */
+    }
+    if (res.status === 401) {
+      // 令牌失效（如局域网令牌被轮换）：清缓存并广播，AuthGate 引导用户粘贴新令牌
+      notifyAuthExpired();
     }
     throw new Error(detail);
   }

@@ -383,10 +383,8 @@ export default function ReaderPage() {
       setFlashSection(sectionId);
       setTimeout(() => setFlashSection(null), 1600);
     }
-    if (annId) {
-      // 闪示高亮由 BlockView 的 activeAnnId 处理
-      setActiveAnn((prev) => (prev && prev.id === annId ? prev : prev));
-    }
+    // annId 的闪示高亮由 BlockView 的 activeAnnId 处理（调用方会另行打开标注）
+    void annId;
   };
 
   // URL ?section= 定位（知识点浮层跳转入口）
@@ -420,17 +418,61 @@ export default function ReaderPage() {
   }, [reAnchoring, invalidate]);
 
   // ===== 阅读进度记忆（滚动容器为内部 main，window.scrollY 恒为 0） =====
+  // 存相对比例而非像素：字号 13–24px 可调 + 异步布局（Shiki/执行结果面板晚到）
+  // 会让同一像素落在不同相对位置；比例在恢复后再补偿一次以覆盖晚到的布局变化
   useEffect(() => {
     if (!documentId || !content) return;
     const el = scrollRef.current;
     if (!el) return;
-    const saved = localStorage.getItem(`reading-progress-${documentId}`);
-    if (saved) el.scrollTop = Number(saved);
+    const applyRatio = (ratio: number) => {
+      const scrollable = el.scrollHeight - el.clientHeight;
+      if (scrollable > 0) el.scrollTop = Math.round(ratio * scrollable);
+    };
+    try {
+      const saved = JSON.parse(localStorage.getItem(`reading-progress-${documentId}`) || "null");
+      if (saved && typeof saved === "object" && typeof saved.ratio === "number") {
+        applyRatio(saved.ratio);
+      } else if (saved && typeof saved === "number") {
+        el.scrollTop = saved; // 旧版本存的像素值
+      }
+    } catch {
+      /* 损坏的进度记录忽略 */
+    }
     const onScroll = () => {
-      localStorage.setItem(`reading-progress-${documentId}`, String(el.scrollTop));
+      const scrollable = el.scrollHeight - el.clientHeight;
+      const ratio = scrollable > 0 ? el.scrollTop / scrollable : 0;
+      try {
+        localStorage.setItem(
+          `reading-progress-${documentId}`,
+          JSON.stringify({ ratio: Math.min(1, Math.max(0, ratio)), top: el.scrollTop })
+        );
+      } catch {
+        /* 存储不可用忽略 */
+      }
     };
     el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
+    // 晚到的布局变化（Shiki 高亮/运行结果/图片）会把已恢复位置推走：延迟补偿两次；
+    // 用户已主动滚动（滚轮/触摸）后不再干预
+    const reapply = () => {
+      if (el.dataset.userScrolled) return;
+      try {
+        const saved = JSON.parse(localStorage.getItem(`reading-progress-${documentId}`) || "null");
+        if (saved?.ratio != null) applyRatio(saved.ratio);
+      } catch {}
+    };
+    const t1 = setTimeout(reapply, 400);
+    const t2 = setTimeout(reapply, 1200);
+    const markUser = () => {
+      el.dataset.userScrolled = "1";
+    };
+    el.addEventListener("wheel", markUser, { once: true, passive: true });
+    el.addEventListener("touchstart", markUser, { once: true, passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      delete el.dataset.userScrolled;
+    };
   }, [documentId, content]);
 
   // ===== 切换章节时重置章节级 UI 状态，防止上一章的抽屉/卡片/错误提示残留 =====
@@ -452,6 +494,9 @@ export default function ReaderPage() {
     setRegenMsg("");
     setRunError("");
     setRunningSection(null);
+    setTocOpen(false);
+    setRegenOpen(false);
+    setRegenInstruction("");
     for (const key of Object.keys(closeTimerRef.current)) {
       clearTimeout(closeTimerRef.current[key]);
       delete closeTimerRef.current[key];
