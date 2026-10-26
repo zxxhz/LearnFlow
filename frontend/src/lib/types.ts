@@ -602,6 +602,35 @@ export interface LearnerProfileUpdate {
   socratic_mode?: boolean;
 }
 
+export interface LastReadChapter {
+  course_id: string;
+  course_title: string;
+  document_id: string;
+  chapter_index: number;
+  chapter_title: string;
+}
+
+export interface HardBoneItem {
+  id: string;
+  title: string;
+  document_id: string;
+  kind: string;
+}
+
+export interface ActiveMisconceptionItem {
+  id: string;
+  topic: string;
+  tag?: string | null;
+}
+
+export interface TodayStudyHubOut {
+  last_read?: LastReadChapter | null;
+  hard_bones: HardBoneItem[];
+  active_misconceptions: ActiveMisconceptionItem[];
+  bank_wrong_count: number;
+  today_read_seconds: number;
+}
+
 // ===== 思维导图 (Mind Map 独立模块) =====
 export interface MindMapNode {
   id: string;

@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { Badge, Button, EmptyState, Spinner } from "../../components/ui";
+import { TodayStudyHub } from "./TodayStudyHub";
 
 const STATUS_BADGE: Record<string, { label: string; color: "gray" | "green" | "blue" | "amber" }> = {
   draft: { label: "草稿", color: "gray" },
@@ -35,6 +36,9 @@ export default function HomePage() {
           <Button onClick={() => navigate("/courses/new")}>＋ 新建课程</Button>
         </div>
       </div>
+
+      {/* 首页「今天」学习行动中枢 */}
+      <TodayStudyHub />
 
       {isLoading ? (
         <div className="flex justify-center py-20">

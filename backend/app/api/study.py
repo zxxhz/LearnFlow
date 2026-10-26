@@ -1,11 +1,12 @@
 """学习服务：阅读心跳打点与学习者认知画像管理。"""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
-from sqlalchemy import delete
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.models import StudyDay
+from app.models import Annotation, Course, Document, Exercise, StudyDay
+from app.models.bank import BankAttempt
 from app.models.base import utcnow_iso
 from app.models.study import LearnerMisconception, LearnerProfile
 from app.services.prefs import local_today
@@ -53,6 +54,123 @@ async def ping(body: StudyPing, db: AsyncSession = Depends(get_db)):
         row.updated_at = utcnow_iso()
         await db.commit()
     return {"ok": True, "day": day, "seconds": row.seconds}
+
+
+# ---------------- 首页「今天」学习行动中枢 API ----------------
+
+
+class LastReadChapter(BaseModel):
+    course_id: str
+    course_title: str
+    document_id: str
+    chapter_index: int
+    chapter_title: str
+
+
+class HardBoneItem(BaseModel):
+    id: str
+    title: str
+    document_id: str
+    kind: str
+
+
+class ActiveMisconceptionItem(BaseModel):
+    id: str
+    topic: str
+    tag: str | None = None
+
+
+class TodayStudyHubOut(BaseModel):
+    last_read: LastReadChapter | None = None
+    hard_bones: list[HardBoneItem] = []
+    active_misconceptions: list[ActiveMisconceptionItem] = []
+    bank_wrong_count: int = 0
+    today_read_seconds: int = 0
+
+
+@router.get("/today", response_model=TodayStudyHubOut)
+async def get_today_hub(db: AsyncSession = Depends(get_db)):
+    """首页「今天」学习行动中枢数据聚合（§8）。"""
+    day = local_today().isoformat()
+    today_row = await db.get(StudyDay, day)
+    today_seconds = today_row.seconds if today_row else 0
+
+    # 1. 最近阅读课程与章节
+    last_read: LastReadChapter | None = None
+    last_ann = (
+        await db.scalars(
+            select(Annotation).order_by(Annotation.updated_at.desc()).limit(1)
+        )
+    ).first()
+    target_doc_id = last_ann.document_id if last_ann else None
+
+    if not target_doc_id:
+        last_done_doc = (
+            await db.scalars(
+                select(Document).where(Document.status == "done").order_by(Document.updated_at.desc()).limit(1)
+            )
+        ).first()
+        target_doc_id = last_done_doc.id if last_done_doc else None
+
+    if target_doc_id:
+        doc = await db.get(Document, target_doc_id)
+        if doc:
+            course = await db.get(Course, doc.course_id)
+            if course:
+                last_read = LastReadChapter(
+                    course_id=course.id,
+                    course_title=course.title,
+                    document_id=doc.id,
+                    chapter_index=doc.chapter_index,
+                    chapter_title=doc.title,
+                )
+
+    # 2. 待攻克硬骨头关卡
+    hard_bones_rows = (
+        await db.scalars(
+            select(Exercise).where(Exercise.is_hard_bone.is_(True)).limit(5)
+        )
+    ).all()
+    hard_bones = [
+        HardBoneItem(id=e.id, title=e.title, document_id=e.document_id, kind=e.kind)
+        for e in hard_bones_rows
+    ]
+
+    # 3. 待攻坚活跃认知盲区
+    misconceptions = await get_active_misconceptions(db, limit=5)
+    active_misconceptions = [
+        ActiveMisconceptionItem(id=m.id, topic=m.topic, tag=m.tag)
+        for m in misconceptions
+    ]
+
+    # 4. 题库待清零错题总数
+    rn = func.row_number().over(
+        partition_by=BankAttempt.question_id, order_by=BankAttempt.created_at.desc()
+    ).label("rn")
+    sq = (
+        select(
+            BankAttempt.question_id.label("qid"),
+            BankAttempt.passed.label("ok"),
+            BankAttempt.is_doubtful.label("is_doubtful"),
+            rn,
+        ).subquery()
+    )
+    latest_attempts = select(sq.c.qid, sq.c.ok, sq.c.is_doubtful).where(sq.c.rn == 1).subquery()
+    bank_wrong_count = (
+        await db.scalar(
+            select(func.count(latest_attempts.c.qid)).where(
+                or_(latest_attempts.c.ok.is_(False), latest_attempts.c.is_doubtful.is_(True))
+            )
+        )
+    ) or 0
+
+    return TodayStudyHubOut(
+        last_read=last_read,
+        hard_bones=hard_bones,
+        active_misconceptions=active_misconceptions,
+        bank_wrong_count=bank_wrong_count,
+        today_read_seconds=today_seconds,
+    )
 
 
 # ---------------- 学习者画像相关 API ----------------

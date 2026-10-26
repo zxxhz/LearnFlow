@@ -56,6 +56,7 @@ import type {
   MindMapNodeDetailSSEEvent,
   MindMapNodeQASSEEvent,
   TutorSSEEvent,
+  TodayStudyHubOut,
 } from "./types";
 import { streamSSE, subscribeSSE } from "./sse";
 
@@ -392,6 +393,7 @@ export const api = {
   },
   study: {
     ping: (seconds: number) => request<{ ok: boolean }>("/study/ping", { method: "POST", ...jsonBody({ seconds }) }),
+    today: () => request<TodayStudyHubOut>("/study/today"),
   },
   system: {
     accessInfo: () => request<AccessInfo>("/system/access-info"),
