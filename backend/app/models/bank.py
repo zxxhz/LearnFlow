@@ -56,3 +56,4 @@ class BankAttempt(UUIDPk, UserIdMixin, CreatedAt, Base):
     )
     content: Mapped[str] = mapped_column(String(40), default="")  # 提交字母，多选 "A,C"
     passed: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_doubtful: Mapped[bool] = mapped_column(Boolean, default=False)

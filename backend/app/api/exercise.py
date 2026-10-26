@@ -44,7 +44,9 @@ async def wrongbook(db: AsyncSession = Depends(get_db)):
 @router.post("/{exercise_id}/submit", response_model=ExerciseAttemptOut)
 async def submit(exercise_id: str, body: ExerciseSubmitRequest, db: AsyncSession = Depends(get_db)):
     try:
-        attempt = await exercise_service.submit(db, exercise_id, body.content)
+        attempt = await exercise_service.submit(
+            db, exercise_id, body.content, is_doubtful=body.is_doubtful
+        )
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except PermissionError as e:

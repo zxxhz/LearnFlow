@@ -214,6 +214,7 @@ export interface ExerciseAttempt {
   stderr: string;
   duration_ms: number | null;
   passed: boolean | null;
+  is_doubtful?: boolean;
   feedback: string;
   created_at: string;
 }
@@ -515,6 +516,7 @@ export interface BankWrongQuestion extends BankQuestion {
 export interface BankAttemptResult {
   attempt_id: string;
   passed: boolean;
+  is_doubtful?: boolean;
   user_answer?: string;
   answer: string;
   correct_answer: string;

@@ -41,6 +41,7 @@ export default function BankQuestionCard({
 }) {
   const multi = question.qtype === "multi";
   const [picked, setPicked] = useState<string[]>([]);
+  const [isDoubtful, setIsDoubtful] = useState(false);
   const [result, setResult] = useState<BankAttemptResult | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
@@ -104,7 +105,7 @@ export default function BankQuestionCard({
     setPending(true);
     setError("");
     try {
-      const r = await api.banks.attempt(question.id, picked);
+      const r = await api.banks.attempt(question.id, picked, isDoubtful);
       setResult(r);
       if (r.ai_explanation && !aiText) {
         setAiText(r.ai_explanation);
@@ -207,8 +208,15 @@ export default function BankQuestionCard({
 
       {result ? (
         <div className="drill-result-banner mt-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 p-3">
-          <div className={result.passed ? "text-green-700 dark:text-green-400 font-semibold" : "text-red-700 dark:text-red-400 font-semibold"}>
-            {result.passed ? "✓ 回答正确" : `✗ 回答错误 · 正确答案：${result.correct_answer}`}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={result.passed ? "text-green-700 dark:text-green-400 font-semibold" : "text-red-700 dark:text-red-400 font-semibold"}>
+              {result.passed ? "✓ 回答正确" : `✗ 回答错误 · 正确答案：${result.correct_answer}`}
+            </span>
+            {result.is_doubtful && (
+              <span className="rounded-full bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 px-2 py-0.5 text-xs text-amber-800 dark:text-amber-300 font-normal">
+                🤔 存疑作答（已留存强化）
+              </span>
+            )}
           </div>
           {result.explanation && (
             <p className="drill-explanation-text mt-1.5 whitespace-pre-wrap leading-relaxed text-gray-600 dark:text-gray-400">
@@ -312,23 +320,34 @@ export default function BankQuestionCard({
           )}
         </div>
       ) : (
-        <div className="mt-3 flex items-center justify-end gap-2">
-          {multi && picked.length > 0 && !pending && (
-            <span className="text-xs text-gray-400 dark:text-gray-500">
-              已选 {[...picked].sort().join("、")}
-            </span>
-          )}
-          <Button disabled={pending || picked.length === 0} onClick={submit}>
-            {pending ? (
-              <>
-                <Spinner className="h-3.5 w-3.5" /> 判定中…
-              </>
-            ) : multi ? (
-              "提交（可多选）"
-            ) : (
-              "提交"
+        <div className="mt-3 flex items-center justify-between gap-2 flex-wrap">
+          <label className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 select-none cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isDoubtful}
+              onChange={(e) => setIsDoubtful(e.target.checked)}
+              className="rounded text-brand-600 focus:ring-brand-500"
+            />
+            <span>🤔 凭运气蒙的 / 不确定</span>
+          </label>
+          <div className="flex items-center gap-2">
+            {multi && picked.length > 0 && !pending && (
+              <span className="text-xs text-gray-400 dark:text-gray-500">
+                已选 {[...picked].sort().join("、")}
+              </span>
             )}
-          </Button>
+            <Button disabled={pending || picked.length === 0} onClick={submit}>
+              {pending ? (
+                <>
+                  <Spinner className="h-3.5 w-3.5" /> 判定中…
+                </>
+              ) : multi ? (
+                "提交（可多选）"
+              ) : (
+                "提交"
+              )}
+            </Button>
+          </div>
         </div>
       )}
       <ErrorText>{error}</ErrorText>

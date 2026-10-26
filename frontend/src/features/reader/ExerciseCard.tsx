@@ -48,6 +48,7 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
   const [revealed, setRevealed] = useState(false);
   const [hintsShown, setHintsShown] = useState(1); // 第 1 条提示默认给出
   const [showRef, setShowRef] = useState(false);
+  const [isDoubtful, setIsDoubtful] = useState(false);
   const adoptedAttempt = useRef<string | null>(null);
 
   // 助教伴学诊断状态
@@ -89,7 +90,7 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
   const submit = useMutation({
     mutationFn: () => {
       const content = isCode ? (draft ?? "") : isChoice ? (choicePick ?? "") : answer;
-      return api.exercises.submit(exercise.id, content);
+      return api.exercises.submit(exercise.id, content, isDoubtful);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["exercises", documentId] });
@@ -370,6 +371,7 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
           {locked && <Badge color="gray">🔒 未解锁</Badge>}
           {attempt?.passed === true && <Badge color="green">✅ 通关</Badge>}
           {attempt?.passed === false && <Badge color="red">❌ 未通过</Badge>}
+          {attempt?.is_doubtful && <Badge color="amber">🤔 存疑作答</Badge>}
           {attempt && isCode && STATUS_BADGE[attempt.status] && (
             <Badge color={STATUS_BADGE[attempt.status].color}>{STATUS_BADGE[attempt.status].label}</Badge>
           )}
@@ -456,25 +458,36 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
               placeholder="从零写下你的代码…"
               className="mt-2 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-2.5 font-mono exercise-code-editor text-gray-800 dark:text-gray-200 focus:border-brand-500 dark:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-500"
             />
-            <div className="mt-2 flex items-center gap-2">
-              <Button
-                className="bg-green-700/90 text-white hover:bg-green-700"
-                disabled={pending || !content.trim()}
-                onClick={() => submit.mutate()}
-              >
-                {pending ? (
-                  <>
-                    <Spinner className="h-3.5 w-3.5 border-gray-300 dark:border-gray-600 border-t-white" /> 运行判定中…
-                  </>
-                ) : (
-                  "▶ 运行判定"
-                )}
-              </Button>
-              {draft !== null && draft !== "" && (
-                <Button variant="ghost" className="text-xs" onClick={() => setDraft(null)}>
-                  ↺ 清空
+            <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Button
+                  className="bg-green-700/90 text-white hover:bg-green-700"
+                  disabled={pending || !content.trim()}
+                  onClick={() => submit.mutate()}
+                >
+                  {pending ? (
+                    <>
+                      <Spinner className="h-3.5 w-3.5 border-gray-300 dark:border-gray-600 border-t-white" /> 运行判定中…
+                    </>
+                  ) : (
+                    "▶ 运行判定"
+                  )}
                 </Button>
-              )}
+                {draft !== null && draft !== "" && (
+                  <Button variant="ghost" className="text-xs" onClick={() => setDraft(null)}>
+                    ↺ 清空
+                  </Button>
+                )}
+              </div>
+              <label className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 select-none cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={isDoubtful}
+                  onChange={(e) => setIsDoubtful(e.target.checked)}
+                  className="rounded text-brand-600 focus:ring-brand-500"
+                />
+                <span>🤔 存疑/不确定</span>
+              </label>
             </div>
             {renderAttemptResult()}
           </>
@@ -508,7 +521,7 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
               );
             })}
           </div>
-          <div className="mt-2">
+          <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
             <Button disabled={pending || !choicePick} onClick={() => submit.mutate()}>
               {pending ? (
                 <>
@@ -518,6 +531,15 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
                 "提交答案"
               )}
             </Button>
+            <label className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 select-none cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isDoubtful}
+                onChange={(e) => setIsDoubtful(e.target.checked)}
+                className="rounded text-brand-600 focus:ring-brand-500"
+              />
+              <span>🤔 存疑/不确定</span>
+            </label>
           </div>
           {renderAttemptResult()}
         </>
@@ -533,7 +555,7 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
             aria-label="填空题作答"
             className="mt-2 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-2.5 exercise-input-box text-gray-800 dark:text-gray-200 focus:border-brand-500 dark:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
-          <div className="mt-2">
+          <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
             <Button disabled={pending || !answer.trim()} onClick={() => submit.mutate()}>
               {pending ? (
                 <>
@@ -543,6 +565,15 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
                 "提交答案"
               )}
             </Button>
+            <label className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 select-none cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isDoubtful}
+                onChange={(e) => setIsDoubtful(e.target.checked)}
+                className="rounded text-brand-600 focus:ring-brand-500"
+              />
+              <span>🤔 存疑/不确定</span>
+            </label>
           </div>
           {renderAttemptResult()}
         </>
@@ -563,25 +594,36 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
               className="w-full rounded-lg border border-purple-200 dark:border-purple-800/60 bg-purple-50/20 dark:bg-purple-950/20 p-2.5 font-mono exercise-input-box text-gray-800 dark:text-gray-200 focus:border-purple-500 dark:focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-500"
             />
           </div>
-          <div className="mt-2 flex items-center gap-2">
-            <Button
-              className="bg-purple-700/90 text-white hover:bg-purple-700"
-              disabled={pending || !answer.trim()}
-              onClick={() => submit.mutate()}
-            >
-              {pending ? (
-                <>
-                  <Spinner className="h-3.5 w-3.5 border-gray-300 dark:border-gray-600 border-t-white" /> 代数等价验证中…
-                </>
-              ) : (
-                "▶ 验证代数式"
-              )}
-            </Button>
-            {answer.trim() !== "" && (
-              <Button variant="ghost" className="text-xs" onClick={() => setAnswer("")}>
-                ↺ 清空
+          <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Button
+                className="bg-purple-700/90 text-white hover:bg-purple-700"
+                disabled={pending || !answer.trim()}
+                onClick={() => submit.mutate()}
+              >
+                {pending ? (
+                  <>
+                    <Spinner className="h-3.5 w-3.5 border-gray-300 dark:border-gray-600 border-t-white" /> 代数等价验证中…
+                  </>
+                ) : (
+                  "▶ 验证代数式"
+                )}
               </Button>
-            )}
+              {answer.trim() !== "" && (
+                <Button variant="ghost" className="text-xs" onClick={() => setAnswer("")}>
+                  ↺ 清空
+                </Button>
+              )}
+            </div>
+            <label className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 select-none cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isDoubtful}
+                onChange={(e) => setIsDoubtful(e.target.checked)}
+                className="rounded text-brand-600 focus:ring-brand-500"
+              />
+              <span>🤔 存疑/不确定</span>
+            </label>
           </div>
           {renderAttemptResult()}
         </>
@@ -596,17 +638,28 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
             aria-label="概念题作答"
             className="mt-2 w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-2.5 exercise-code-editor text-gray-800 dark:text-gray-200 focus:border-brand-500 dark:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-500"
           />
-          <div className="mt-2 flex items-center gap-2">
-            <Button disabled={pending || !answer.trim()} onClick={() => submit.mutate()}>
-              {pending ? (
-                <>
-                  <Spinner className="h-3.5 w-3.5" /> AI 评分中…
-                </>
-              ) : (
-                "提交评分"
-              )}
-            </Button>
-            <span className="text-[0.75em] text-gray-400 dark:text-gray-500">作答后会调用 LLM 按参考答案评分</span>
+          <div className="mt-2 flex items-center justify-between flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <Button disabled={pending || !answer.trim()} onClick={() => submit.mutate()}>
+                {pending ? (
+                  <>
+                    <Spinner className="h-3.5 w-3.5" /> AI 评分中…
+                  </>
+                ) : (
+                  "提交评分"
+                )}
+              </Button>
+              <span className="text-[0.75em] text-gray-400 dark:text-gray-500">按参考答案客观评分</span>
+            </div>
+            <label className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 select-none cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isDoubtful}
+                onChange={(e) => setIsDoubtful(e.target.checked)}
+                className="rounded text-brand-600 focus:ring-brand-500"
+              />
+              <span>🤔 存疑/不确定</span>
+            </label>
           </div>
           {attempt && (
             <div className="mt-2 space-y-2">

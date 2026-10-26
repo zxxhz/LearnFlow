@@ -60,4 +60,5 @@ class ExerciseAttempt(UUIDPk, UserIdMixin, CreatedAt, Base):
     stderr: Mapped[str] = mapped_column(Text, default="")
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_doubtful: Mapped[bool] = mapped_column(Boolean, default=False)
     feedback: Mapped[str] = mapped_column(Text, default="")

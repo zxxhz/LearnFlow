@@ -71,6 +71,7 @@ class QuizGenerateRequest(BaseModel):
 
 class ExerciseSubmitRequest(BaseModel):
     content: str
+    is_doubtful: bool = False
 
     @field_validator("content")
     @classmethod
@@ -92,6 +93,7 @@ class ExerciseAttemptOut(ORMModel):
     stderr: str
     duration_ms: int | None
     passed: bool | None
+    is_doubtful: bool = False
     feedback: str
     created_at: str
 

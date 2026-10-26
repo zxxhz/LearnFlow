@@ -319,10 +319,10 @@ export const api = {
     list: (documentId: string) =>
       request<Exercise[]>(`/exercises?document_id=${documentId}`),
     wrongbook: () => request<Exercise[]>("/exercises/wrongbook"),
-    submit: (id: string, content: string) =>
+    submit: (id: string, content: string, is_doubtful?: boolean) =>
       request<ExerciseAttempt>(`/exercises/${id}/submit`, {
         method: "POST",
-        ...jsonBody({ content }),
+        ...jsonBody({ content, is_doubtful: is_doubtful ?? false }),
       }),
     remove: (id: string) => request<{ ok: boolean }>(`/exercises/${id}`, { method: "DELETE" }),
   },
@@ -356,10 +356,10 @@ export const api = {
         method: "POST",
         ...jsonBody({ mode, size }),
       }),
-    attempt: (questionId: string, content: string[]) =>
+    attempt: (questionId: string, content: string[], is_doubtful?: boolean) =>
       request<BankAttemptResult>("/banks/attempts", {
         method: "POST",
-        ...jsonBody({ question_id: questionId, content }),
+        ...jsonBody({ question_id: questionId, content, is_doubtful: is_doubtful ?? false }),
       }),
     wrong: (id: string) => request<BankWrongQuestion[]>(`/banks/${id}/wrong`),
     rename: (id: string, name: string) =>

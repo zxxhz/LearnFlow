@@ -60,6 +60,41 @@ def _norm_choice(s: str) -> str:
     return t[:1] if t and t[0] in CHOICE_LETTERS else t
 
 
+def is_hardcoded_output(content: str, expected_output: str) -> bool:
+    """检测代码是否直接通过打印语句硬编码目标输出（缺乏变量计算或算法逻辑，§2）。"""
+    norm_exp = normalize_output(expected_output)
+    if not norm_exp or len(norm_exp) < 3:
+        return False
+
+    code_lines = [
+        line.strip()
+        for line in content.split("\n")
+        if line.strip() and not line.strip().startswith(("#", "//", "/*", "*"))
+    ]
+    if len(code_lines) > 5:
+        return False
+
+    code_text = " ".join(code_lines)
+    quoted_match = (
+        f'"{norm_exp}"' in code_text
+        or f"'{norm_exp}'" in code_text
+        or f'"""{norm_exp}"""' in code_text
+        or f"'''{norm_exp}'''" in code_text
+    )
+    if not quoted_match:
+        return False
+
+    has_logic = any(
+        kw in code_text
+        for kw in (
+            "for ", "while ", "def ", "class ", "if ", "else",
+            "+", "-", "*", "/", "%", "==", "!=", "<", ">",
+            "sum(", "len(", "range(", "map(", "filter(", "std::vector", "std::cin"
+        )
+    )
+    return not has_logic
+
+
 def _fill_answers(answer_json: str) -> list[str]:
     try:
         data = json.loads(answer_json)
@@ -309,8 +344,10 @@ async def wrongbook(db: AsyncSession) -> list[ExerciseOut]:
     return await _attach_meta(db, exercises)
 
 
-async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAttempt:
-    """提交作答：代码关运行对比 stdout；单选/填空本地判定；概念题 LLM 评分。"""
+async def submit(
+    db: AsyncSession, exercise_id: str, content: str, is_doubtful: bool = False
+) -> ExerciseAttempt:
+    """提交作答：代码关运行对比 stdout 并做硬编码拦截；单选/填空本地判定；概念题 LLM 评分。"""
     exercise = await db.get(Exercise, exercise_id)
     if exercise is None:
         raise LookupError("练习题不存在")
@@ -323,6 +360,14 @@ async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAt
             result["status"] == "success"
             and normalize_output(result["stdout"]) == normalize_output(exercise.expected_output)
         )
+        if passed and is_hardcoded_output(content, exercise.expected_output):
+            passed = False
+            result["status"] = "runtime_error"
+            result["stderr"] = (
+                (result["stderr"] + "\n" if result["stderr"] else "")
+                + "⚠️ 检测到直接输出了目标文字，请编写算法逻辑由程序自主运算得出结果。"
+            )
+
         attempt = ExerciseAttempt(
             exercise_id=exercise.id,
             content=content,
@@ -332,6 +377,7 @@ async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAt
             stderr=result["stderr"],
             duration_ms=result["duration_ms"],
             passed=passed,
+            is_doubtful=is_doubtful,
             feedback="" if passed else _code_fail_hint(result["status"]),
         )
     elif exercise.kind == EXERCISE_CHOICE:
@@ -345,6 +391,7 @@ async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAt
             stderr="",
             duration_ms=None,
             passed=passed,
+            is_doubtful=is_doubtful,
             feedback="" if passed else _choice_fail_hint(exercise),
         )
     elif exercise.kind == EXERCISE_FILL:
@@ -358,6 +405,7 @@ async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAt
             stderr="",
             duration_ms=None,
             passed=passed,
+            is_doubtful=is_doubtful,
             feedback="" if passed else f"参考答案：{' / '.join(_fill_answers(exercise.answer))}",
         )
     elif exercise.kind == EXERCISE_MATH:
@@ -379,6 +427,7 @@ async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAt
             stderr="",
             duration_ms=None,
             passed=passed,
+            is_doubtful=is_doubtful,
             feedback="" if passed else f"结果与参考目标（{ref}）代数不等价，请检查推导。",
         )
     else:
@@ -393,6 +442,7 @@ async def submit(db: AsyncSession, exercise_id: str, content: str) -> ExerciseAt
             stderr="",
             duration_ms=None,
             passed=grade.passed,
+            is_doubtful=is_doubtful,
             feedback=f"（{grade.score} 分）{grade.feedback}".strip(),
         )
 

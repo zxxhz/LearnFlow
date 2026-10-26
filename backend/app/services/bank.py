@@ -8,7 +8,7 @@ import random
 import shutil
 from io import BytesIO
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -240,13 +240,13 @@ async def latest_attempts(db: AsyncSession, bank_id: str) -> dict[str, BankAttem
 
 
 async def wrong_question_ids(db: AsyncSession, bank_id: str) -> list[str]:
-    """错题池：最近一次作答未通过的题目 id（seq 升序由调用方保证）。"""
+    """错题池：最近一次作答未通过或存疑的题目 id（seq 升序由调用方保证，§2）。"""
     latest = await latest_attempts(db, bank_id)
-    return [qid for qid, a in latest.items() if not a.passed]
+    return [qid for qid, a in latest.items() if not a.passed or getattr(a, "is_doubtful", False)]
 
 
 async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
-    """题库统计：已答/正确率/错题数/按题型分布（错题池口径 = 最近一次作答）。
+    """题库统计：已答/正确率/错题数/按题型分布（错题池口径 = 最近一次作答未过或存疑）。
 
     全部在 SQL 内聚合（最近一次作答窗口函数 + GROUP BY），不再把题目全文与全部作答拉入内存。
     """
@@ -255,12 +255,17 @@ async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
         partition_by=BankAttempt.question_id, order_by=BankAttempt.created_at.desc()
     ).label("rn")
     ranked = (
-        select(BankAttempt.question_id.label("qid"), BankAttempt.passed.label("ok"), rn)
+        select(
+            BankAttempt.question_id.label("qid"),
+            BankAttempt.passed.label("ok"),
+            BankAttempt.is_doubtful.label("is_doubtful"),
+            rn,
+        )
         .where(BankAttempt.bank_id == bank.id)
         .subquery()
     )
     latest = (
-        select(ranked.c.qid, ranked.c.ok).where(ranked.c.rn == 1).subquery().alias("latest")
+        select(ranked.c.qid, ranked.c.ok, ranked.c.is_doubtful).where(ranked.c.rn == 1).subquery().alias("latest")
     )
 
     # 总作答次数与正确次数（全量 attempt 聚合）
@@ -275,15 +280,25 @@ async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
     total_attempts = int(totals.n or 0)
     correct_attempts = int(totals.ok or 0)
 
-    # 按题聚合最近一次作答结果，再与题目 join 得到统计分布
+    # 按题聚合最近一次作答结果，再与题目 join 得到统计分布（未通过或存疑计入需重练错题池）
     stats_rows = (
         await db.execute(
             select(
                 BankQuestion.qtype.label("qtype"),
                 func.count().label("total"),
                 func.sum(case((latest.c.qid.isnot(None), 1), else_=0)).label("answered_n"),
-                func.sum(case((latest.c.ok.is_(False), 1), else_=0)).label("wrong_n"),
-                func.sum(case((latest.c.ok.is_(True), 1), else_=0)).label("correct_n"),
+                func.sum(
+                    case(
+                        (or_(latest.c.ok.is_(False), latest.c.is_doubtful.is_(True)), 1),
+                        else_=0,
+                    )
+                ).label("wrong_n"),
+                func.sum(
+                    case(
+                        (and_(latest.c.ok.is_(True), latest.c.is_doubtful.is_(False)), 1),
+                        else_=0,
+                    )
+                ).label("correct_n"),
             )
             .outerjoin(latest, latest.c.qid == BankQuestion.id)
             .where(BankQuestion.bank_id == bank.id)

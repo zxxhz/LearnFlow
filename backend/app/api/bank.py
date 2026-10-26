@@ -269,12 +269,14 @@ async def submit_attempt(
         question_id=q.id,
         content=user_ans,
         passed=passed,
+        is_doubtful=body.is_doubtful,
     )
     db.add(attempt)
     await db.commit()
     return BankAttemptResult(
         attempt_id=attempt.id,
         passed=passed,
+        is_doubtful=body.is_doubtful,
         user_answer=user_ans,
         answer=q.answer,
         correct_answer=bank_service.format_correct_answer(q),
