@@ -15,6 +15,7 @@ import {
 } from "../../components/ui";
 import type { Bank, BankAnalysis } from "../../lib/types";
 import BankPromptModal from "./BankPromptModal";
+import PasteImportModal from "./PasteImportModal";
 
 const TYPE_LABEL: Record<string, string> = { single: "单选", multi: "多选", judge: "判断" };
 
@@ -22,6 +23,7 @@ export default function BankListPage() {
   const qc = useQueryClient();
   const { data, isLoading, error } = useQuery({ queryKey: ["banks"], queryFn: api.banks.list });
   const [importOpen, setImportOpen] = useState(false);
+  const [pasteImportOpen, setPasteImportOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Bank | null>(null);
   const [renameTarget, setRenameTarget] = useState<Bank | null>(null);
   const [renameValue, setRenameValue] = useState("");
@@ -48,10 +50,17 @@ export default function BankListPage() {
     <div className="mx-auto max-w-5xl p-8">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">🎯 题库刷题</h1>
-        <Button onClick={() => setImportOpen(true)}>📥 导入题库</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" onClick={() => setPasteImportOpen(true)} className="text-xs">
+            📋 粘贴文本切题
+          </Button>
+          <Button onClick={() => setImportOpen(true)} className="text-xs">
+            📥 上传表格导入
+          </Button>
+        </div>
       </div>
       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        导入 .xls / .xlsx 题库表格（题型 / 题干 / 选项A-H / 正确答案 / 解析 / 难度），随机组轮作答，错题自动入池。
+        支持粘贴任意杂乱试题文本一键智能切题，或导入 .xls / .xlsx 题库表格，随机组轮作答，错题自动入池。
       </p>
 
       {isLoading ? (
@@ -172,6 +181,14 @@ export default function BankListPage() {
           </Button>
         </div>
       </Modal>
+
+      <PasteImportModal
+        open={pasteImportOpen}
+        onClose={() => setPasteImportOpen(false)}
+        onSuccess={() => {
+          qc.invalidateQueries({ queryKey: ["banks"] });
+        }}
+      />
     </div>
   );
 }

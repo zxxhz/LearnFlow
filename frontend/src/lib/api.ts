@@ -41,6 +41,8 @@ import type {
   BankRound,
   BankStats,
   BankWrongQuestion,
+  ParsedTextQuestionItem,
+  PasteParseResponse,
   LearnerProfile,
   LearnerProfileUpdate,
   MindMapDetail,
@@ -343,6 +345,10 @@ export const api = {
       if (name) fd.append("name", name);
       return request<Bank>("/banks/import", { method: "POST", body: fd });
     },
+    pasteParse: (text: string) =>
+      request<PasteParseResponse>("/banks/paste-parse", { method: "POST", ...jsonBody({ text }) }),
+    pasteImport: (name: string, questions: ParsedTextQuestionItem[]) =>
+      request<Bank>("/banks/paste-import", { method: "POST", ...jsonBody({ name, questions }) }),
     list: () => request<Bank[]>("/banks"),
     stats: (id: string) => request<BankStats>(`/banks/${id}/stats`),
     round: (id: string, mode: "new" | "all" | "random" | "wrong", size: number) =>

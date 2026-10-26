@@ -82,6 +82,29 @@ class BankUpdateIn(BaseModel):
         return v[:200]
 
 
+class ParsedTextQuestionItem(BaseModel):
+    qtype: str = "single"  # single | multi | judge
+    title: str
+    options: list[str] = []
+    answer: str = "A"
+    difficulty: str = "普通"
+    explanation: str = ""
+
+
+class PasteParseRequest(BaseModel):
+    text: str
+
+
+class PasteParseResponse(BaseModel):
+    bank_title: str
+    questions: list[ParsedTextQuestionItem]
+
+
+class PasteImportRequest(BaseModel):
+    name: str
+    questions: list[ParsedTextQuestionItem]
+
+
 class BankPromptPolishIn(BaseModel):
     prompt: str = ""
     bank_name: str = ""

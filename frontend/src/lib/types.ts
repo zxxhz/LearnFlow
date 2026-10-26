@@ -562,6 +562,20 @@ export interface BankRound {
   wrong_pool_size: number;
 }
 
+export interface ParsedTextQuestionItem {
+  qtype: "single" | "multi" | "judge";
+  title: string;
+  options: string[];
+  answer: string;
+  difficulty: string;
+  explanation: string;
+}
+
+export interface PasteParseResponse {
+  bank_title: string;
+  questions: ParsedTextQuestionItem[];
+}
+
 // ===== 学习者画像与认知特征 =====
 export interface LearnerMisconception {
   id: string;

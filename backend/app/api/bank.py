@@ -27,10 +27,14 @@ from app.schemas.bank import (
     BankStatsOut,
     BankUpdateIn,
     BankWrongQuestionOut,
+    PasteImportRequest,
+    PasteParseRequest,
+    PasteParseResponse,
 )
 from app.services import bank as bank_service
 from app.services.bank import BankParseError
 from app.services.llm import create_adapter_from_settings
+from app.services.prompt import render_prompt
 from app.services.profile import (
     format_profile_for_prompt,
     trigger_profile_evolution,
@@ -118,6 +122,77 @@ async def import_confirm(
     if name.strip():
         report["name"] = name.strip()
     bank = await bank_service.create_bank(db, questions, report, data)
+    stats = await bank_service.bank_stats(db, bank)
+    return BankOut(
+        id=bank.id,
+        name=bank.name,
+        source_file=bank.source_file,
+        question_count=bank.question_count,
+        ai_prompt=bank.ai_prompt or "",
+        created_at=bank.created_at,
+        stats=BankStatsOut(**stats),
+    )
+
+
+@router.post("/paste-parse", response_model=PasteParseResponse)
+async def paste_parse(body: PasteParseRequest, db: AsyncSession = Depends(get_db)):
+    """剪贴板杂乱文本一键智能切题解析（§6）。"""
+    raw_text = body.text.strip()
+    if not raw_text:
+        raise HTTPException(status_code=400, detail="待解析的试题文本不能为空")
+
+    prompt = render_prompt("bank_text_parse.md")
+    adapter = await create_adapter_from_settings(db, scene="generation")
+    try:
+        parsed = await adapter.chat_json(
+            [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": f"请解析以下试题文本并结构化输出：\n\n{raw_text}"},
+            ],
+            schema=PasteParseResponse,
+        )
+    except Exception as e:
+        logger.error("paste parse failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"试题切分解析失败：{e}") from e
+
+    return parsed
+
+
+@router.post("/paste-import", response_model=BankOut)
+async def paste_import(body: PasteImportRequest, db: AsyncSession = Depends(get_db)):
+    """将剪贴板解析/编辑后的试题列表确认落库为新题库（§6）。"""
+    if not body.questions:
+        raise HTTPException(status_code=400, detail="导入题目列表不能为空")
+
+    formatted_questions = []
+    for i, q in enumerate(body.questions, 1):
+        if q.qtype == "judge":
+            opts: list[str] = []
+            ans = "A" if q.answer.strip().upper() in ("A", "TRUE", "T", "对", "正确", "1", "YES") else "B"
+            ans_raw = "正确" if ans == "A" else "错误"
+        else:
+            raw_opts = [opt.strip() for opt in q.options if opt.strip()]
+            opts = (raw_opts + [""] * 8)[:8]
+            ans = q.answer.strip().upper()
+            ans_raw = ans
+
+        formatted_questions.append({
+            "seq": i,
+            "qtype": q.qtype if q.qtype in ("single", "multi", "judge") else "single",
+            "title": q.title.strip(),
+            "options": opts,
+            "answer": ans,
+            "answer_raw": ans_raw,
+            "difficulty": q.difficulty or "普通",
+            "explanation": q.explanation or "",
+        })
+
+    report = {
+        "name": body.name.strip() or "剪贴板切题题库",
+        "source_file": "clipboard_paste.txt",
+    }
+    file_bytes = json.dumps([q.model_dump() for q in body.questions], ensure_ascii=False, indent=2).encode("utf-8")
+    bank = await bank_service.create_bank(db, formatted_questions, report, file_bytes)
     stats = await bank_service.bank_stats(db, bank)
     return BankOut(
         id=bank.id,
