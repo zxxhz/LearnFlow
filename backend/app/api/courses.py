@@ -19,7 +19,7 @@ from app.schemas.course import (
     CourseSettingsUpdate,
     OutlineUpdate,
 )
-from app.services.exports import course_html, course_markdown
+from app.services.exports import course_html, course_markdown, course_notes_markdown
 from app.services.generation import pipeline
 from app.services.generation.outline import generate_outline
 from app.services.llm import create_adapter_from_settings
@@ -252,6 +252,19 @@ async def export_html(course_id: str, db: AsyncSession = Depends(get_db)):
         content=page,
         media_type="text/html; charset=utf-8",
         headers={"Content-Disposition": _cd(f"{safe}.html")},
+    )
+
+
+@router.get("/{course_id}/export-notes.md", response_class=Response)
+async def export_notes_md(course_id: str, db: AsyncSession = Depends(get_db)):
+    """整课学习笔记与批注汇编导出（Markdown）。"""
+    course = await _get_course(db, course_id)
+    notes_md = await course_notes_markdown(db, course)
+    safe = "".join(ch for ch in course.title if ch.isalnum() or ch in "-_ ") or "course"
+    return Response(
+        content=notes_md.encode("utf-8"),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": _cd(f"{safe}_学习笔记.md")},
     )
 
 

@@ -369,6 +369,25 @@ export default function ReaderPage() {
     queryClient.invalidateQueries({ queryKey: ["compare-highlights", documentId] });
   };
 
+  const handleCreateNote = async (noteText: string) => {
+    if (!selection || !documentId) return;
+    try {
+      setCreating(true);
+      await api.annotations.create(documentId, {
+        ...selection.anchor,
+        color: toolbarColor,
+        note: noteText,
+      });
+      window.getSelection()?.removeAllRanges();
+      setSelection(null);
+      await invalidate();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
   // ===== 卡片与定位 =====
   const openAnnotation = async (a: Annotation, knownConvId?: string) => {
     if (drawerOpen) closeDrawer();
@@ -991,6 +1010,7 @@ export default function ReaderPage() {
           onColorChange={setToolbarColor}
           onAsk={() => createAnnotation.mutate(true)}
           onHighlight={() => createAnnotation.mutate(false)}
+          onNote={handleCreateNote}
         />
       )}
 
@@ -1001,6 +1021,7 @@ export default function ReaderPage() {
           activeAnnId={activeAnn?.id ?? null}
           reAnchoring={reAnchoring}
           closing={isClosingDrawer}
+          onExportNotes={() => courseId && api.courses.exportNotesMd(courseId).catch((e) => alert(e.message))}
           onOpen={(a) => {
             closeDrawer();
             openAnnotation(a);

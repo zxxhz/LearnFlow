@@ -224,8 +224,11 @@ export default function CourseDetailPage() {
         <div className="flex items-center gap-2">
           {course.status !== "draft" && (
             <>
+              <Button variant="ghost" className="text-xs" onClick={() => api.courses.exportNotesMd(course.id).catch((e) => alert(e.message))} title="汇集全课程所有章节摘要、个人划线与手写随笔批注，导出为 Markdown">
+                📝 导出笔记汇编
+              </Button>
               <Button variant="ghost" className="text-xs" onClick={() => api.courses.exportMd(course.id).catch((e) => alert(e.message))}>
-                ⬇ 导出 MD
+                ⬇ 导出教材 MD
               </Button>
               <Button variant="ghost" className="text-xs" onClick={() => api.courses.exportHtml(course.id).catch((e) => alert(e.message))}>
                 ⬇ 导出 HTML

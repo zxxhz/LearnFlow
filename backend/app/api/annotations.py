@@ -64,6 +64,7 @@ async def create_annotation(
         start_offset=body.start_offset,
         end_offset=body.end_offset,
         color=body.color,
+        note=body.note,
         status="active",
     )
     db.add(ann)

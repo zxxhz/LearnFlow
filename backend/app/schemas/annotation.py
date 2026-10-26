@@ -27,6 +27,7 @@ class AnchorIn(BaseModel):
 
 class AnnotationCreate(AnchorIn):
     color: AnnotationColor = "yellow"
+    note: str | None = None
 
 
 class AnnotationUpdate(BaseModel):

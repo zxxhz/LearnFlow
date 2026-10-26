@@ -15,6 +15,7 @@ interface Props {
   onDelete: (a: Annotation) => void;
   onClose: () => void;
   fontSize?: number;
+  onExportNotes?: () => void;
 }
 
 export default function AnnotationsDrawer({
@@ -27,6 +28,7 @@ export default function AnnotationsDrawer({
   onDelete,
   onClose,
   fontSize: propFontSize,
+  onExportNotes,
 }: Props) {
   const hlColors = useHlColors();
   const { fontSize: fallbackFontSize } = useFontSize("course");
@@ -58,15 +60,27 @@ export default function AnnotationsDrawer({
             {annotations.length}
           </span>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
-          title="关闭"
-          aria-label="关闭"
-        >
-          ✕
-        </button>
+        <div className="flex items-center gap-1">
+          {onExportNotes && (
+            <Button
+              variant="ghost"
+              className="text-xs !py-0.5 !px-2 text-brand-600 dark:text-brand-400 hover:text-brand-700"
+              onClick={onExportNotes}
+              title="导出整门课程的学习笔记与批注汇编（Markdown）"
+            >
+              📤 导出笔记
+            </Button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 ml-1"
+            title="关闭"
+            aria-label="关闭"
+          >
+            ✕
+          </button>
+        </div>
       </div>
       <div className="flex-1 space-y-2 overflow-auto p-3">
         {annotations.length === 0 && (

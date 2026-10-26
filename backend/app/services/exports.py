@@ -28,6 +28,70 @@ async def course_markdown(db: AsyncSession, course: Course) -> str:
     return "".join(parts) + "\n"
 
 
+async def course_notes_markdown(db: AsyncSession, course: Course) -> str:
+    """整课学习笔记与重点批注汇编导出：课程大纲 + 章节摘要 + 划线原文 + 个人手写随笔 + 助教问答。"""
+    from app.models import Annotation, Conversation, Message
+
+    docs = await _done_documents(db, course)
+    parts = [
+        f"# 《{course.title}》个人学习笔记与重点批注汇编\n\n",
+        f"> 主题：{course.topic} | 涵盖章节：{len(docs)} 章\n\n",
+        "## 目录大纲\n\n",
+    ]
+    for d in docs:
+        parts.append(f"- 第 {d.chapter_index} 章：{d.title}\n")
+    parts.append("\n---\n")
+
+    for d in docs:
+        parts.append(f"\n## 第 {d.chapter_index} 章 {d.title}\n")
+        if d.summary:
+            parts.append(f"> **本章要点摘要**：{d.summary.strip()}\n\n")
+
+        anns = (
+            await db.scalars(
+                select(Annotation)
+                .where(Annotation.document_id == d.id, Annotation.status == "active")
+                .order_by(Annotation.created_at)
+            )
+        ).all()
+
+        if not anns:
+            parts.append("*(本章暂无划线与随笔批注)*\n\n")
+            continue
+
+        parts.append(f"### 🖍 本章划线与笔记（共 {len(anns)} 处）\n\n")
+        for idx, ann in enumerate(anns, 1):
+            parts.append(f"#### {idx}. 标注内容\n")
+            parts.append(f"> {ann.exact}\n\n")
+            parts.append(f"- **高亮颜色**：`{ann.color}`\n")
+            if ann.note and ann.note.strip():
+                parts.append(f"- **📝 我的随笔批注**：{ann.note.strip()}\n")
+
+            # 关联问答
+            conv = (
+                await db.scalars(
+                    select(Conversation).where(Conversation.annotation_id == ann.id)
+                )
+            ).first()
+            if conv:
+                msgs = (
+                    await db.scalars(
+                        select(Message)
+                        .where(Message.conversation_id == conv.id)
+                        .order_by(Message.created_at)
+                    )
+                ).all()
+                if msgs:
+                    parts.append("- **💬 助教问答研讨回顾**：\n")
+                    for m in msgs:
+                        role_name = "🙋 学生" if m.role == "user" else "🤖 助教"
+                        content_indented = m.content.strip().replace("\n", "\n  ")
+                        parts.append(f"  - **{role_name}**：{content_indented}\n")
+            parts.append("\n")
+
+    return "".join(parts)
+
+
 _HTML_TMPL = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>

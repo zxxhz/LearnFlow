@@ -241,6 +241,7 @@ export const api = {
     get: (id: string) => request<CourseDetail>(`/courses/${id}`),
     exportMd: (id: string) => downloadFile(`/courses/${id}/export.md`),
     exportHtml: (id: string) => downloadFile(`/courses/${id}/export.html`),
+    exportNotesMd: (id: string) => downloadFile(`/courses/${id}/export-notes.md`),
     ask: (id: string, question: string, onDelta: (text: string) => void, onDone: (err?: string) => void) => {
       const ctrl = new AbortController();
       // 复用 streamSSE：自动附带 x-access-token（局域网令牌鉴权必需），并保证 onDone 仅回调一次
@@ -398,7 +399,7 @@ export const api = {
   annotations: {
     listForDoc: (docId: string) =>
       request<Annotation[]>(`/documents/${docId}/annotations`),
-    create: (docId: string, body: Anchor & { color: AnnotationColor }) =>
+    create: (docId: string, body: Anchor & { color: AnnotationColor; note?: string | null }) =>
       request<AnnotationCreated>(`/documents/${docId}/annotations`, {
         method: "POST",
         ...jsonBody(body),
