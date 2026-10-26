@@ -65,6 +65,11 @@ async def init_db() -> None:
             "ALTER TABLE bank_questions ADD COLUMN ai_explanation TEXT DEFAULT ''",
             # v0.4.47 自动划重点来源标志（清理逻辑依赖，不再按 note 前缀猜测）
             "ALTER TABLE annotations ADD COLUMN is_auto INTEGER DEFAULT 0",
+            # v0.4.48 存疑作答与硬骨头跳过、支线搭桥关联（§2/§4）
+            "ALTER TABLE bank_attempts ADD COLUMN is_doubtful INTEGER DEFAULT 0",
+            "ALTER TABLE exercise_attempts ADD COLUMN is_doubtful INTEGER DEFAULT 0",
+            "ALTER TABLE exercises ADD COLUMN is_hard_bone INTEGER DEFAULT 0",
+            "ALTER TABLE exercises ADD COLUMN parent_exercise_id VARCHAR(32) DEFAULT ''",
         ]
         for ddl in migrations:
             try:
