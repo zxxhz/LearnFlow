@@ -15,6 +15,7 @@ import TocSidebar, { buildToc } from "./TocSidebar";
 import AnnotationsDrawer from "./AnnotationsDrawer";
 import ExerciseDrawer from "./ExerciseDrawer";
 import { ChapterHighlightCompare } from "./ChapterHighlightCompare";
+import { ChapterSummaryCard } from "./ChapterSummaryCard";
 import { SectionReviseModal } from "./SectionReviseModal";
 import { hlColorVars, useHlColors } from "./colors";
 import { useTheme } from "../../lib/theme";
@@ -78,6 +79,7 @@ export default function ReaderPage() {
 
   const content = contentQuery.data;
   const annotations = annsQuery.data ?? [];
+  const exercises = exercisesQuery.data ?? [];
 
   // 解析与块对齐（前后端同规则，PRD 实现备注 2）
   const parsed = useMemo(() => (content ? parseBlocks(content.markdown) : []), [content]);
@@ -104,6 +106,15 @@ export default function ReaderPage() {
     let count = 0;
     return parsed.map((b) => (b.type !== "heading" && b.type !== "code" ? count++ : -1));
   }, [parsed]);
+
+  const readMinutes = useMemo(() => {
+    if (!content?.markdown) return 1;
+    return Math.max(1, Math.round(content.markdown.length / 380));
+  }, [content]);
+
+  const exerciseMinutes = useMemo(() => {
+    return exercises.length * 4;
+  }, [exercises.length]);
 
 
   // ===== UI 状态 =====
@@ -827,6 +838,26 @@ export default function ReaderPage() {
           </div>
         )}
 
+        {/* 章首精力与耗时预估 */}
+        <div className="mb-6 flex flex-wrap items-center gap-2 rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-800/40 px-3.5 py-2 text-xs text-gray-500 dark:text-gray-400">
+          <span className="inline-flex items-center gap-1 font-medium text-gray-700 dark:text-gray-300">
+            <span>⏱</span> 预计阅读 ~{readMinutes} 分钟
+          </span>
+          <span>·</span>
+          <span className="inline-flex items-center gap-1 font-medium text-gray-700 dark:text-gray-300">
+            <span>🎮</span> 关卡 {exercises.length} 关{exerciseMinutes > 0 ? ` (约 ${exerciseMinutes} 分钟)` : ""}
+          </span>
+          <span>·</span>
+          <span className="inline-flex items-center gap-1 font-medium text-gray-700 dark:text-gray-300">
+            <span>🎯</span> 核心知识点 {activeKps.length} 项
+          </span>
+          {doc.summary && (
+            <span className="hidden sm:inline text-gray-400 dark:text-gray-500 truncate max-w-xs ml-auto" title={doc.summary}>
+              {doc.summary}
+            </span>
+          )}
+        </div>
+
         {/* 文档块 */}
         <div
           ref={contentRef}
@@ -867,6 +898,18 @@ export default function ReaderPage() {
               onJumpToSection={jumpTo}
             />
           )}
+
+          {/* 章末学习达成与结构复盘卡片 */}
+          <ChapterSummaryCard
+            chapterIndex={doc.chapter_index}
+            chapterTitle={doc.title}
+            activeKps={activeKps}
+            exercises={exercises}
+            annotationsCount={annotations.length}
+            nextChapter={nextDoc ? { chapter_index: nextDoc.chapter_index, title: nextDoc.title, document_id: nextDoc.document_id } : null}
+            onNextChapter={() => nextDoc && navigate(`/read/${nextDoc.document_id}`)}
+            onGoHome={() => navigate("/")}
+          />
 
           {/* 底部章节翻页导航 */}
           <div className="mt-8 mb-16 pt-6 border-t border-gray-200 dark:border-gray-800 flex items-center justify-between">
