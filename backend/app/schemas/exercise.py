@@ -32,9 +32,7 @@ class ExerciseGenerateRequest(BaseModel):
     @classmethod
     def _normalize_lang(cls, v: str) -> str:
         lang = _normalize_lang_str(v)
-        if not lang:
-            raise ValueError(f"暂不支持 {v}，练习目前支持 Python 和 C++")
-        return lang
+        return lang or "python"
 
     @field_validator("count")
     @classmethod

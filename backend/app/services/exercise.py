@@ -153,6 +153,22 @@ async def delete_kp_exercises(db: AsyncSession, kp_ids: list[str]) -> None:
         await db.execute(Exercise.__table__.delete().where(Exercise.id.in_(old_ids)))
 
 
+def detect_course_discipline(topic: str, title: str) -> str:
+    """推断学科属性：math（数理）/ theory（理论概念）/ coding（编程开发，§3）。"""
+    text = f"{topic} {title}".lower()
+    math_kws = ("数学", "微积分", "线性代数", "离散数学", "概率", "几何", "代数", "统计", "math", "calculus", "algebra")
+    coding_kws = ("c++", "cpp", "python", "java", "golang", "go", "rust", "javascript", "typescript", "vue", "react", "算法", "leetcode", "编程", "代码", "程序设计")
+    theory_kws = ("安全", "网络安全", "法律", "心理", "历史", "经济", "政治", "医学", "管理", "原理", "协议", "概念", "体系", "概论", "哲学", "文史")
+
+    if any(k in text for k in coding_kws):
+        return "coding"
+    if any(k in text for k in math_kws):
+        return "math"
+    if any(k in text for k in theory_kws):
+        return "theory"
+    return "coding"
+
+
 async def generate_for_kp(
     db: AsyncSession, knowledge_point_id: str, language: str, count: int
 ) -> list[Exercise]:
@@ -167,6 +183,14 @@ async def generate_for_kp(
         prefs = await get_preferences(db)
         count = max(1, min(4, int(prefs.get("exercises_per_kp", 3))))
 
+    discipline = detect_course_discipline(course.topic if course else "", course.title if course else "")
+    if discipline == "math":
+        guidance = "本课程为数理逻辑类课程。关卡设计以数学化简与计算关（kind = 'math'，支持 SymPy 代数等价判题）为主，辅以公式填空题（kind = 'fill'）或单选题（kind = 'choice'）。严禁生成需要编写运行代码的编程代码关。"
+    elif discipline == "theory":
+        guidance = "本课程为理论概念类课程。关卡设计为递进式概念自测关：包含辨析单选题（kind = 'choice'）、关键概念填空题（kind = 'fill'）与场景短答题（kind = 'concept'，要求用自己的话作答1-2句）。严禁生成编程代码关。"
+    else:
+        guidance = f"本课程为编程开发类课程。关卡全部设计为从零手写的代码关（kind = 'code'），编程语言固定为 {language}。"
+
     system = render_prompt(
         "exercise_gen",
         COURSE_TOPIC=course.topic if course else "",
@@ -176,6 +200,7 @@ async def generate_for_kp(
         SECTION_TEXTS="\n\n".join(texts) or "（无教材原文）",
         LANGUAGE=language,
         COUNT=str(count),
+        DISCIPLINE_GUIDANCE=guidance,
     )
     adapter = await create_adapter_from_settings(db, scene="generation")
     drafts: ExerciseDraftSet = await adapter.chat_json(
