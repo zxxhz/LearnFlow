@@ -162,11 +162,26 @@ async def delete_kp_exercises(db: AsyncSession, kp_ids: list[str]) -> None:
 
 
 def detect_course_discipline(topic: str, title: str) -> str:
-    """推断学科属性：math（数理）/ theory（理论概念）/ coding（编程开发，§3）。"""
+    """推断学科属性：math（数理与物理）/ theory（理论概念）/ coding（编程开发，§3）。"""
     text = f"{topic} {title}".lower()
-    math_kws = ("数学", "微积分", "线性代数", "离散数学", "概率", "几何", "代数", "统计", "math", "calculus", "algebra")
-    coding_kws = ("c++", "cpp", "python", "java", "golang", "go", "rust", "javascript", "typescript", "vue", "react", "算法", "leetcode", "编程", "代码", "程序设计")
-    theory_kws = ("安全", "网络安全", "法律", "心理", "历史", "经济", "政治", "医学", "管理", "原理", "协议", "概念", "体系", "概论", "哲学", "文史")
+    math_kws = (
+        # 数学类
+        "数学", "高数", "微积分", "数分", "高等代数", "线性代数", "线代",
+        "概率", "数理统计", "离散数学", "常微分", "偏微分", "复变函数", "实变函数",
+        "几何", "代数", "统计", "math", "calculus", "algebra",
+        # 物理与力学类
+        "物理", "大学物理", "力学", "理论力学", "材料力学", "电磁", "电动力学",
+        "光学", "热力学", "统计物理", "量子", "动力学", "相对论", "physics", "mechanics",
+    )
+    coding_kws = (
+        "c++", "cpp", "python", "java", "golang", "go", "rust",
+        "javascript", "typescript", "vue", "react", "算法", "leetcode",
+        "编程", "代码", "程序设计", "开发", "前端", "后端",
+    )
+    theory_kws = (
+        "安全", "网络安全", "法律", "心理", "历史", "经济", "政治",
+        "医学", "管理", "原理", "协议", "概念", "体系", "概论", "哲学", "文史",
+    )
 
     if any(k in text for k in coding_kws):
         return "coding"

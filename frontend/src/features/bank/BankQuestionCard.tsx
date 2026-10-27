@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import MarkdownIt from "markdown-it";
 import renderMathInElement from "katex/contrib/auto-render";
 import { Badge, Button, ErrorText, Spinner } from "../../components/ui";
+import MarkdownLite from "../../components/MarkdownLite";
 import { api } from "../../lib/api";
 import type { BankAttemptResult, BankQuestion } from "../../lib/types";
 
@@ -294,10 +295,9 @@ export default function BankQuestionCard({
 
                   {aiText && (
                     <div className="mt-2 text-gray-800 dark:text-gray-200 leading-relaxed overflow-x-auto">
-                      <div
-                        ref={aiStreamRef}
+                      <MarkdownLite
+                        text={aiText}
                         className="drill-ai-content prose prose-sm dark:prose-invert max-w-none leading-relaxed"
-                        dangerouslySetInnerHTML={{ __html: md.render(aiText) }}
                       />
                       {aiStreaming && (
                         <span className="inline-block h-3.5 w-1.5 ml-0.5 align-middle bg-brand-500 animate-pulse rounded-sm" />

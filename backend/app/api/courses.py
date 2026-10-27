@@ -23,6 +23,7 @@ from app.services.exports import course_html, course_markdown, course_notes_mark
 from app.services.generation import pipeline
 from app.services.generation.outline import generate_outline
 from app.services.llm import create_adapter_from_settings
+from app.services.prompt import render_prompt
 
 router = APIRouter(prefix="/courses", tags=["courses"])
 
@@ -291,10 +292,12 @@ async def ask_course(course_id: str, body: dict, db: AsyncSession = Depends(get_
         context_parts.append("\n\n与问题最相关的原文片段：\n" + "\n\n".join(
             f"【{h['document_title']}｜{h['heading']}】{h['snippet']}" for h in hits[:6]
         ))
-    system = (
-        f"你是课程《{course.title}》（主题：{course.topic}）的助教，仅依据课程内容回答学习者问题。"
-        f"课程结构与相关原文如下：\n\n" + "\n".join(context_parts) +
-        "\n\n要求：中文回答，紧扣课程内容；课程里没有依据的，明确说明课程未覆盖。"
+    context_str = "\n".join(context_parts)
+    system = render_prompt(
+        "course_ask",
+        COURSE_TITLE=course.title,
+        COURSE_TOPIC=course.topic,
+        CONTEXT=context_str,
     )
     adapter = await create_adapter_from_settings(db, scene="chat")
     deltas = await adapter.chat(

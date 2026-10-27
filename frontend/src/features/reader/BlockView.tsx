@@ -272,6 +272,63 @@ export default function BlockView({
     }
   };
 
+  // 自动执行初次绘图：利用 IntersectionObserver 在滑到/接近该代码块（300px 提前量）时自动绘制，
+  // 学习者滑到此处时，直接就能看到渲染好的漂亮坐标系曲线图，无需手动点击。
+  useEffect(() => {
+    if (!plottable || plotSvg) return;
+    const target = innerRef.current || codeRef.current;
+    if (!target) return;
+
+    let cancelled = false;
+    if (typeof IntersectionObserver === "undefined") {
+      setPlotBusy(true);
+      setPlotErr("");
+      api.math
+        .render({ expressions: displayCode })
+        .then((res) => {
+          if (!cancelled) setPlotSvg(res.svg);
+        })
+        .catch((e) => {
+          if (!cancelled) setPlotErr((e as Error).message);
+        })
+        .finally(() => {
+          if (!cancelled) setPlotBusy(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry && entry.isIntersecting) {
+          observer.disconnect();
+          if (cancelled) return;
+          setPlotBusy(true);
+          setPlotErr("");
+          api.math
+            .render({ expressions: displayCode })
+            .then((res) => {
+              if (!cancelled) setPlotSvg(res.svg);
+            })
+            .catch((e) => {
+              if (!cancelled) setPlotErr((e as Error).message);
+            })
+            .finally(() => {
+              if (!cancelled) setPlotBusy(false);
+            });
+        }
+      },
+      { rootMargin: "300px" }
+    );
+    observer.observe(target);
+    return () => {
+      cancelled = true;
+      observer.disconnect();
+    };
+  }, [plottable, displayCode, plotSvg]);
+
   // KaTeX（非代码块，同步渲染）
   useEffect(() => {
     if (isCode || !innerRef.current) return;
@@ -405,10 +462,19 @@ export default function BlockView({
               <button
                 onClick={doPlot}
                 disabled={plotBusy}
-                className="rounded-md bg-violet-700/90 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-violet-700 disabled:opacity-50"
-                title="用 SymPy + Matplotlib 绘制函数图像（默认区间 [-10, 10]）"
+                className="rounded-md bg-violet-700/90 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-violet-700 disabled:opacity-50 flex items-center gap-1.5"
+                title="用 SymPy + Matplotlib 绘制函数图像（默认区间 [-10, 10]，可直接在代码块内编辑函数表达式）"
               >
-                {plotBusy ? "绘制中…" : "📐 绘图"}
+                {plotBusy ? (
+                  <>
+                    <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    <span>绘制中…</span>
+                  </>
+                ) : plotSvg ? (
+                  "📐 重新绘图"
+                ) : (
+                  "📐 绘图"
+                )}
               </button>
             )}
             {onReviseSection && sectionId && (
@@ -436,11 +502,20 @@ export default function BlockView({
             aria-label={`${lang} 代码（可直接编辑）`}
           />
         </div>
+        {plotBusy && !plotSvg && (
+          <div className="mt-2 flex items-center gap-2 rounded-lg border border-violet-200 dark:border-violet-800/60 bg-violet-50/60 dark:bg-violet-950/30 px-3.5 py-3 text-xs text-violet-700 dark:text-violet-300">
+            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            <span>📐 正在自动绘制坐标系曲线图…</span>
+          </div>
+        )}
         {runError && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{runError}</p>}
         {plotErr && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{plotErr}</p>}
         {plotSvg && (
-          <div className="mt-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3">
-            <div className="mb-1.5 text-xs text-gray-400 dark:text-gray-500">📐 函数图像（SymPy + Matplotlib）</div>
+          <div className="mt-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 shadow-sm">
+            <div className="mb-1.5 flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
+              <span>📐 函数图像（SymPy + Matplotlib）</span>
+              {modified && <span className="text-[11px] text-amber-600 dark:text-amber-400">代码已修改，可点击「重新绘图」刷新</span>}
+            </div>
             <div className="plot-svg [&_svg]:h-auto [&_svg]:max-w-full" dangerouslySetInnerHTML={{ __html: plotSvg }} />
           </div>
         )}

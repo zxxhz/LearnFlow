@@ -11,6 +11,7 @@ import { FontSizeControl } from "../../components/FontSizeControl";
 import { useFontSize } from "../../lib/fontSize";
 import BankQuestionCard, { visibleOptions } from "./BankQuestionCard";
 import BankPromptModal from "./BankPromptModal";
+import MarkdownLite from "../../components/MarkdownLite";
 import type { BankAttemptResult, BankQuestion, BankRound } from "../../lib/types";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
@@ -773,10 +774,9 @@ function WrongQuestionItem({
 
                 {aiText && (
                   <div className="mt-2 text-gray-800 dark:text-gray-200 leading-relaxed overflow-x-auto">
-                    <div
-                      ref={aiStreamRef}
+                    <MarkdownLite
+                      text={aiText}
                       className="drill-ai-content prose prose-sm dark:prose-invert max-w-none leading-relaxed"
-                      dangerouslySetInnerHTML={{ __html: md.render(aiText) }}
                     />
                     {aiStreaming && (
                       <span className="inline-block h-3.5 w-1.5 ml-0.5 align-middle bg-brand-500 animate-pulse rounded-sm" />

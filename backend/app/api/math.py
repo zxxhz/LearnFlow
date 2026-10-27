@@ -6,6 +6,7 @@ POST /api/math/render {expressions: "sin(x)/x\nf2(x)=cos(x)", x_min, x_max}
 import asyncio
 import io
 import logging
+import re
 
 import matplotlib
 
@@ -78,7 +79,30 @@ def render_sync(expressions: str, x_min: float, x_max: float) -> str:
     matplotlib.rcParams["axes.unicode_minus"] = False
 
     x = sp.Symbol("x")
-    lines = [l for l in expressions.strip().splitlines() if l.strip()][:MAX_LINES]
+    raw_lines = [l.strip() for l in expressions.strip().splitlines() if l.strip()]
+    lines: list[str] = []
+    range_regex = re.compile(
+        r"^(?:(?:range|x)\s*[:=in]+\s*)?\[?\s*(-?\d+(?:\.\d+)?)\s*[,，]\s*(-?\d+(?:\.\d+)?)\s*\]?$",
+        re.IGNORECASE,
+    )
+
+    for line in raw_lines:
+        # 容错：跳过偶发的注释行（以 #、// 或 -- 开头）
+        if line.startswith(("#", "//", "--")):
+            continue
+        # 智能提取区间说明，如 range: -5, 5 或 [-5, 5] 或 x in [-3, 3]
+        m = range_regex.match(line)
+        if m and ("range" in line.lower() or "[" in line or "," in line or "，" in line):
+            try:
+                v1, v2 = float(m.group(1)), float(m.group(2))
+                if v2 > v1 and (v2 - v1) <= 10_000:
+                    x_min, x_max = v1, v2
+                    continue
+            except (ValueError, TypeError):
+                pass
+        lines.append(line)
+
+    lines = lines[:MAX_LINES]
     if not lines:
         raise ValueError("表达式为空")
 
