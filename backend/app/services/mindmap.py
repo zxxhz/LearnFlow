@@ -435,7 +435,12 @@ async def generate_mindmap_tree(
     ]
 
     raw = await adapter.chat(messages, stream=False, json_mode=True)
-    parsed = extract_json(raw)
+    try:
+        parsed = extract_json(raw)
+    except Exception as e:  # noqa: BLE001
+        # LLM 偶发输出纯文本时回落到默认树，而不是让 500 打断生成流程
+        logger.warning("mindmap LLM 输出无法解析为 JSON（%s），使用默认树", e)
+        parsed = None
 
     title = prompt.strip()[:50]
     if isinstance(parsed, dict):
@@ -690,6 +695,7 @@ async def stream_mindmap_agent(
         if tree_changed:
             from app.core.db import async_session_factory
 
+            persisted = False
             try:
                 async with async_session_factory() as fresh_db:
                     fresh = await fresh_db.get(MindMap, mindmap.id)
@@ -699,9 +705,17 @@ async def stream_mindmap_agent(
                         fresh.root = normalize_node(fresh.root, fresh.title)
                         await fresh_db.commit()
                         mindmap.root = fresh.root
+                        persisted = True
             except Exception:
                 logger.exception("Agent 树修改持久化失败: mindmap=%s", mindmap.id)
-            yield {"type": "tree_update", "tree": mindmap.root}
+            if persisted:
+                yield {"type": "tree_update", "tree": mindmap.root}
+            else:
+                # 持久化失败时不能下发 tree_update：前端展示了、库里没存，刷新即丢
+                yield {
+                    "type": "error",
+                    "detail": "Agent 已理解指令，但保存导图失败，请稍后重试（当前修改未落库）",
+                }
 
         # 组织后续解释消息
         messages.append({

@@ -1,5 +1,6 @@
 """系统 API：备份/恢复 + 局域网访问信息（平板场景）。"""
 import os
+import sys
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,8 +55,11 @@ async def rotate_token():
 
 @router.post("/backup")
 async def create_backup():
+    import asyncio
+
     try:
-        p = system_service.create_backup()
+        # zip + WAL checkpoint 是重阻塞 IO，放线程池避免冻结事件循环（SSE/心跳全部卡住）
+        p = await asyncio.to_thread(system_service.create_backup)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"备份失败：{e}") from e
     return {"name": p.name, "size": p.stat().st_size}
@@ -98,17 +102,16 @@ async def open_url(payload: OpenUrlIn):
         raise HTTPException(status_code=400, detail="仅允许打开 http/https 链接")
     if os.environ.get("APP_SMOKE_TEST") == "1":
         return {"ok": True}
-    import subprocess
-    import sys
     import webbrowser
 
-    # Windows 下优先使用 cmd.exe /c start，能确保唤起默认浏览器并激活前台下载
+    # Windows 用 ShellExecute（os.startfile）：直接把 URL 交给系统默认浏览器，
+    # 严禁经 cmd.exe /c start —— URL 里的 & 等元字符会被 cmd 当作命令拼接（命令注入）
     if sys.platform == "win32":
         try:
-            subprocess.Popen(["cmd.exe", "/c", "start", "", url], shell=False)
+            os.startfile(url)  # noqa: S606
             return {"ok": True}
         except Exception as e:
-            logger.warning("cmd start 打开链接失败: %s", e)
+            logger.warning("startfile 打开链接失败: %s", e)
 
     try:
         ok = webbrowser.open(url)

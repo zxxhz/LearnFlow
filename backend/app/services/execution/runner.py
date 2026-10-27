@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 
@@ -39,6 +40,10 @@ logger = logging.getLogger(__name__)
 
 _IS_WINDOWS = sys.platform == "win32"
 _exec_lock = asyncio.Lock()  # 全局串行：本地单用户，避免资源风暴
+
+# stdout/stderr 落盘上限：死循环 print 在 10s 超时窗口内可写满临时盘，
+# Job Object 只限内存/进程数不限 IO，必须由看护线程主动终止
+_MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 
 if _IS_WINDOWS:
     # 沙箱子进程继承此错误模式：缺 DLL 等加载失败不再弹「系统错误」模态框
@@ -165,6 +170,26 @@ def _run_process(
             job_handle, k32 = job_ctx
             _assign_to_job(job_handle, k32, proc)
         timed_out = False
+        flood_killed = False
+
+        def _watch_output() -> None:
+            """每 0.5s 查一次输出文件体积，超限即杀进程树（防死循环 print 写满磁盘）。"""
+            nonlocal flood_killed
+            while True:
+                time.sleep(0.5)
+                if proc.poll() is not None:
+                    return
+                try:
+                    size = os.fstat(out_f.fileno()).st_size + os.fstat(err_f.fileno()).st_size
+                except OSError:
+                    return
+                if size > _MAX_OUTPUT_BYTES:
+                    flood_killed = True
+                    _kill_tree(proc)
+                    return
+
+        watcher = threading.Thread(target=_watch_output, daemon=True, name="exec-out-watch")
+        watcher.start()
         try:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -179,7 +204,13 @@ def _run_process(
                 if timed_out:
                     k32.TerminateJobObject(job_handle, 0)
                 k32.CloseHandle(job_handle)  # KILL_ON_JOB_CLOSE 兜底清孤儿
-        return _tail_from_file(out_f), _tail_from_file(err_f), proc.returncode, timed_out
+        out_tail, err_tail = _tail_from_file(out_f), _tail_from_file(err_f)
+        if flood_killed:
+            err_tail = (
+                err_tail
+                + f"\n[LearnFlow] 输出量超过 {_MAX_OUTPUT_BYTES // (1024 * 1024)}MB 上限，已强制终止。"
+            ).strip()
+        return out_tail, err_tail, proc.returncode, timed_out
 
 
 def _tail_from_file(f, max_chars: int = MAX_OUTPUT_CHARS) -> str:

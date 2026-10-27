@@ -20,6 +20,7 @@ export function ChapterHighlightCompare({
   const [isOpen, setIsOpen] = useState(false);
   const [adoptedExacts, setAdoptedExacts] = useState<Set<string>>(new Set());
   const [adoptingExact, setAdoptingExact] = useState<string | null>(null);
+  const [adoptError, setAdoptError] = useState("");
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<HighlightComparisonOut>({
     queryKey: ["compare-highlights", documentId],
@@ -30,9 +31,13 @@ export function ChapterHighlightCompare({
 
   const handleAdopt = async (item: CompareHighlightItem) => {
     try {
+      setAdoptError("");
       setAdoptingExact(item.exact);
       await onAdoptHighlight(item);
       setAdoptedExacts((prev) => new Set(prev).add(item.exact));
+    } catch (e) {
+      // 采纳失败必须可见：后端 400（如划线位置无效）静默吞掉会让用户以为已采纳
+      setAdoptError(e instanceof Error ? e.message : "采纳失败，请重试");
     } finally {
       setAdoptingExact(null);
     }
@@ -77,6 +82,11 @@ export function ChapterHighlightCompare({
 
       {isOpen && (
         <div className="mt-5 border-t border-gray-100 dark:border-gray-800 pt-5 space-y-4">
+          {adoptError && (
+            <div className="rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50/60 dark:bg-red-950/20 px-3 py-2 text-xs text-red-600 dark:text-red-400">
+              采纳失败：{adoptError}
+            </div>
+          )}
           {isLoading || isFetching ? (
             <div className="flex items-center justify-center gap-2 py-8 text-sm text-gray-500 dark:text-gray-400">
               <Spinner className="h-4 w-4" /> 正在调取 AI 重点与你的划线对比中…

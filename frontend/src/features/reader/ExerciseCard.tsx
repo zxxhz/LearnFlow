@@ -23,7 +23,7 @@ const STATUS_BADGE: Record<string, { label: string; color: "gray" | "green" | "b
   graded: { label: "已评分", color: "blue" },
 };
 
-const CHOICE_LETTERS = ["A", "B", "C", "D", "E", "F", "G"];
+const CHOICE_LETTERS = ["A", "B", "C", "D", "E", "F", "G", "H"];
 
 export function parseOptions(exercise: Exercise): string[] {
   try {

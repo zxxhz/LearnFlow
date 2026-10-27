@@ -141,7 +141,7 @@ async def paste_parse(body: PasteParseRequest, db: AsyncSession = Depends(get_db
     if not raw_text:
         raise HTTPException(status_code=400, detail="待解析的试题文本不能为空")
 
-    prompt = render_prompt("bank_text_parse.md")
+    prompt = render_prompt("bank_text_parse")
     adapter = await create_adapter_from_settings(db, scene="generation")
     try:
         parsed = await adapter.chat_json(
@@ -173,7 +173,12 @@ async def paste_import(body: PasteImportRequest, db: AsyncSession = Depends(get_
         else:
             raw_opts = [opt.strip() for opt in q.options if opt.strip()]
             opts = (raw_opts + [""] * 8)[:8]
-            ans = q.answer.strip().upper()
+            # 与文件导入同口径归一化：LLM 切题可能输出 "AC"、"A."、"B，C" 等非规范答案，
+            # 不归一会导致 judge_answer 永远判错
+            try:
+                ans = bank_service.normalize_answer(q.qtype, q.answer.strip(), i)
+            except BankParseError as e:
+                raise HTTPException(status_code=400, detail=f"第 {i} 题：{e}") from e
             ans_raw = ans
 
         formatted_questions.append({

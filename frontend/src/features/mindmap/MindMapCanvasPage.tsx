@@ -66,6 +66,12 @@ export default function MindMapCanvasPage() {
   const [zoom, setZoom] = useState(1);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  // 非 passive wheel 监听常驻挂载，闭包内经 ref 读最新值
+  const panRef = useRef(pan);
+  panRef.current = pan;
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const sideShiftRef = useRef(0);
 
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
@@ -77,6 +83,8 @@ export default function MindMapCanvasPage() {
   const [treeData, setTreeData] = useState<MindMapNode | null>(null);
   const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 在途保存 Promise：Agent 回包时若有旧树 PUT 还在飞，需要在其完成后补写一次最新树
+  const savePromiseRef = useRef<Promise<void> | null>(null);
   const saveStatusRef = useRef<"saved" | "saving" | "unsaved">("saved");
 
   // 快捷重命名或新增节点模态框
@@ -111,6 +119,7 @@ export default function MindMapCanvasPage() {
   }, [mapDetail?.id, mapDetail?.updated_at, mapDetail?.settings?.cross_links]);
 
   const saveCrossLinks = async (nextLinks: MindMapCrossLink[]) => {
+    const prevLinks = crossLinks;
     setCrossLinks(nextLinks);
     if (!mapId) return;
     const newSettings = { ...(mapDetail?.settings || {}), cross_links: nextLinks };
@@ -121,6 +130,9 @@ export default function MindMapCanvasPage() {
       );
     } catch (e) {
       console.error("Failed to save cross links:", e);
+      // 回滚本地状态：否则界面显示已连线、状态"已保存"，重进后连线消失
+      setCrossLinks(prevLinks);
+      alert("横向连线保存失败，请稍后重试");
     }
   };
 
@@ -130,21 +142,27 @@ export default function MindMapCanvasPage() {
       setSaveStatus("saving");
       saveStatusRef.current = "saving";
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(async () => {
+      saveTimerRef.current = setTimeout(() => {
         if (!mapId) return;
-        try {
-          await api.mindmaps.update(mapId, { root: newTree });
-          setSaveStatus("saved");
-          saveStatusRef.current = "saved";
-          queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
-          // 同步详情缓存，防止 15s staleTime 内重进页面读到旧树覆盖刚保存的内容
-          queryClient.setQueryData<MindMapDetail>(["mindmap", mapId], (old) =>
-            old ? { ...old, root: newTree } : old
-          );
-        } catch (e) {
-          setSaveStatus("unsaved");
-          saveStatusRef.current = "unsaved";
-        }
+        const put: Promise<void> = api.mindmaps
+          .update(mapId, { root: newTree })
+          .then(() => {
+            setSaveStatus("saved");
+            saveStatusRef.current = "saved";
+            queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
+            // 同步详情缓存，防止 15s staleTime 内重进页面读到旧树覆盖刚保存的内容
+            queryClient.setQueryData<MindMapDetail>(["mindmap", mapId], (old) =>
+              old ? { ...old, root: newTree } : old
+            );
+          })
+          .catch(() => {
+            setSaveStatus("unsaved");
+            saveStatusRef.current = "unsaved";
+          })
+          .finally(() => {
+            if (savePromiseRef.current === put) savePromiseRef.current = null;
+          });
+        savePromiseRef.current = put;
       }, 800);
     },
     [mapId, queryClient]
@@ -251,12 +269,37 @@ export default function MindMapCanvasPage() {
         return next;
       });
 
+      // 清掉引用被删子树节点的横向连线：悬空连线会永久留在 settings 里随每次保存写回后端
+      const removedIds = new Set<string>();
+      const collectIds = (n: MindMapNode) => {
+        removedIds.add(n.id);
+        (n.children || []).forEach(collectIds);
+      };
+      const victim = (() => {
+        const find = (n: MindMapNode): MindMapNode | null => {
+          if (n.id === nodeId) return n;
+          for (const c of n.children || []) {
+            const r = find(c);
+            if (r) return r;
+          }
+          return null;
+        };
+        return treeData ? find(treeData) : null;
+      })();
+      if (victim) collectIds(victim);
+      const dangling = crossLinks.filter(
+        (l) => removedIds.has(l.sourceId) || removedIds.has(l.targetId)
+      );
+      if (dangling.length > 0) {
+        saveCrossLinks(crossLinks.filter((l) => !dangling.includes(l)));
+      }
+
       if (selectedNodeId === nodeId) {
         setSelectedNodeId(null);
         setDetailDrawerOpen(false);
       }
     },
-    [treeData, selectedNodeId, saveTreeDebounced]
+    [treeData, selectedNodeId, saveTreeDebounced, crossLinks, saveCrossLinks]
   );
 
   // 折叠 / 展开分支
@@ -351,17 +394,22 @@ export default function MindMapCanvasPage() {
   // Esc 键优先退出抽屉或 Agent 面板
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        if (agentPanelOpen && !isClosingAgent) {
-          closeAgent();
-        } else if (detailDrawerOpen && !isClosingDetail) {
-          closeDetailDrawer();
+        if (e.key === "Escape") {
+          if (linkingFromId) {
+            // 连线模式提示「取消 (Esc)」：Esc 必须能退出连线，否则只能点按钮取消
+            setLinkingFromId(null);
+            return;
+          }
+          if (agentPanelOpen && !isClosingAgent) {
+            closeAgent();
+          } else if (detailDrawerOpen && !isClosingDetail) {
+            closeDetailDrawer();
+          }
         }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [agentPanelOpen, isClosingAgent, detailDrawerOpen, isClosingDetail, closeAgent, closeDetailDrawer]);
+      };
+      window.addEventListener("keydown", handleKeyDown);
+      return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [agentPanelOpen, isClosingAgent, detailDrawerOpen, isClosingDetail, closeAgent, closeDetailDrawer, linkingFromId]);
 
   // 当右侧 Agent 面板或详情抽屉展开时，思维导图整体同步平移向左偏移以留出右侧空间
   const sideShift =
@@ -370,6 +418,7 @@ export default function MindMapCanvasPage() {
       : detailDrawerOpen && !isClosingDetail
       ? -210
       : 0;
+  sideShiftRef.current = sideShift;
 
   // ============================================================================
   // 原生自左向右 (Left-to-Right) 层级树布局计算
@@ -475,7 +524,8 @@ export default function MindMapCanvasPage() {
 
   // 视口平移与缩放手势
   const handleMouseDown = (e: React.MouseEvent) => {
-    // 仅在画布背景点击时触发视口拖动
+    // 仅在画布背景点击时触发视口拖动，且只响应左键（右键菜单/中键不算拖动）
+    if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest(".mindmap-node-card")) return;
     setIsDragging(true);
     setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
@@ -483,6 +533,12 @@ export default function MindMapCanvasPage() {
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!isDragging) return;
+    // 鼠标拖出画布外松开后 mouseup 收不到：按键已全部释放时强制结束拖拽，
+    // 防止 isDragging 卡死导致鼠标滑过画布（未按键）地图持续跟移
+    if (e.buttons === 0) {
+      setIsDragging(false);
+      return;
+    }
     setPan({
       x: e.clientX - dragStart.x,
       y: e.clientY - dragStart.y,
@@ -568,26 +624,30 @@ export default function MindMapCanvasPage() {
     }
   };
 
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
-    const newZoom = Math.min(2.5, Math.max(0.3, zoom * zoomFactor));
-
-    if (containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
+  // Ctrl+滚轮缩放必须用非 passive 原生监听：React 17+ 在 root 上以 passive 注册 wheel，
+  // onWheel 里的 preventDefault 无效，还会同时触发浏览器整页缩放
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+      const newZoom = Math.min(2.5, Math.max(0.3, zoomRef.current * zoomFactor));
+      const rect = el.getBoundingClientRect();
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
-
       // 以鼠标光标为锚点平滑缩放（包含当前侧边同步偏移）
-      const currentX = pan.x + sideShift;
-      const newCurrentX = mouseX - (mouseX - currentX) * (newZoom / zoom);
+      const currentX = panRef.current.x + sideShiftRef.current;
+      const newCurrentX = mouseX - (mouseX - currentX) * (newZoom / zoomRef.current);
       setPan({
-        x: newCurrentX - sideShift,
-        y: mouseY - (mouseY - pan.y) * (newZoom / zoom),
+        x: newCurrentX - sideShiftRef.current,
+        y: mouseY - (mouseY - panRef.current.y) * (newZoom / zoomRef.current),
       });
       setZoom(newZoom);
-    }
-  };
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   // 视口控制
   const handleZoomIn = () => setZoom((z) => Math.min(2.5, z * 1.15));
@@ -605,8 +665,9 @@ export default function MindMapCanvasPage() {
 
     const scale = Math.min(1.5, Math.max(0.4, Math.min(cw / treeW, ch / treeH)));
     setZoom(scale);
+    // transform 上还叠加了 sideShift，不补偿会导致 fit 后内容整体偏出可视区
     setPan({
-      x: 60 - bounds.minX * scale,
+      x: 60 - bounds.minX * scale - sideShift,
       y: (ch - treeH * scale) / 2 + 50 - bounds.minY * scale,
     });
   };
@@ -662,7 +723,8 @@ export default function MindMapCanvasPage() {
             <div className="flex items-center gap-2">
               <span className="text-base">🧠</span>
               <h1 className="text-sm font-bold text-gray-900 dark:text-gray-100 truncate max-w-xs sm:max-w-md">
-                {treeData.title}
+                {/* 列表页重命名只改 map.title 不动 root：标题以 mapDetail.title 为准，否则改名后进画布仍显示旧名 */}
+                {mapDetail.title || treeData.title}
               </h1>
               <span
                 className={`text-[10px] rounded px-1.5 py-0.5 font-medium transition ${
@@ -750,7 +812,6 @@ export default function MindMapCanvasPage() {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
-          onWheel={handleWheel}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
@@ -1098,6 +1159,26 @@ export default function MindMapCanvasPage() {
               );
               queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
             }
+            // 竞态收敛：若旧树的防抖 PUT 已在途，它可能在 Agent 落库之后到达服务端、
+            // 把树覆盖回旧版。等它结束后用 Agent 树补写一次，保证最终一致
+            const prevSave = savePromiseRef.current ?? Promise.resolve();
+            const trailing: Promise<void> = prevSave
+              .catch(() => {})
+              .then(async () => {
+                if (!mapId) return;
+                try {
+                  await api.mindmaps.update(mapId, { root: newTree });
+                  queryClient.setQueryData<MindMapDetail>(["mindmap", mapId], (old) =>
+                    old ? { ...old, root: newTree } : old
+                  );
+                } catch {
+                  /* 补写失败时详情缓存仍是 Agent 树，下次编辑会重新保存 */
+                }
+              })
+              .finally(() => {
+                if (savePromiseRef.current === trailing) savePromiseRef.current = null;
+              });
+            savePromiseRef.current = trailing;
           }}
           onClose={closeAgent}
         />

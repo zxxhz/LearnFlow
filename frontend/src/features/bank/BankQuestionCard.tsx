@@ -157,6 +157,9 @@ export default function BankQuestionCard({
         setAiStreaming(false);
         setAiError(`网络或服务异常：${(e as Error).message}`);
       }
+    } finally {
+      // 服务端干净关流但没发 done/error 事件时不能永久卡在思考态
+      setAiThinking(false);
     }
   }
 

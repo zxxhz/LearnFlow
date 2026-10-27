@@ -40,22 +40,13 @@ async def generate_quiz(
         kps.append(kp)
     course = await db.get(Course, document.course_id)
 
-    # 同章旧小测连带题目与作答一并清掉（保留普通练习不受影响）
-    old_quizzes = (
-        await db.scalars(select(Quiz).where(Quiz.document_id == document_id))
+    # 同章旧小测连带题目与作答一并清掉（保留普通练习不受影响）。
+    # 只先读出 id：删除必须推迟到 LLM 返回之后——
+    # 写事务横跨数十秒的 LLM 调用会占死 SQLite 单写者，
+    # 期间其它请求（心跳/作答/画像）全部 database is locked
+    old_quiz_ids = (
+        await db.scalars(select(Quiz.id).where(Quiz.document_id == document_id))
     ).all()
-    for q in old_quizzes:
-        await _delete_quiz_rows(db, q.id)
-        await db.delete(q)
-
-    quiz = Quiz(
-        document_id=document_id,
-        course_id=document.course_id,
-        kp_ids=json.dumps(kp_ids, ensure_ascii=False),
-        title=f"随堂小测 · {document.title}",
-    )
-    db.add(quiz)
-    await db.flush()
 
     kp_blocks = []
     for i, kp in enumerate(kps):
@@ -80,6 +71,24 @@ async def generate_quiz(
         ],
         ExerciseDraftSet,
     )
+
+    # LLM 已返回：现在开启短写事务（删旧 → 建新 → commit）
+    for qid in old_quiz_ids:
+        await _delete_quiz_rows(db, qid)
+    old_quizzes = (
+        await db.scalars(select(Quiz).where(Quiz.document_id == document_id))
+    ).all()
+    for q in old_quizzes:
+        await db.delete(q)
+
+    quiz = Quiz(
+        document_id=document_id,
+        course_id=document.course_id,
+        kp_ids=json.dumps(kp_ids, ensure_ascii=False),
+        title=f"随堂小测 · {document.title}",
+    )
+    db.add(quiz)
+    await db.flush()
 
     saved = 0
     for item in drafts.exercises:

@@ -30,7 +30,7 @@ export default function ReaderPage() {
   const [searchParams] = useSearchParams();
   const hlColors = useHlColors();
   const { theme, toggle: toggleTheme } = useTheme();
-  const { adhdMode, setAdhdMode } = useAdhdMode();
+  const { adhdMode, setAdhdMode, prefsLoaded } = useAdhdMode();
   const { fontSize: courseFontSize, setFontSize: setCourseFontSize } = useFontSize("course");
 
 
@@ -146,7 +146,9 @@ export default function ReaderPage() {
   const [regenMsg, setRegenMsg] = useState("");
   const [reviseTarget, setReviseTarget] = useState<{ sectionId: string; raw: string } | null>(null);
   const [runningSection, setRunningSection] = useState<string | null>(null);
-  const [runError, setRunError] = useState("");
+  // 每个代码块各自的最近一次运行错误：共用单值会让并发运行的失败信息互相吞掉，
+  // 且运行结束后 runningSection 已清空，错误将永远无法显示
+  const [runErrors, setRunErrors] = useState<Record<string, string>>({});
   const [tocOpen, setTocOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     const saved = localStorage.getItem("learnflow-reader-sidebar-open");
@@ -173,11 +175,13 @@ export default function ReaderPage() {
     [execsQuery.data]
   );
 
-  // 运行代码块（PRD §5.8）：结果由后端持久化，查询刷新后回显
+  // 运行代码块（PRD §5.8）：结果由后端持久化，查询刷新后回显。
+  // 运行态按 sectionId 记录：两个代码块并发时不能共用单值，
+  // 否则先完成者把后者的运行态与错误提示全部清掉
   const onRunCode = async (sectionId: string, lang: string, code: string) => {
     if (!documentId) return;
     setRunningSection(sectionId);
-    setRunError("");
+    setRunErrors((prev) => ({ ...prev, [sectionId]: "" }));
     try {
       await api.executions.run({
         document_id: documentId,
@@ -187,9 +191,9 @@ export default function ReaderPage() {
       });
       queryClient.invalidateQueries({ queryKey: ["execs", documentId] });
     } catch (e) {
-      setRunError((e as Error).message);
+      setRunErrors((prev) => ({ ...prev, [sectionId]: (e as Error).message }));
     } finally {
-      setRunningSection(null);
+      setRunningSection((cur) => (cur === sectionId ? null : cur));
     }
   };
 
@@ -302,7 +306,11 @@ export default function ReaderPage() {
   );
 
   useEffect(() => {
-    const onMouseUp = () => setTimeout(captureSelection, 0);
+    let selTimer: ReturnType<typeof setTimeout> | null = null;
+    const onMouseUp = () => {
+      if (selTimer) clearTimeout(selTimer);
+      selTimer = setTimeout(captureSelection, 0);
+    };
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
         e.preventDefault();
@@ -327,6 +335,7 @@ export default function ReaderPage() {
     document.addEventListener("touchend", onMouseUp);
     document.addEventListener("keydown", onKey);
     return () => {
+      if (selTimer) clearTimeout(selTimer);
       document.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("touchend", onMouseUp);
       document.removeEventListener("keydown", onKey);
@@ -540,8 +549,12 @@ export default function ReaderPage() {
     setIsExerciseFullscreen(false);
     setReAnchoring(null);
     setRegenMsg("");
-    setRunError("");
+    setRunErrors({});
     setRunningSection(null);
+    // 修订弹窗带着上一章的 sectionId/raw 跨章存活会提交必失败；进度订阅闭包里
+    // 的 documentId 是旧章，不中断会误清新章的 regenMsg
+    setReviseTarget(null);
+    progressAbortRef.current?.abort();
     setTocOpen(false);
     setRegenOpen(false);
     setRegenInstruction("");
@@ -785,11 +798,12 @@ export default function ReaderPage() {
             {/* ADHD 辅助阅读模式快捷切换按钮 */}
             <button
               type="button"
+              disabled={!prefsLoaded}
               onClick={() => {
                 const next = adhdMode === "off" ? "a" : adhdMode === "a" ? "b" : "off";
                 setAdhdMode(next);
               }}
-              className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition ${
+              className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition disabled:opacity-50 ${
                 adhdMode === "a"
                   ? "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
                   : adhdMode === "b"
@@ -880,7 +894,7 @@ export default function ReaderPage() {
                 flashSectionId={flashSection}
                 execution={sid ? execBySection.get(sid) ?? null : null}
                 running={runningSection === sid}
-                runError={runningSection === sid ? runError : ""}
+                runError={(sid && runErrors[sid]) || ""}
                 onRun={onRunCode}
                 adhdMode={adhdMode}
                 pIndex={paragraphIndices[i]}
@@ -1054,6 +1068,7 @@ export default function ReaderPage() {
           onAsk={() => createAnnotation.mutate(true)}
           onHighlight={() => createAnnotation.mutate(false)}
           onNote={handleCreateNote}
+          onDismiss={() => setSelection(null)}
         />
       )}
 

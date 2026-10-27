@@ -101,6 +101,15 @@ def extract_fallback_candidates(
     return candidates
 
 
+def _utf16_len(text: str) -> int:
+    """UTF-16 code unit 长度：前端 JS 字符串偏移以 UTF-16 计（emoji 等增补平面字符 1 个码点 = 2 单位）。"""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _utf16_offset(text: str, i: int) -> int:
+    return _utf16_len(text[:i])
+
+
 def find_candidate_anchors(
     sections: Sequence[Section],
     raw_markdown: str,
@@ -173,8 +182,9 @@ def find_candidate_anchors(
                 "exact": exact_text,
                 "prefix": prefix,
                 "suffix": suffix,
-                "start_offset": idx,
-                "end_offset": end_idx,
+                # 偏移统一按前端 JS 的 UTF-16 口径下发（含 emoji 时 code point 会错位）
+                "start_offset": _utf16_offset(plain, idx),
+                "end_offset": _utf16_offset(plain, end_idx),
                 "note": note,
                 "color": color,
             })
@@ -210,8 +220,8 @@ def find_candidate_anchors(
                     "exact": exact_text,
                     "prefix": prefix,
                     "suffix": suffix,
-                    "start_offset": idx,
-                    "end_offset": end_idx,
+                    "start_offset": _utf16_offset(plain, idx),
+                    "end_offset": _utf16_offset(plain, end_idx),
                     "note": note,
                     "color": color,
                 })

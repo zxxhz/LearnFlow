@@ -99,6 +99,14 @@ export async function subscribeSSE<T = unknown>(
     headers,
     signal,
     openWhenHidden: true,
+    // 自带 onopen 才拿得到 response.status：默认实现抛的错不带 status，401 无法识别
+    async onopen(res) {
+      if (res.status === 401) notifyAuthExpired();
+      if (res.ok && (res.headers.get("content-type") || "").includes("text/event-stream")) {
+        return;
+      }
+      throw new Error(`请求失败（HTTP ${res.status}）`);
+    },
     onmessage(ev) {
       parseEvent(ev.data, onEvent);
     },

@@ -100,7 +100,8 @@ export default function MindMapListPage() {
       a.href = url;
       a.download = `${title || "思维导图"}.md`;
       a.click();
-      URL.revokeObjectURL(url);
+      // 异步 tick 后再 revoke：同步 revoke 在 WebKit 内核（Tauri WKWebView）下可能取消尚未开始的下载
+      setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (err) {
       alert(`导出失败: ${(err as Error).message}`);
     }
@@ -119,6 +120,15 @@ export default function MindMapListPage() {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
     if (!file) return;
+    // drop 不受 accept 属性约束：文本类以外的文件会被读成乱码并按 Markdown 大纲解析出一张乱码导图
+    if (!/\.(md|markdown|txt|text)$/i.test(file.name)) {
+      alert("仅支持 Markdown / 纯文本文件（.md / .txt）");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert("文件过大（上限 5MB）");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (evt) => {
       const text = String(evt.target?.result || "");

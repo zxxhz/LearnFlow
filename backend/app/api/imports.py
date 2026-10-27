@@ -213,13 +213,21 @@ async def import_confirm(
     outline_items: list[OutlineItem] = []
     kp_extracted = 0
     try:
+        # Phase 1：先完成全部章节的 LLM 知识点提取（纯只读，不持写锁）——
+        # 写事务横跨逐章 LLM 调用（最多 20 章 × 数十秒）会占死 SQLite 单写者，
+        # 期间心跳/作答等全部 database is locked
+        chapter_prepared: list[tuple[int, object, str, object]] = []
         for j, ch in enumerate(spec_obj.chapters):
             if ch.file_index < 0 or ch.file_index >= len(texts):
                 raise HTTPException(status_code=400, detail="章节引用的文件不存在")
             content = slice_text(texts[ch.file_index], ch.start_line, ch.end_line)
             if not content.strip():
                 raise HTTPException(status_code=400, detail=f"章节「{ch.title}」内容为空")
+            meta = await _extract_kp(adapter, content) if adapter is not None else None
+            chapter_prepared.append((j, ch, content, meta))
 
+        # Phase 2：无 LLM 的短写事务集中落库
+        for j, ch, content, meta in chapter_prepared:
             doc = Document(
                 course_id=course.id,
                 chapter_index=j + 1,
@@ -256,36 +264,34 @@ async def import_confirm(
             ][:8]
             outline_items.append(OutlineItem(index=j + 1, title=ch.title, points=points))
 
-            # 知识点提取 + 自动出卡（LLM 不可用时静默跳过）
-            if adapter is not None:
-                meta = await _extract_kp(adapter, content)
-                if meta:
-                    doc.summary = meta.summary
-                    kp_extracted += len(meta.knowledge_points)
-                    rows = (
-                        await db.scalars(
-                            select(Section).where(Section.document_id == doc.id)
-                        )
-                    ).all()
-                    section_by_heading: dict[str, str] = {}
-                    for row in rows:
-                        hp = json.loads(row.heading_path)
-                        if hp:
-                            section_by_heading.setdefault(hp[-1], row.id)
-                    for item in meta.knowledge_points:
-                        sec_ids = (
-                            [section_by_heading[item.heading]]
-                            if item.heading and item.heading in section_by_heading
-                            else []
-                        )
-                        kp = KnowledgePoint(
-                            document_id=doc.id,
-                            title=item.title,
-                            summary=item.summary,
-                            section_ids=json.dumps(sec_ids, ensure_ascii=False),
-                        )
-                        db.add(kp)
-                        await db.flush()
+            # 知识点落库（提取已在 Phase 1 完成）
+            if meta:
+                doc.summary = meta.summary
+                kp_extracted += len(meta.knowledge_points)
+                rows = (
+                    await db.scalars(
+                        select(Section).where(Section.document_id == doc.id)
+                    )
+                ).all()
+                section_by_heading: dict[str, str] = {}
+                for row in rows:
+                    hp = json.loads(row.heading_path)
+                    if hp:
+                        section_by_heading.setdefault(hp[-1], row.id)
+                for item in meta.knowledge_points:
+                    sec_ids = (
+                        [section_by_heading[item.heading]]
+                        if item.heading and item.heading in section_by_heading
+                        else []
+                    )
+                    kp = KnowledgePoint(
+                        document_id=doc.id,
+                        title=item.title,
+                        summary=item.summary,
+                        section_ids=json.dumps(sec_ids, ensure_ascii=False),
+                    )
+                    db.add(kp)
+                    await db.flush()
     except Exception:
         # 中途失败：DB 回滚，但已写入的 courses/{cid}/ 目录会变成无主孤儿——一并清掉
         await db.rollback()

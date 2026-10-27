@@ -108,6 +108,8 @@ def check_math_equality(user_expr_str: str, expected_expr_str: str) -> bool:
     """使用 SymPy 校验数学表达式的代数等价性（支持多项式、三角函数等化简）。"""
     import sympy as sp
 
+    from app.services.expr_guard import UnsafeExpression, assert_math_expr_safe
+
     u_str = user_expr_str.strip()
     e_str = expected_expr_str.strip()
     if not u_str or not e_str:
@@ -115,10 +117,16 @@ def check_math_equality(user_expr_str: str, expected_expr_str: str) -> bool:
     if u_str == e_str:
         return True
     try:
+        # 幂塔/注入表达式在 sympify parse 阶段就会挂死线程（timeout 杀不掉 to_thread），
+        # 预检直接拒绝，回落到字符串比对
         symbols_dict = {name: sp.Symbol(name) for name in "xyztabcn"}
         # 用户习惯 x^2 表示幂，SymPy 中 ^ 是 XOR，统一替换为 ** 再解析
-        u = sp.sympify(u_str.replace("^", "**"), locals=symbols_dict)
-        e = sp.sympify(e_str.replace("^", "**"), locals=symbols_dict)
+        u_norm = u_str.replace("^", "**")
+        e_norm = e_str.replace("^", "**")
+        assert_math_expr_safe(u_norm)
+        assert_math_expr_safe(e_norm)
+        u = sp.sympify(u_norm, locals=symbols_dict)
+        e = sp.sympify(e_norm, locals=symbols_dict)
         diff = sp.simplify(u - e)
         return bool(diff == 0)
     except Exception:
@@ -309,7 +317,9 @@ async def _attach_meta(db: AsyncSession, exercises: list[Exercise]) -> list[Exer
     unlocked_ids: set[str] = set()
     chains: dict[str, list[Exercise]] = {}
     for e in exercises:
-        if e.kind == EXERCISE_CODE and not e.quiz_id:
+        # 支线搭桥小题（parent_exercise_id 非空）不进闯关链：它们是阶梯辅助，
+        # 排在父题后一位却不参与解锁顺序，否则父题未标记硬骨头时搭桥题锁死无法提交
+        if e.kind == EXERCISE_CODE and not e.quiz_id and not e.parent_exercise_id:
             chains.setdefault(e.knowledge_point_id, []).append(e)
     for chain in chains.values():
         chain.sort(key=lambda e: (e.order_index, e.created_at, e.id))
@@ -326,7 +336,9 @@ async def _attach_meta(db: AsyncSession, exercises: list[Exercise]) -> list[Exer
         o = ExerciseOut.model_validate(e)
         o.kp_title = kp_titles.get(e.knowledge_point_id)
         o.ever_passed = e.id in passed_ids
-        o.unlocked = e.kind != EXERCISE_CODE or bool(e.quiz_id) or e.id in unlocked_ids
+        o.unlocked = (
+            e.kind != EXERCISE_CODE or bool(e.quiz_id) or bool(e.parent_exercise_id) or e.id in unlocked_ids
+        )
         o.latest_attempt = (
             ExerciseAttemptOut.model_validate(latest[e.id]) if e.id in latest else None
         )
@@ -484,12 +496,15 @@ async def submit(
 
 async def _ensure_unlocked(db: AsyncSession, exercise: Exercise) -> None:
     """闯关顺序校验：上一关从未通过且本关也从未通过时，禁止提交本关。"""
+    if exercise.parent_exercise_id:
+        return  # 支线搭桥小题豁免闯关链（辅助性质，随时可做）
     chain = (
         await db.scalars(
             select(Exercise).where(
                 Exercise.knowledge_point_id == exercise.knowledge_point_id,
                 Exercise.kind == EXERCISE_CODE,
                 Exercise.quiz_id == "",
+                Exercise.parent_exercise_id == "",
             )
         )
     ).all()
@@ -594,7 +609,7 @@ async def generate_bridge_exercises(db: AsyncSession, exercise_id: str) -> list[
         raise LookupError("练习题不存在")
 
     prompt = render_prompt(
-        "exercise_bridge.md",
+        "exercise_bridge",
         TITLE=ex.title,
         LANGUAGE=ex.language or "python",
         TASK=ex.task_md,

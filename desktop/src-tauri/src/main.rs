@@ -272,21 +272,26 @@ fn main() {
         .run(|app, event| {
             if let RunEvent::Exit = event {
                 if let Some(mut child) = app.state::<Backend>().0.lock().unwrap().take() {
-                    // Windows 下 kill() 只杀直接子进程：后端自身的孙进程（编译器/沙箱代码等）
-                    // 会成为孤儿继续锁住安装目录。taskkill /T 级联终止整棵进程树。
-                    // 用 spawn 而非 output()：不阻塞退出路径（AV 拦截 taskkill 时不让关机卡死），
-                    // 子进程独立存活不受本进程退出影响。
-                    #[cfg(windows)]
-                    {
-                        use std::os::windows::process::CommandExt;
-                        let _ = Command::new("taskkill")
-                            .args(["/F", "/T", "/PID", &child.id().to_string()])
-                            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-                            .spawn();
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        let _ = child.kill();
+                    // 已被 try_wait() reap 过的后端（如中途闪退）不再 taskkill：
+                    // Windows PID 会被复用，对旧 PID 执行 /T 可能误杀无关进程树
+                    let already_exited = matches!(child.try_wait(), Ok(Some(_)));
+                    if !already_exited {
+                        // Windows 下 kill() 只杀直接子进程：后端自身的孙进程（编译器/沙箱代码等）
+                        // 会成为孤儿继续锁住安装目录。taskkill /T 级联终止整棵进程树。
+                        // 用 spawn 而非 output()：不阻塞退出路径（AV 拦截 taskkill 时不让关机卡死），
+                        // 子进程独立存活不受本进程退出影响。
+                        #[cfg(windows)]
+                        {
+                            use std::os::windows::process::CommandExt;
+                            let _ = Command::new("taskkill")
+                                .args(["/F", "/T", "/PID", &child.id().to_string()])
+                                .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+                                .spawn();
+                        }
+                        #[cfg(not(windows))]
+                        {
+                            let _ = child.kill();
+                        }
                     }
                     let _ = child.wait();
                 }

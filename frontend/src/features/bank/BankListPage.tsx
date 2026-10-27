@@ -44,6 +44,10 @@ export default function BankListPage() {
       setDeleteTarget(null);
       qc.invalidateQueries({ queryKey: ["banks"] });
     },
+    onError: (e) => {
+      setDeleteTarget(null);
+      alert((e as Error).message);
+    },
   });
 
   return (

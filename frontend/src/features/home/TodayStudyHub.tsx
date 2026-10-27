@@ -9,6 +9,10 @@ export function TodayStudyHub() {
     queryKey: ["today-study-hub"],
     queryFn: api.study.today,
     staleTime: 10_000,
+    // 全局 refetchOnWindowFocus=false、桌面壳常驻首页：不单独开窗口聚焦刷新，
+    // 过夜后「今日聚焦/专注 X 分钟」会一直显示昨天数据
+    refetchOnWindowFocus: true,
+    refetchInterval: 5 * 60 * 1000,
   });
 
   if (isLoading) {

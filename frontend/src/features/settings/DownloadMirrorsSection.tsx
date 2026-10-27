@@ -41,6 +41,7 @@ export default function DownloadMirrorsSection() {
     onSuccess: (data) => {
       queryClient.setQueryData(["settings-mirrors"], data);
     },
+    onError: (e) => alert(`镜像源切换失败：${(e as Error).message}`),
   });
 
   const addCustomMutation = useMutation({

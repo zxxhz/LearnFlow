@@ -59,13 +59,13 @@ async def build_annotation_messages(
         await db.scalars(
             select(Message)
             .where(Message.conversation_id == conversation.id)
-            .order_by(Message.created_at)
+            .order_by(Message.created_at.desc())
         )
-        .limit(200)
+        .limit(30)
         .all()
     )
-    # 超长对话只带最近 30 条（15 轮），防止历史无上限撑爆模型上下文
-    trimmed = history[-30:]
+    # 超长对话只带最近 30 条（15 轮）；倒序取最新 30 条后正序回排，保证最新提问在上下文末尾
+    trimmed = list(reversed(history))
     messages = [{"role": "system", "content": system}]
     messages += [{"role": m.role, "content": m.content} for m in trimmed]
     return messages

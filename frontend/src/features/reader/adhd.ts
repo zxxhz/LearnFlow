@@ -44,5 +44,7 @@ export function useAdhdMode() {
     adhdMode,
     setAdhdMode: mutation.mutate,
     isUpdating: mutation.isPending,
+    // 偏好未加载完成时切换不会持久化（见 mutation 内注释），调用方应禁用入口避免静默失效
+    prefsLoaded: Boolean(query.data?.preferences),
   };
 }

@@ -63,37 +63,55 @@ def _clean(v) -> str:
 
 
 def _iter_rows(data: bytes, filename: str):
-    """按行产出前 14 列原始单元格；跳过首行表头。"""
+    """按行产出前 14 列原始单元格；跳过首行表头。
+
+    损坏/伪装的表格文件（扩展名对但内容不是表格）统一包装成 BankParseError，
+    API 层转 400，而不是把 xlrd/openpyxl 的原始异常漏成 500。
+    """
     name = filename.lower()
     if name.endswith(".xls"):
         import xlrd
 
-        sh = xlrd.open_workbook(file_contents=data, on_demand=True).sheet_by_index(0)
-        for r in range(1, sh.nrows):
-            yield r + 1, [sh.cell_value(r, c) for c in range(min(N_COLS, sh.ncols))]
+        try:
+            sh = xlrd.open_workbook(file_contents=data, on_demand=True).sheet_by_index(0)
+            for r in range(1, sh.nrows):
+                yield r + 1, [sh.cell_value(r, c) for c in range(min(N_COLS, sh.ncols))]
+        except BankParseError:
+            raise
+        except Exception as e:
+            raise BankParseError(f"题库文件无法解析（{e}）：请确认是有效的 .xls 表格") from e
     elif name.endswith(".xlsx"):
         from openpyxl import load_workbook
 
-        wb = load_workbook(BytesIO(data), read_only=True, data_only=True)
-        ws = wb[wb.sheetnames[0]]
-        rows = ws.iter_rows(values_only=True)
-        next(rows, None)  # 表头
-        for rno, row in enumerate(rows, start=2):
-            yield rno, list(row[:N_COLS])
-        wb.close()
+        try:
+            wb = load_workbook(BytesIO(data), read_only=True, data_only=True)
+            ws = wb[wb.sheetnames[0]]
+            rows = ws.iter_rows(values_only=True)
+            next(rows, None)  # 表头
+            for rno, row in enumerate(rows, start=2):
+                yield rno, list(row[:N_COLS])
+            wb.close()
+        except BankParseError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise BankParseError(f"题库文件无法解析（{e}）：请确认是有效的 .xlsx 表格") from e
     else:
         raise BankParseError("仅支持 .xls / .xlsx 题库文件")
 
 
 def normalize_answer(qtype: str, raw: str, excel_row: int) -> str:
-    """答案归一化：single/judge → 单字母；multi → 排序去重大写字母串。"""
+    """答案归一化：single/judge → 单字母；multi → 排序去重大写字母串。
+
+    兼容中文题库常见的全角逗号「，」、顿号「、」与尾点「A.」写法。
+    """
+    raw = (raw or "").replace("，", ",").replace("、", ",").replace("．", ".")
     if qtype == QUESTION_JUDGE:
-        if raw in _JUDGE_TRUE:
+        if raw.strip() in _JUDGE_TRUE:
             return JUDGE_OPTIONS[0][0]
-        if raw in _JUDGE_FALSE:
+        if raw.strip() in _JUDGE_FALSE:
             return JUDGE_OPTIONS[1][0]
         raise BankParseError(f"第 {excel_row} 行判断题答案无法识别：{raw!r}")
-    letters = sorted({x.strip().upper() for x in raw.split(",") if x.strip()})
+    letters = sorted({x.strip().rstrip(".").upper() for x in raw.split(",") if x.strip()})
     if not letters:
         raise BankParseError(f"第 {excel_row} 行答案为空")
     for ch in letters:
@@ -201,6 +219,12 @@ async def create_bank(
     db.add(bank)
     await db.flush()
 
+    # 归档先于 commit：写盘失败时整体回滚（不留"有题库记录但无原件归档"的半截数据）
+    ext = "." + report["source_file"].rsplit(".", 1)[-1].lower()
+    bank_dir = settings.data_dir / "banks" / bank.id
+    bank_dir.mkdir(parents=True, exist_ok=True)
+    (bank_dir / f"original{ext}").write_bytes(file_bytes)
+
     for q in questions:
         db.add(
             BankQuestion(
@@ -216,11 +240,6 @@ async def create_bank(
             )
         )
     await db.commit()
-
-    ext = "." + report["source_file"].rsplit(".", 1)[-1].lower()
-    bank_dir = settings.data_dir / "banks" / bank.id
-    bank_dir.mkdir(parents=True, exist_ok=True)
-    (bank_dir / f"original{ext}").write_bytes(file_bytes)
     return bank
 
 
@@ -341,7 +360,8 @@ async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
         ).all()
         fp_by_id = {r.id: _question_dedup_key(r) for r in rows2}
         answered_fp = {fp_by_id[q] for q in ans_ids if q in fp_by_id}
-        new_count = sum(1 for key in fp_by_id.values() if key not in answered_fp)
+        # 按指纹去重计数：与 draw_round("new") 的候选池口径一致（重复题算 1 道）
+        new_count = len({key for key in fp_by_id.values() if key not in answered_fp})
 
     return {
         "question_count": question_count,

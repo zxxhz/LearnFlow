@@ -55,8 +55,12 @@ export const LearnerProfileSection: React.FC = () => {
 
   const handleDeleteMisconception = async (id: string, topic: string) => {
     try {
-      const updated = await api.profile.deleteMisconception(id);
-      setProfile(updated);
+      await api.profile.deleteMisconception(id);
+      // 后端只回 {ok:true}：本地移除该盲区即可；
+      // 不能把响应当作画像整体回写（会把 misconceptions 等字段冲成 undefined）
+      setProfile((p) =>
+        p ? { ...p, misconceptions: (p.misconceptions || []).filter((m) => m.id !== id) } : p
+      );
       showFeedback("success", `已标记掌握并从画像移除「${topic}」`);
     } catch (err: any) {
       showFeedback("error", err.message || "移除失败");

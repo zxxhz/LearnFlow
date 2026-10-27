@@ -590,13 +590,23 @@ def _extract_zip_safe(archive: Path, dest: Path, kind: Component) -> None:
 
 def _extract_7z(archive: Path, stage: Path, kind: Component) -> None:
     """py7zr 解压 + 进度：py7zr 无解压回调，解压跑子线程，主线程数 stage 已落盘
-    条目推算百分比（只读目录名，不触碰压缩流）。"""
+    条目推算百分比（只读目录名，不触碰压缩流）。
+
+    路径穿越防护：与 zip 共用 _zip_member_unsafe，含绝对路径 / .. 成员的归档直接拒收
+    ——SHA-256 校验留空时（镜像源）这是唯一闸门。
+    """
     try:
         import py7zr
     except ImportError as e:
         raise RuntimeError("缺少 py7zr 依赖，无法解压 7z 包") from e
     with py7zr.SevenZipFile(archive, mode="r") as z:
-        total = max(1, len(z.list()))
+        names = z.list()
+        unsafe = [n for n in names if _zip_member_unsafe(str(n))]
+        if unsafe:
+            raise RuntimeError(
+                f"7z 压缩包含非法路径成员（{unsafe[:3]}…），已拒绝解压"
+            )
+        total = max(1, len(names))
         err: list[BaseException] = []
 
         def work() -> None:

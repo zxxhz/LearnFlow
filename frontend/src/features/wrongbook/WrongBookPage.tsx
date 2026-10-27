@@ -12,7 +12,8 @@ export default function WrongBookPage() {
     queryKey: ["exercises-wrongbook"],
     queryFn: api.exercises.wrongbook,
   });
-  const { fontSize, setFontSize } = useFontSize("course");
+  // 设置页口径：错题练习字号走 drill 档（与题库练习一致），course 档是阅读正文
+  const { fontSize, setFontSize } = useFontSize("drill");
 
   return (
     <div className="mx-auto max-w-5xl p-8">

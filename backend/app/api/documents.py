@@ -142,6 +142,12 @@ async def revise_section(
 ):
     """单段落手术式重写与核验（决策4）：支持核查质疑并局部替换，无需整章推倒重来。"""
     doc = await _get_doc(db, document_id)
+    if doc.source == "imported":
+        # 与 regenerate 同一不变量：导入的文档保留原文（apply 阶段会真实改写 current.md）
+        raise HTTPException(
+            status_code=400,
+            detail="导入的文档保留原文，不支持 AI 修订重写。",
+        )
     sec = (
         await db.scalars(
             select(Section).where(

@@ -15,6 +15,7 @@ interface Props {
   onAsk: () => void;
   onHighlight: () => void;
   onNote: (noteText: string) => void;
+  onDismiss?: () => void;
 }
 
 export default function SelectionToolbar({
@@ -26,6 +27,7 @@ export default function SelectionToolbar({
   onAsk,
   onHighlight,
   onNote,
+  onDismiss,
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -51,6 +53,14 @@ export default function SelectionToolbar({
       inputRef.current?.focus();
     }
   }, [isWritingNote]);
+
+  // 工具条按选区时的视口坐标定位：滚动后固定定位会与选区脱节，滚动即收起
+  useEffect(() => {
+    if (!onDismiss) return;
+    const onScroll = () => onDismiss();
+    window.addEventListener("scroll", onScroll, true);
+    return () => window.removeEventListener("scroll", onScroll, true);
+  }, [onDismiss]);
 
   const handleNoteSubmit = () => {
     const trimmed = noteText.trim();

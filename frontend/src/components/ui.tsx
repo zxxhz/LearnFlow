@@ -1,5 +1,5 @@
 // 通用 UI 原语：全应用一致的轻量组件集
-import { ReactNode, useEffect } from "react";
+import { ReactNode, useEffect, useRef } from "react";
 
 type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 
@@ -129,6 +129,8 @@ export function Modal({
 }) {
   // Esc 关闭栈顶模态框；用 stopImmediatePropagation 防止同窗口上其他 Esc 监听
   // （阅读页抽屉、导图面板等）在同一次按键里被同时触发
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     const token = Symbol("modal");
@@ -138,7 +140,7 @@ export function Modal({
       if (_openModals[_openModals.length - 1] !== token) return; // 不是栈顶，交给上层模态框
       e.stopImmediatePropagation();
       e.preventDefault();
-      onClose();
+      onCloseRef.current();
     };
     window.addEventListener("keydown", onKey, true);
     return () => {
@@ -146,7 +148,9 @@ export function Modal({
       if (i >= 0) _openModals.splice(i, 1);
       window.removeEventListener("keydown", onKey, true);
     };
-  }, [open, onClose]);
+    // deps 只留 open：onClose 多为内联函数，每次重渲染换引用会导致
+    // effect 反复重建、把模态框从栈中拆出再压回栈顶，打乱叠放时 Esc 的次序
+  }, [open]);
 
   if (!open) return null;
   return (

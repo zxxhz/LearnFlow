@@ -34,26 +34,29 @@ class StudyPing(BaseModel):
 @router.post("/ping")
 async def ping(body: StudyPing, db: AsyncSession = Depends(get_db)):
     day = local_today().isoformat()
+    # 原子累加：读-改-写在两标签页并发心跳时会互相覆盖丢时长，
+    # UPDATE ... seconds = seconds + :s 由 SQLite 在同事务内完成，无丢失更新
+    from sqlalchemy import update as sa_update
+    from sqlalchemy.exc import IntegrityError
+
     row = await db.get(StudyDay, day)
     if row is None:
         row = StudyDay(day=day, seconds=body.seconds, updated_at=utcnow_iso())
         db.add(row)
         try:
             await db.commit()
-        except Exception:
-            # 跨日第一跳并发插入竞态：另一请求已建行，回滚后按累加路径重试一次
+            return {"ok": True, "day": day, "seconds": body.seconds}
+        except IntegrityError:
+            # 跨日第一跳并发插入竞态：另一请求已建行，回滚后走原子累加
             await db.rollback()
-            row = await db.get(StudyDay, day)
-            if row is None:
-                raise
-            row.seconds += body.seconds
-            row.updated_at = utcnow_iso()
-            await db.commit()
-    else:
-        row.seconds += body.seconds
-        row.updated_at = utcnow_iso()
-        await db.commit()
-    return {"ok": True, "day": day, "seconds": row.seconds}
+    await db.execute(
+        sa_update(StudyDay)
+        .where(StudyDay.day == day)
+        .values(seconds=StudyDay.seconds + body.seconds, updated_at=utcnow_iso())
+    )
+    await db.commit()
+    fresh = await db.get(StudyDay, day)
+    return {"ok": True, "day": day, "seconds": fresh.seconds if fresh else body.seconds}
 
 
 # ---------------- 首页「今天」学习行动中枢 API ----------------

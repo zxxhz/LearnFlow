@@ -182,7 +182,10 @@ async def check_update(db: AsyncSession, force: bool = False) -> dict:
     try:
         releases = await fetch_releases_list(repo)
         if releases:
-            valid_releases = [r for r in releases if not r.get("draft") and r.get("tag_name")]
+            valid_releases = [
+                r for r in releases
+                if not r.get("draft") and not r.get("prerelease") and r.get("tag_name")
+            ]
             if valid_releases:
                 valid_releases.sort(key=lambda r: _ver_tuple(str(r.get("tag_name", ""))), reverse=True)
                 latest_rel = valid_releases[0]
@@ -231,8 +234,14 @@ async def check_update(db: AsyncSession, force: bool = False) -> dict:
 
 
 def _launch_installer_and_exit(installer_path: "Path") -> None:
-    """唤起已下载的最新安装包界面并平稳退出当前旧版本进程，彻底释放文件锁。"""
+    """唤起已下载的最新安装包界面并平稳退出当前旧版本进程，彻底释放文件锁。
+
+    两次唤起都失败时抛出异常：绝不能在没启动安装包的情况下自杀退出旧版本——
+    那会让用户既没更新成功、应用也没了。
+    """
     import os
+    import subprocess
+    import sys
     import threading
     import time
     from pathlib import Path
@@ -240,12 +249,12 @@ def _launch_installer_and_exit(installer_path: "Path") -> None:
     installer_str = str(installer_path.resolve())
     logger.info("准备唤起新版本安装程序: %s", installer_str)
 
-    # 1. 使用 Windows 系统外壳独立打开安装包（脱离当前进程树，兼容 UAC 提权）
+    # 1. 使用 Windows 系统外壳独立打开安装包（脱离当前进程树，兼容 UAC 提权）；
+    #    两次尝试都抛异常时直接向上传播，绝不安排退出
     try:
         os.startfile(installer_str)
     except Exception as e:
         logger.warning("os.startfile 唤起失败，尝试调用 explorer.exe: %s", e)
-        import subprocess
         subprocess.Popen(["explorer.exe", installer_str])
 
     # 2. 延迟 1.5 秒后主动终止旧版本前端壳与后端，释放所有文件占用
@@ -303,6 +312,46 @@ def _sanitize_version(version: str) -> str:
     return v
 
 
+def _canonical_exe(repo: str, clean_v: str) -> str:
+    return f"https://github.com/{repo}/releases/download/v{clean_v}/LearnFlow_{clean_v}_x64-setup.exe"
+
+
+def _direct_url_allowed(candidate: str, raw_github_exe: str) -> bool:
+    """direct_url 只接受 canonical 安装包 URL 本身或其镜像前缀变体。
+
+    仅按域名白名单校验不够：github.com 域下任意仓库/路径的 exe 也会被下载执行，
+    等于把"更新"变成任意下载执行链（回环免令牌，本地任意网页可触发）。
+    """
+    if candidate == raw_github_exe:
+        return True
+    for prefix in get_ordered_mirror_prefixes():
+        if prefix and candidate == f"{prefix}{raw_github_exe}":
+            return True
+    return candidate == apply_mirror(raw_github_exe)
+
+
+async def _fetch_release_asset_sha256(repo: str, tag: str, filename: str) -> str | None:
+    """尽力从 GitHub API 读取该 release 资产的官方 sha256（digest 字段）。
+
+    拿不到（API 不可达/限流/老资产无 digest）时返回 None，调用方按"无法校验"放行——
+    镜像场景下 GitHub API 常不可达，硬校验会砍掉全部镜像更新路径。
+    """
+    url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+    headers = {"User-Agent": "LearnFlow-Update-Check", "Accept": "application/vnd.github+json"}
+    try:
+        async with httpx.AsyncClient(timeout=4.0, follow_redirects=True) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            for asset in resp.json().get("assets", []):
+                if asset.get("name") == filename:
+                    digest = str(asset.get("digest") or "")
+                    if digest.lower().startswith("sha256:"):
+                        return digest.split(":", 1)[1].lower()
+    except Exception as e:  # noqa: BLE001
+        logger.info("无法获取 %s 的官方 sha256（%s），跳过完整性校验", filename, e)
+    return None
+
+
 async def stream_download_and_install(target_version: str, direct_url: str | None = None):
     """通过加速镜像源流式下载最新安装包，向前端实时推送进度，并在完成后以静默模式触发安装。"""
     import json
@@ -316,7 +365,7 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
     except ValueError as e:
         yield f"data: {json.dumps({'type': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
         return
-    raw_github_exe = f"https://github.com/{repo}/releases/download/v{clean_v}/LearnFlow_{clean_v}_x64-setup.exe"
+    raw_github_exe = _canonical_exe(repo, clean_v)
 
     # 域名白名单校验：direct_url 只接受官方域或已配置镜像域
     allowed_hosts = _allowed_download_hosts()
@@ -326,10 +375,15 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
     if direct_url and direct_url.strip():
         candidate = direct_url.strip()
         parsed = urlparse(candidate)
-        if parsed.scheme in ("http", "https") and parsed.hostname and parsed.hostname.lower() in allowed_hosts:
+        if (
+            parsed.scheme in ("http", "https")
+            and parsed.hostname
+            and parsed.hostname.lower() in allowed_hosts
+            and _direct_url_allowed(candidate, raw_github_exe)
+        ):
             urls_to_try.append(candidate)
         else:
-            logger.warning("拒绝白名单外的 direct_url: %s", candidate)
+            logger.warning("拒绝白名单或路径校验外的 direct_url: %s", candidate)
 
     active_accelerated = apply_mirror(raw_github_exe)
     if active_accelerated not in urls_to_try:
@@ -342,13 +396,19 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
 
     temp_dir = Path(tempfile.gettempdir()) / "LearnFlow_Update"
     temp_dir.mkdir(parents=True, exist_ok=True)
-    # 清理历史残留的半截安装包，避免旧版本文件被误唤起
+    # 清理历史残留的半截安装包（只清 1 小时前的旧文件，避免误删并发下载的在途文件）
+    import uuid
+
+    now_ts = time.time()
     for stale in temp_dir.glob("LearnFlow_*-setup.exe"):
         try:
-            stale.unlink()
+            if now_ts - stale.stat().st_mtime > 3600:
+                stale.unlink()
         except OSError:
             pass
-    installer_path = temp_dir / f"LearnFlow_{clean_v}_x64-setup.exe"
+    # 文件名带随机后缀：并发触发两次安装互不覆盖、互不删对方的在途文件
+    installer_path = temp_dir / f"LearnFlow_{clean_v}_{uuid.uuid4().hex[:8]}_x64-setup.exe"
+    expected_sha256 = await _fetch_release_asset_sha256(repo, f"v{clean_v}", f"LearnFlow_{clean_v}_x64-setup.exe")
 
     headers = {"User-Agent": "LearnFlow-InAppUpdater/1.0"}
     success = False
@@ -387,6 +447,19 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
                                 yield f"data: {json.dumps({'type': 'progress', 'downloaded': downloaded, 'total': total, 'percent': pct, 'speed_mb': speed_mb}, ensure_ascii=False)}\n\n"
 
             if installer_path.exists() and installer_path.stat().st_size > 10 * 1024 * 1024:
+                if expected_sha256:
+                    import hashlib
+
+                    h = hashlib.sha256()
+                    with open(installer_path, "rb") as vf:
+                        for block in iter(lambda: vf.read(1024 * 1024), b""):
+                            h.update(block)
+                    if h.hexdigest() != expected_sha256:
+                        installer_path.unlink(missing_ok=True)
+                        last_error = "安装包 sha256 校验失败（来源不可信），已拒绝安装"
+                        logger.error(last_error)
+                        yield f"data: {json.dumps({'type': 'retry', 'message': last_error}, ensure_ascii=False)}\n\n"
+                        continue
                 success = True
                 break
             else:

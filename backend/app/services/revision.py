@@ -46,7 +46,7 @@ async def review_section_revision(
     surrounding_context = f"【前序段落】\n{prev_raw}\n\n【后续段落】\n{next_raw}"
 
     prompt = render_prompt(
-        "section_revise.md",
+        "section_revise",
         COURSE_TITLE=course.title if course else "未命名课程",
         DOC_TITLE=document.title,
         SURROUNDING_CONTEXT=surrounding_context,
@@ -88,18 +88,28 @@ async def apply_section_revision(
         raise ValueError("文档未关联正文文件，无法应用修订")
 
     file_path = settings.data_dir / document.file_path
-    file_path.write_text(new_markdown, encoding="utf-8")
+    # 先写临时文件，数据库提交成功后再原子替换——
+    # 反过来（先写正文再重建索引）一旦 rebuild/commit 失败，磁盘与索引就永久失配
+    tmp_path = file_path.with_name(file_path.name + ".revising")
+    tmp_path.write_text(new_markdown, encoding="utf-8")
 
     new_version = document.version + 1
     document.version = new_version
 
-    await rebuild_sections(
-        db,
-        document=document,
-        new_markdown=new_markdown,
-        new_version=new_version,
-        force_inherited={section.order_index: section.id},
-    )
-    await db.commit()
+    try:
+        await rebuild_sections(
+            db,
+            document=document,
+            new_markdown=new_markdown,
+            new_version=new_version,
+            force_inherited={section.order_index: section.id},
+        )
+        await db.commit()
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    import os
+
+    os.replace(tmp_path, file_path)
     logger.info("applied section revision to doc=%s sec=%s v=%d", document.id, section.id, new_version)
     return new_markdown

@@ -191,6 +191,9 @@ export default function AnnotationCard({
         setIsThinking(false);
         setStreamErr(`网络错误：${(e as Error).message}`);
       }
+    } finally {
+      // 服务端干净关流但没发 done/error 事件时（如静默断连），不能永久卡在思考态
+      setIsThinking(false);
     }
   };
 
@@ -199,6 +202,7 @@ export default function AnnotationCard({
       api.annotations.update(annotation.id, body),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["doc-anns", annotation.document_id] }),
+    onError: (e) => alert((e as Error).message),
   });
 
   const handleColorChange = (c: AnnotationColor) => {
@@ -212,6 +216,7 @@ export default function AnnotationCard({
       queryClient.invalidateQueries({ queryKey: ["doc-anns", annotation.document_id] });
       onClose();
     },
+    onError: (e) => alert((e as Error).message),
   });
 
   const isVisible = mounted && !closing;
@@ -301,8 +306,11 @@ export default function AnnotationCard({
                 variant="secondary"
                 className="text-xs"
                 onClick={() => {
-                  patch.mutate({ note: noteDraft });
-                  setNoteOpen(false);
+                  // 保存成功后再收起输入框：失败时（onError 会 alert）保持编辑内容不丢
+                  patch.mutate(
+                    { note: noteDraft },
+                    { onSuccess: () => setNoteOpen(false) }
+                  );
                 }}
               >
                 保存备注

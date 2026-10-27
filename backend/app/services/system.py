@@ -85,9 +85,14 @@ def is_lan_access_enabled() -> bool:
 
 
 def set_lan_access_enabled(enabled: bool) -> bool:
+    global _LAN_CACHE
     try:
         settings.data_dir.mkdir(parents=True, exist_ok=True)
-        lan_access_path().write_text("1" if enabled else "0", encoding="utf-8")
+        p = lan_access_path()
+        p.write_text("1" if enabled else "0", encoding="utf-8")
+        # Windows 时钟粒度约 15.6ms：连续两次开关落在同一刻度时 mtime 不变，
+        # is_lan_access_enabled 会按旧缓存返回陈旧状态——写成功后直接刷新缓存
+        _LAN_CACHE = (p.stat().st_mtime, enabled)
     except OSError:
         logger.warning("局域网开关写入失败")
     return enabled

@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 
@@ -129,13 +130,14 @@ async def run_chapter(
     if not body.strip():
         raise LLMError("模型未返回正文内容")
 
-    # 落盘：旧版本快照 → 新 current.md（PRD FR-1.5）
+    # 落盘顺序：先把新正文写到临时文件 → 提交数据库 → 快照旧版本 → 原子替换 current.md。
+    # 若先写 current.md 再重建索引，rebuild/commit 失败被 _mark_failed 回滚后会出现
+    # "磁盘是新正文、库里 Section 还是旧版"的锚点失配
     doc_dir = settings.courses_dir / course.id / doc.id
     (doc_dir / "versions").mkdir(parents=True, exist_ok=True)
     current = doc_dir / "current.md"
-    if current.exists() and doc.version >= 1:
-        shutil.copy2(current, doc_dir / "versions" / f"v{doc.version}.md")
-    current.write_text(body, encoding="utf-8")
+    tmp_current = doc_dir / "current.md.tmp"
+    tmp_current.write_text(body, encoding="utf-8")
 
     new_version = doc.version + 1
     sections = await rebuild_sections(db, doc, body, new_version)
@@ -214,6 +216,12 @@ async def run_chapter(
         enabled=should_highlight,
     )
     await db.commit()
+
+    # 提交成功后才动 current.md：快照旧版本 → 原子替换，失败窗口只在毫秒级
+    if current.exists() and new_version >= 2:
+        shutil.copy2(current, doc_dir / "versions" / f"v{new_version - 1}.md")
+    os.replace(tmp_current, current)
+
     publish(
         course.id,
         {"type": "chapter_done", "index": doc.chapter_index, "title": doc.title, "document_id": doc.id},
@@ -300,32 +308,55 @@ async def queue_single_document(
         course_id = doc.course_id
         if is_running(course_id):
             raise RuntimeError("该课程的生成任务正在进行中，请稍后再试")
+        prev_status, prev_error = doc.status, doc.error
         doc.status = "pending"
         doc.error = None
         await db.commit()
 
-    async def _run() -> None:
-        try:
-            async with async_session_factory() as db:
-                course = await db.get(Course, course_id)
-                doc = await db.get(Document, document_id)
-                if course is None or doc is None:
-                    return
-                try:
-                    await run_chapter(
-                        db, course, doc, instruction, auto_highlight=auto_highlight
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    logger.exception("regenerate chapter %s failed", document_id)
-                    await _mark_failed(db, doc, e)
-                    publish(course_id, {"type": "chapter_failed", "index": doc.chapter_index, "error": doc.error})
-                publish(course_id, {"type": "course_done", "status": course.status})
-        finally:
-            _tasks.pop(course_id, None)
+    def _spawn() -> asyncio.Task:
+        # 检查与注册之间隔着 await（上面 commit），并发请求可能同时越过检查——
+        # 赋值前同步复查并占位，保证同课程只有一个任务（与 start_course_generation 同规）
+        existing = _tasks.get(course_id)
+        if existing is not None and not existing.done():
+            raise RuntimeError("该课程的生成任务正在进行中，请稍后再试")
 
-    _tasks[course_id] = asyncio.create_task(_run())
+        async def _run() -> None:
+            try:
+                async with async_session_factory() as db:
+                    course = await db.get(Course, course_id)
+                    doc = await db.get(Document, document_id)
+                    if course is None or doc is None:
+                        return
+                    try:
+                        await run_chapter(
+                            db, course, doc, instruction, auto_highlight=auto_highlight
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        logger.exception("regenerate chapter %s failed", document_id)
+                        await _mark_failed(db, doc, e)
+                        publish(course_id, {"type": "chapter_failed", "index": doc.chapter_index, "error": doc.error})
+                    publish(course_id, {"type": "course_done", "status": course.status})
+            finally:
+                if _tasks.get(course_id) is task:
+                    _tasks.pop(course_id, None)
+
+        task = asyncio.create_task(_run())
+        _tasks[course_id] = task
+        return task
+
+    try:
+        _spawn()
+    except RuntimeError:
+        # 并发败者：把刚标记的 pending 还原为进入前状态，下次重试仍可发起
+        async with async_session_factory() as db2:
+            doc2 = await db2.get(Document, document_id)
+            if doc2 is not None and doc2.status == "pending":
+                doc2.status = prev_status
+                doc2.error = prev_error
+                await db2.commit()
+        raise
     return course_id
 
 
@@ -398,4 +429,14 @@ async def purge_course_data(db: AsyncSession, course: Course) -> None:
         await db.execute(delete(Section).where(Section.document_id.in_(doc_ids)))
         await db.execute(delete(CodeExecution).where(CodeExecution.document_id.in_(doc_ids)))
         await db.execute(delete(Document).where(Document.id.in_(doc_ids)))
+        # FTS 全文索引行不随外键级联：不清理则旧章节正文永久残留 app.db（库无限膨胀）
+        from sqlalchemy import text as sa_text
+
+        from app.services.search import ensure_fts
+
+        await ensure_fts(db)
+        for did in doc_ids:
+            await db.execute(
+                sa_text("DELETE FROM fts_sections WHERE document_id = :d"), {"d": did}
+            )
     shutil.rmtree(settings.courses_dir / course.id, ignore_errors=True)

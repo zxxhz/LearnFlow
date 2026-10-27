@@ -55,9 +55,14 @@ def _parse_line(line: str, x: sp.Symbol) -> sp.Expr:
     if not expr:
         raise ValueError("存在空表达式行")
     try:
-        # 用户习惯 x^2 表示幂；限制 locals 防止 sympify 内建 eval 注入任意调用
-        parsed = sp.sympify(expr.replace("^", "**"), locals={"x": x, "Symbol": sp.Symbol})
-    except (sp.SympifyError, SyntaxError, TypeError) as e:
+        from app.services.expr_guard import UnsafeExpression, assert_math_expr_safe
+
+        # 用户习惯 x^2 表示幂；sympify 的 parse 阶段会原生求值属性链/调用，
+        # 必须先过 AST 白名单（getattr/下标/gadget 链在此被拒绝）
+        guarded = expr.replace("^", "**")
+        assert_math_expr_safe(guarded)
+        parsed = sp.sympify(guarded, locals={"x": x, "Symbol": sp.Symbol})
+    except (sp.SympifyError, SyntaxError, TypeError, UnsafeExpression) as e:
         raise ValueError(f"无法解析的表达式「{line.strip()}」：{e}")
     unknown = parsed.free_symbols - {x}
     if unknown:

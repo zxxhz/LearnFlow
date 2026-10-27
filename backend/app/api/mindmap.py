@@ -163,9 +163,10 @@ async def export_mindmap_json(mindmap_id: str, db: AsyncSession = Depends(get_db
     return Response(
         content=payload,
         media_type="application/json",
-        headers={
-            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(mm.title)} mindmap.json",
-        },
+    headers={
+        # RFC 5987：filename* 值内不允许裸空格，整名一起编码
+        "Content-Disposition": f"attachment; filename*=UTF-8''{quote(f'{mm.title} mindmap.json')}",
+    },
     )
 
 

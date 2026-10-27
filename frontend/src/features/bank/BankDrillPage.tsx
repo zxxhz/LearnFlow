@@ -633,6 +633,9 @@ function WrongQuestionItem({
         setAiStreaming(false);
         setAiError(`网络或服务异常：${(e as Error).message}`);
       }
+    } finally {
+      // 服务端干净关流但没发 done/error 事件时不能永久卡在思考态
+      setAiThinking(false);
     }
   }
 
@@ -685,7 +688,18 @@ function WrongQuestionItem({
       {result && (
         <div className="drill-result-banner mt-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 p-2.5">
           <div className="text-red-700 dark:text-red-400 font-semibold">
-            ✗ 你的作答：{result.user_answer ? result.user_answer.replace(/,/g, "、") : "未选"} · 正确答案：{result.correct_answer}
+            ✗ 你的作答：
+            {question.qtype === "judge"
+              ? // 判断题与 correct_answer 同口径显示文案（否则一边 B 一边「正确」）
+                result.user_answer === "A"
+                ? "正确"
+                : result.user_answer === "B"
+                ? "错误"
+                : "未选"
+              : result.user_answer
+              ? result.user_answer.replace(/,/g, "、")
+              : "未选"}{" "}
+            · 正确答案：{result.correct_answer}
           </div>
           {result.explanation && (
             <p className="drill-explanation-text mt-1 whitespace-pre-wrap leading-relaxed text-gray-600 dark:text-gray-400">

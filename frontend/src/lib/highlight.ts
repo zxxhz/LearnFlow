@@ -49,7 +49,7 @@ function normalizeLang(lang: string): string {
 
 async function getHighlighter(): Promise<HighlighterCore> {
   if (!highlighterPromise) {
-    highlighterPromise = (async () => {
+    const attempt = (async () => {
       // JS 引擎（纯正则、无 onig.wasm）：省掉 wasm 分块且体积更小，够用
       const [{ createHighlighterCore }, { createJavaScriptRegexEngine }, { default: langs }, { default: themes }] =
         await Promise.all([
@@ -64,6 +64,12 @@ async function getHighlighter(): Promise<HighlighterCore> {
         engine: createJavaScriptRegexEngine(),
       });
     })();
+    highlighterPromise = attempt;
+    // 失败时清除缓存的 rejected promise：否则弱网下一次分块加载失败，
+    // 整个会话的高亮永远复用失败结果，网络恢复也不重试
+    attempt.catch(() => {
+      if (highlighterPromise === attempt) highlighterPromise = null;
+    });
   }
   return highlighterPromise;
 }

@@ -125,13 +125,20 @@ def _custom_mirrors_path() -> Path:
 
 
 def load_custom_mirrors() -> list[dict[str, Any]]:
-    """读取用户添加的自定义镜像源列表。"""
+    """读取用户添加的自定义镜像源列表。
+
+    手工编辑/旧版本的配置可能缺 prefix 等必要键：缺键条目直接过滤，
+    否则测速循环里 item["prefix"] 会 KeyError 让整个接口 500。
+    """
     p = _custom_mirrors_path()
     if p.exists():
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(data, list):
-                return data
+                return [
+                    item for item in data
+                    if isinstance(item, dict) and str(item.get("prefix") or "").strip()
+                ]
         except Exception as e:
             logger.warning("读取自定义镜像配置失败: %s", e)
     return []
@@ -268,7 +275,7 @@ def update_custom_mirror(mirror_id: str, name: str, prefix: str, desc: str = "")
 
 
 async def _probe_mirror(client: httpx.AsyncClient, item: dict[str, Any], test_target: str) -> dict[str, Any]:
-    prefix = item["prefix"]
+    prefix = str(item.get("prefix") or "")
     url = f"{prefix}{test_target}" if prefix else test_target
     t0 = time.time()
     is_custom = bool(item.get("is_custom", False))

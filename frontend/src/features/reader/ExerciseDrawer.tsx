@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import type { Exercise, KnowledgePoint } from "../../lib/types";
-import { Button, Select, Spinner } from "../../components/ui";
+import { Button, ConfirmDialog, Select, Spinner } from "../../components/ui";
 import ExerciseCard from "./ExerciseCard";
 import FontSizeControl from "../../components/FontSizeControl";
 import { useFontSize } from "../../lib/fontSize";
@@ -56,6 +56,7 @@ export default function ExerciseDrawer({
   const [quizMode, setQuizMode] = useState(false);
   const [quizLang, setQuizLang] = useState<"python" | "cpp">("python");
   const [quizKpIds, setQuizKpIds] = useState<string[] | null>(null); // null = 全选
+  const [confirmDeleteQuiz, setConfirmDeleteQuiz] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   const { data: quizzes } = useQuery({
@@ -236,7 +237,7 @@ export default function ExerciseDrawer({
             <div className="flex items-center justify-between">
               <span className="text-sm font-semibold text-brand-800">📋 随堂小测</span>
               {activeQuiz && (
-                <Button variant="ghost" className="!px-2 !py-0.5 text-xs text-red-500 dark:text-red-400" onClick={() => removeQuiz.mutate(activeQuiz.id)}>
+                <Button variant="ghost" className="!px-2 !py-0.5 text-xs text-red-500 dark:text-red-400" onClick={() => setConfirmDeleteQuiz(true)}>
                   删除当前小测
                 </Button>
               )}
@@ -354,6 +355,16 @@ export default function ExerciseDrawer({
         })}
         </div>
       </div>
+      <ConfirmDialog
+        open={confirmDeleteQuiz}
+        title="删除随堂小测"
+        message={`将删除「${activeQuiz?.title ?? ""}」及其全部题目与作答记录，且不可恢复。确定删除？`}
+        onConfirm={() => {
+          setConfirmDeleteQuiz(false);
+          if (activeQuiz) removeQuiz.mutate(activeQuiz.id);
+        }}
+        onCancel={() => setConfirmDeleteQuiz(false)}
+      />
     </div>
   );
 }

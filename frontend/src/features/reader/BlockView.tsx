@@ -233,8 +233,9 @@ export default function BlockView({
 
 
   const annKey = useMemo(
-
-    () => annotations.map((a) => `${a.id}:${a.status}:${a.color}:${a.exact.length}`).join("|"),
+    // 指纹必须含 exact 全文：编辑标注后 exact 变了但长度相同（status/color 不变）时，
+    // 仅长度指纹会漏判，旧高亮残留到新文本上
+    () => annotations.map((a) => `${a.id}:${a.status}:${a.color}:${a.exact}`).join("|"),
     [annotations]
   );
   const isCode = block.type === "code";

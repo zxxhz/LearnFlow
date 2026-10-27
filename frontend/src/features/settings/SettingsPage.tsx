@@ -89,24 +89,17 @@ export default function SettingsPage() {
   const [saveErr, setSaveErr] = useState("");
 
   const savePrefs = useMutation({
-    mutationFn: () => {
-      if (prefs.course_font_size) {
-        try {
-          localStorage.setItem("learnflow-course-font-size", String(prefs.course_font_size));
-        } catch {
-          // ignore
-        }
-      }
-      if (prefs.drill_font_size) {
-        try {
-          localStorage.setItem("learnflow-drill-font-size", String(prefs.drill_font_size));
-        } catch {
-          // ignore
-        }
-      }
-      return api.settings.update({ preferences: prefs });
-    },
+    mutationFn: () => api.settings.update({ preferences: prefs }),
     onSuccess: () => {
+      // 字号本地缓存在保存成功后才写入：失败时本地与服务端保持一致，不会"本地已变、服务端没存"
+      try {
+        if (prefs.course_font_size)
+          localStorage.setItem("learnflow-course-font-size", String(prefs.course_font_size));
+        if (prefs.drill_font_size)
+          localStorage.setItem("learnflow-drill-font-size", String(prefs.drill_font_size));
+      } catch {
+        /* ignore */
+      }
       setSaveErr("");
       setSaveMsg("偏好已保存");
       queryClient.invalidateQueries({ queryKey: ["settings"] });
@@ -352,7 +345,11 @@ export default function SettingsPage() {
               min={500}
               step={500}
               value={prefs.chapter_length}
-              onChange={(e) => setPrefs({ ...prefs, chapter_length: Number(e.target.value) })}
+              onChange={(e) => {
+                // 数字输入无钳制会漏进 LENGTH=0 之类提示词灾难值；清空输入框时 Number("") === 0
+                const v = Math.max(500, Number(e.target.value) || 500);
+                setPrefs({ ...prefs, chapter_length: Math.min(20000, v) });
+              }}
             />
           </div>
           <div>
@@ -362,7 +359,10 @@ export default function SettingsPage() {
               min={1}
               max={4}
               value={prefs.exercises_per_kp}
-              onChange={(e) => setPrefs({ ...prefs, exercises_per_kp: Number(e.target.value) })}
+              onChange={(e) => {
+                const v = Math.max(1, Math.round(Number(e.target.value) || 1));
+                setPrefs({ ...prefs, exercises_per_kp: Math.min(4, v) });
+              }}
             />
           </div>
         </div>

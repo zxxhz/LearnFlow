@@ -91,6 +91,10 @@ export async function downloadFile(path: string): Promise<void> {
   if (token) headers["x-access-token"] = token;
   const res = await fetch(BASE + path, { headers });
   if (!res.ok) {
+    if (res.status === 401) {
+      // 与 request() 同一自救口径：令牌失效时清缓存并广播，AuthGate 引导重录入
+      notifyAuthExpired();
+    }
     let detail = `下载失败（HTTP ${res.status}）`;
     try {
       const j = await res.json();
@@ -163,7 +167,7 @@ export const api = {
     testLlm: () => request<LLMTestResult>("/settings/llm/test", { method: "POST" }),
     openDataDir: () =>
       request<{ ok: boolean }>("/settings/open-data-dir", { method: "POST" }),
-    ollamaModels: () => request<{ models: string[] }>("/settings/llm/ollama/models"),
+    ollamaModels: () => request<{ models: string[] }>("/llm/ollama/models"),
     mirrors: {
       getStatus: () => request<MirrorsStatus>("/settings/mirrors"),
       speedTest: () => request<MirrorsStatus>("/settings/mirrors/test", { method: "POST" }),
@@ -368,7 +372,7 @@ export const api = {
       }),
     wrong: (id: string) => request<BankWrongQuestion[]>(`/banks/${id}/wrong`),
     rename: (id: string, name: string) =>
-      request<{ ok: boolean }>(`/banks/${id}`, {
+      request<Bank>(`/banks/${id}`, {
         method: "PATCH",
         ...jsonBody({ name }),
       }),
@@ -400,7 +404,8 @@ export const api = {
     setLanAccess: (enabled: boolean) =>
       request<AccessInfo>(`/system/lan-access?enabled=${enabled}`, { method: "POST" }),
     rotateToken: () => request<AccessInfo>("/system/access-token/rotate", { method: "POST" }),
-    backup: () => request<BackupItem>("/system/backup", { method: "POST" }),
+    backup: () =>
+      request<{ name: string; size: number }>("/system/backup", { method: "POST" }),
     backups: () => request<BackupItem[]>("/system/backups"),
     restore: (name: string) =>
       request<{ ok: boolean; message: string }>(`/system/backups/${name}/restore`, { method: "POST" }),
@@ -460,7 +465,7 @@ export const api = {
         body: JSON.stringify(data),
       }),
     deleteMisconception: (id: string) =>
-      request<LearnerProfile>(`/study/profile/misconceptions/${id}`, {
+      request<{ ok: boolean }>(`/study/profile/misconceptions/${id}`, {
         method: "DELETE",
       }),
     reset: () =>

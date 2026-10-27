@@ -40,9 +40,14 @@ def translate_openai_error(e: Exception) -> Exception:
 class OpenAICompatAdapter(LLMAdapter):
     def __init__(self, base_url: str, api_key: str, model: str, scene: str = "chat",
                  request_timeout: float | None = None):
+        import httpx
+
+        total = request_timeout if request_timeout is not None else 180
         self.client = AsyncOpenAI(
             base_url=base_url or None, api_key=api_key or "EMPTY",
-            timeout=request_timeout if request_timeout is not None else 180,
+            # 连接超时独立收紧 + SDK 默认重试关掉：黑洞地址否则要挂满 3×180s
+            timeout=httpx.Timeout(total, connect=10.0),
+            max_retries=1,
         )
         self.model = model
         self.scene = scene
@@ -188,13 +193,18 @@ class OpenAICompatAdapter(LLMAdapter):
             else:
                 raise translate_openai_error(e) from e
         try:
+            last_usage = None
             async for chunk in stream:
-                if getattr(chunk, "usage", None) is not None:
-                    self._record(chunk.usage, int((time.perf_counter() - t0) * 1000))
+                # 不合规网关可能每个块都回传 usage：缓存后只在流末记录一次，避免重复计数
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:
+                    last_usage = usage
                 if chunk.choices:
                     delta = chunk.choices[0].delta.content
                     if delta:
                         yield delta
+            if last_usage is not None:
+                self._record(last_usage, int((time.perf_counter() - t0) * 1000))
         except Exception as e:
             raise translate_openai_error(e) from e
         finally:
@@ -214,7 +224,13 @@ async def create_adapter_from_settings(
     request_timeout：可选的短超时（如设置页"测试连接"传 15s，避免不可达网关卡住几分钟）。
     """
     row = await db.get(AppSetting, "local")
-    cfg = json.loads(row.llm) if row and row.llm else {}
+    try:
+        cfg = json.loads(row.llm) if row and row.llm else {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+    except json.JSONDecodeError:
+        # 损坏的设置 JSON 不能让所有 LLM 功能 500 且无法自愈：按未配置处理，设置页保存即覆盖修复
+        cfg = {}
     merged = {
         "base_url": cfg.get("base_url", ""),
         "api_key": cfg.get("api_key", ""),
