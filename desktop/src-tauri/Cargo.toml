@@ -1,6 +1,6 @@
 [package]
 name = "learnflow-desktop"
-version = "0.4.51"
+version = "0.4.52"
 description = "LearnFlow 学习 Agent 桌面壳"
 edition = "2021"
 

@@ -1,6 +1,6 @@
 [project]
 name = "learnflow-backend"
-version = "0.4.51"
+version = "0.4.52"
 description = "LearnFlow: 本地运行的 Agentic AI 伴学与练习系统后端（FastAPI + SQLite）"
 requires-python = ">=3.11"
 dependencies = [
