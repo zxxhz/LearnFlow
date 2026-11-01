@@ -3,12 +3,26 @@ import { useEffect, useRef } from "react";
 import MarkdownIt from "markdown-it";
 import renderMathInElement from "katex/contrib/auto-render";
 import { api } from "../lib/api";
+import { sanitizeSvg } from "../lib/sanitize";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 
 // 全局图像缓存，避免流式输出或重新渲染时重复向后端发起网络请求
+// LRU 上限 50：长会话下无上限增长会挤占内存，超限按 Map 插入序删最早
 const plotSvgCache = new Map<string, string>();
+const PLOT_SVG_CACHE_MAX = 50;
 const PLOT_LANGS = new Set(["plot", "math-plot", "绘图"]);
+
+function cachePlotSvg(key: string, svg: string): string {
+  const clean = sanitizeSvg(svg);
+  if (plotSvgCache.has(key)) plotSvgCache.delete(key);
+  plotSvgCache.set(key, clean);
+  if (plotSvgCache.size > PLOT_SVG_CACHE_MAX) {
+    const oldest = plotSvgCache.keys().next().value;
+    if (oldest !== undefined) plotSvgCache.delete(oldest);
+  }
+  return clean;
+}
 
 // linkify/链接默认在当前 WebView 导航，点一下就把整个应用窗口带走：
 // 统一新窗口（Tauri 壳交系统浏览器/PWA 交新标签页）打开并断开 opener
@@ -52,18 +66,29 @@ const DELIMITERS = [
   { left: "\\(", right: "\\)", display: false },
 ];
 
-export default function MarkdownLite({ text, className = "" }: { text: string; className?: string }) {
+export default function MarkdownLite({
+  text,
+  className = "",
+  deferMath = false,
+}: {
+  text: string;
+  className?: string;
+  /** 流式输出期间置 true：跳过 KaTeX 渲染（每个 token 排版公式开销过大），翻转回 false 时对最终全文补渲染一次 */
+  deferMath?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const html = md.render(text ?? "");
 
   useEffect(() => {
     if (!ref.current) return;
 
-    // 1. 同步 KaTeX 渲染
-    try {
-      renderMathInElement(ref.current, { delimiters: DELIMITERS, throwOnError: false });
-    } catch (e) {
-      console.warn("KaTeX render error in MarkdownLite:", e);
+    // 1. 同步 KaTeX 渲染（deferMath=true 时跳过，仅 markdown 渲染）
+    if (!deferMath) {
+      try {
+        renderMathInElement(ref.current, { delimiters: DELIMITERS, throwOnError: false });
+      } catch (e) {
+        console.warn("KaTeX render error in MarkdownLite:", e);
+      }
     }
 
     // 2. 异步自动绘制并装配所有函数图像
@@ -87,18 +112,20 @@ export default function MarkdownLite({ text, className = "" }: { text: string; c
       api.math
         .render({ expressions })
         .then((res: { svg: string }) => {
-          plotSvgCache.set(expressions, res.svg);
+          const clean = cachePlotSvg(expressions, res.svg);
           if (canvas.isConnected) {
-            canvas.innerHTML = `<div class="plot-svg w-full [&_svg]:h-auto [&_svg]:max-w-full">${res.svg}</div>`;
+            canvas.innerHTML = `<div class="plot-svg w-full [&_svg]:h-auto [&_svg]:max-w-full">${clean}</div>`;
           }
         })
         .catch((err: unknown) => {
           if (canvas.isConnected) {
-            canvas.innerHTML = `<div class="text-xs text-red-500 py-2">⚠️ 函数图像生成失败：${(err as Error).message || "表达式解析异常"}</div>`;
+            // 错误消息可能携带后端回显的 LLM 可控表达式文本，插入 innerHTML 前必须转义
+            const msg = md.utils.escapeHtml((err as Error).message || "表达式解析异常");
+            canvas.innerHTML = `<div class="text-xs text-red-500 py-2">⚠️ 函数图像生成失败：${msg}</div>`;
           }
         });
     });
-  }, [html]);
+  }, [html, deferMath]);
 
   return <div ref={ref} className={`msg-md ${className}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }

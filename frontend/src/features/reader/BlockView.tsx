@@ -8,6 +8,7 @@ import { api } from "../../lib/api";
 import type { AdhdMode, Annotation, CodeExecution, ExecStatus } from "../../lib/types";
 import type { ParsedBlock } from "../../lib/markdown";
 import { highlightCode } from "../../lib/highlight";
+import { sanitizeSvg } from "../../lib/sanitize";
 import { applyHighlights } from "./highlight";
 
 const DELIMITERS = [
@@ -516,7 +517,7 @@ export default function BlockView({
               <span>📐 函数图像（SymPy + Matplotlib）</span>
               {modified && <span className="text-[11px] text-amber-600 dark:text-amber-400">代码已修改，可点击「重新绘图」刷新</span>}
             </div>
-            <div className="plot-svg [&_svg]:h-auto [&_svg]:max-w-full" dangerouslySetInnerHTML={{ __html: plotSvg }} />
+            <div className="plot-svg [&_svg]:h-auto [&_svg]:max-w-full" dangerouslySetInnerHTML={{ __html: sanitizeSvg(plotSvg) }} />
           </div>
         )}
         {execution && <ExecResultPanel execution={execution} />}

@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, time, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import Integer, case, cast, func, select
@@ -125,22 +125,32 @@ async def summary(db: AsyncSession = Depends(get_db)):
     # 热力图：学习动作 = 用户提问（划线/课程问答）+ 闯关作答 + 题库作答，
     # 与 PRD §5.6「阅读、练习作答、对话研讨」口径一致（此前只数提问，纯阅读/刷题日是 0 格）
     today = local_today()
+    # 三表聚合下推到 SQL：只取热力图窗口（前端固定 84 天）内的行按日计数，避免全表拉取。
+    # created_at 为 UTC ISO 字符串（字典序可比），下界 = 窗口首日（today-83）本地零点换算 UTC ISO；
+    # 分组用 datetime(created_at,'localtime') 保持既有「本地日」口径（等价于逐行 parse_dt + astimezone）。
+    lower = (
+        datetime.combine(today - timedelta(days=83), time.min)
+        .astimezone(timezone.utc)
+        .isoformat()
+    )
     counts: dict = {}
 
     def _acc(rows) -> None:
-        for (created_at,) in rows:
-            d = parse_dt(created_at)
-            if d:
-                ld = d.astimezone().date()
-                counts[ld] = counts.get(ld, 0) + 1
+        for day, n in rows:
+            if day:
+                counts[day] = counts.get(day, 0) + int(n)
 
-    _acc((await db.execute(select(Message.created_at).where(Message.role == "user"))).all())
-    _acc((await db.execute(select(ExerciseAttempt.created_at))).all())
-    _acc((await db.execute(select(BankAttempt.created_at))).all())
+    def _daily_counts(model, *conditions):
+        day = func.substr(func.datetime(model.created_at, "localtime"), 1, 10).label("day")
+        return select(day, func.count()).where(*conditions, model.created_at >= lower).group_by(day)
+
+    _acc((await db.execute(_daily_counts(Message, Message.role == "user"))).all())
+    _acc((await db.execute(_daily_counts(ExerciseAttempt))).all())
+    _acc((await db.execute(_daily_counts(BankAttempt))).all())
     heatmap = []
     for i in range(83, -1, -1):
         day = today - timedelta(days=i)
-        heatmap.append({"date": day.isoformat(), "count": counts.get(day, 0)})
+        heatmap.append({"date": day.isoformat(), "count": counts.get(day.isoformat(), 0)})
 
     # 学习时长：按本地日聚合的阅读分钟数
     study_rows = (await db.scalars(select(StudyDay))).all()

@@ -51,12 +51,16 @@ class MindMapDetail(BaseModel):
 class MindMapGenerateRequest(BaseModel):
     prompt: str = Field(description="主题或生成提示，如「计算机网络传输层与TCP协议」")
     depth: int = Field(default=3, ge=2, le=5, description="思维导图层级深度")
-    import_content: str = Field(default="", description="可选参考材料或粘贴的文章长文本")
+    import_content: str = Field(
+        default="", max_length=2_000_000, description="可选参考材料或粘贴的文章长文本（上限 200 万字符）"
+    )
 
 
 class MindMapImportRequest(BaseModel):
     title: str = Field(default="", description="导图标题（留空则从首行或根节点自动提取）")
-    content: str = Field(description="Markdown 大纲文本或 JSON 字符串")
+    content: str = Field(
+        description="Markdown 大纲文本或 JSON 字符串（上限 200 万字符）", max_length=2_000_000
+    )
     format: str = Field(default="auto", description="输入格式：auto / markdown / json")
 
 

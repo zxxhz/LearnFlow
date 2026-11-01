@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MindMapCrossLink, MindMapNode, MindMapNodeDetailSSEEvent, MindMapNodeQASSEEvent } from "../../lib/types";
 import { api } from "../../lib/api";
+import { findNodeInTree } from "../../lib/mindmap";
 import { Button, Spinner, Textarea } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
 import { useFontSize } from "../../lib/fontSize";
@@ -21,15 +22,6 @@ interface Props {
   onStartLink?: (nodeId: string) => void;
   onDeleteLink?: (linkId: string) => void;
   onSelectNode?: (nodeId: string) => void;
-}
-
-function findNodeInTree(node: MindMapNode, targetId: string): MindMapNode | null {
-  if (node.id === targetId) return node;
-  for (const c of node.children || []) {
-    const f = findNodeInTree(c, targetId);
-    if (f) return f;
-  }
-  return null;
 }
 
 function getNodePath(node: MindMapNode, targetId: string, current: string[] = []): string[] | null {
@@ -150,7 +142,11 @@ export default function NodeDetailDrawer({
             acc += ev.text;
             setStreamingDetailText(acc);
           } else if (ev.type === "done") {
-            onNodeUpdate(nodeId, { detail: acc || ev.detail || "" });
+            // 仅用累计正文落节点：ev.detail 可能是错误说明等非正文文案，
+            // acc 为空时保持节点原值，不把兜底文案写进正文
+            if (acc) {
+              onNodeUpdate(nodeId, { detail: acc });
+            }
             setStreamingDetailText("");
             setGeneratingDetail(false);
           } else if (ev.type === "error") {

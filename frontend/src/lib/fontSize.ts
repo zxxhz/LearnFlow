@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "./api";
+import { safeStorage } from "./safeStorage";
 
 export type FontSizeTarget = "course" | "drill";
 
@@ -57,10 +58,10 @@ export function useFontSize(target: FontSizeTarget) {
       serverVal >= MIN_FONT_SIZE &&
       serverVal <= MAX_FONT_SIZE
     ) {
-      const localRaw = localStorage.getItem(STORAGE_KEYS[target]);
+      const localRaw = safeStorage.get(STORAGE_KEYS[target]);
       if (!localRaw) {
         setFontSizeState(serverVal);
-        localStorage.setItem(STORAGE_KEYS[target], String(serverVal));
+        safeStorage.set(STORAGE_KEYS[target], String(serverVal));
       }
     }
   }, [query.data, target]);

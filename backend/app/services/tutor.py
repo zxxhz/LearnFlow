@@ -38,7 +38,7 @@ async def stream_exercise_diagnosis(
 
     kp = await db.get(KnowledgePoint, exercise.knowledge_point_id) if exercise.knowledge_point_id else None
     kp_title = kp.title if kp else "（通用知识点）"
-    kp_summary = kp.summary if kp else ""
+    kp_summary = (kp.summary if kp else "") or "（无摘要）"
 
     if exercise.kind == EXERCISE_CODE:
         run_res = await run_code(exercise.language, content)

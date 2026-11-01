@@ -68,8 +68,19 @@ def count_nodes(node: dict[str, Any] | None) -> int:
     return count
 
 
-def normalize_node(node: dict[str, Any], default_title: str = "中心主题") -> dict[str, Any]:
-    """递归标准化节点字典，确保 id、title、children、collapsed 字段完整规范。"""
+# 树深度上限：防御恶意/异常的超深嵌套导入与生成（递归炸栈/渲染卡死）
+MAX_TREE_DEPTH = 30
+
+
+def normalize_node(
+    node: dict[str, Any], default_title: str = "中心主题", _depth: int = 0
+) -> dict[str, Any]:
+    """递归标准化节点字典，确保 id、title、children、collapsed 字段完整规范。
+
+    超过 MAX_TREE_DEPTH 层抛 ValueError（导入/创建端转 422）。
+    """
+    if _depth > MAX_TREE_DEPTH:
+        raise ValueError(f"思维导图层级超过上限（最多 {MAX_TREE_DEPTH} 层）")
     if not isinstance(node, dict):
         return {"id": new_node_id(), "title": default_title, "summary": "", "detail": "", "children": [], "collapsed": False}
 
@@ -85,7 +96,7 @@ def normalize_node(node: dict[str, Any], default_title: str = "中心主题") ->
     if isinstance(raw_children, list):
         for c in raw_children:
             if isinstance(c, dict):
-                children.append(normalize_node(c, "分支主题"))
+                children.append(normalize_node(c, "分支主题", _depth + 1))
 
     return {
         "id": nid,
@@ -366,7 +377,9 @@ async def create_mindmap(db: AsyncSession, data: MindMapCreate) -> MindMap:
         title=data.title or "新建思维导图",
         topic=data.topic,
         root=initial_root,
-        settings=data.settings or {"layout": "lr", "zoom": 1},
+        settings=sanitize_settings(
+            data.settings or {"layout": "lr", "zoom": 1}, initial_root
+        ),
     )
     db.add(mm)
     await db.commit()
@@ -378,24 +391,82 @@ async def get_mindmap(db: AsyncSession, mindmap_id: str) -> MindMap | None:
     return await db.get(MindMap, mindmap_id)
 
 
+# 按 mindmap id 的进程内写锁：覆盖「读取最新树 → 修改 → commit」全程，
+# 防止并发保存（画布 PUT / Agent 持久化 / 节点详情回写）互相丢更新
+_mm_locks: dict[str, asyncio.Lock] = {}
+
+
+def _mm_lock(mindmap_id: str) -> asyncio.Lock:
+    """获取指定导图的写锁（无则创建；导图删除后残留的锁开销可忽略）。"""
+    lock = _mm_locks.get(mindmap_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _mm_locks[mindmap_id] = lock
+    return lock
+
+
+def _collect_node_ids(node: dict[str, Any] | None) -> set[str]:
+    """递归收集树中全部节点 id。"""
+    ids: set[str] = set()
+    if not isinstance(node, dict):
+        return ids
+    if node.get("id"):
+        ids.add(str(node["id"]))
+    for c in node.get("children") or []:
+        ids |= _collect_node_ids(c)
+    return ids
+
+
+def sanitize_settings(settings: Any, root: dict[str, Any] | None) -> dict[str, Any]:
+    """服务端校验 settings.cross_links（跨分支连线）：
+    仅保留两端节点都存在于树中的连线、按 (source, target) 去重、禁自环、上限 200 条。
+    其余 settings 字段原样保留。"""
+    if not isinstance(settings, dict):
+        return {}
+    links = settings.get("cross_links")
+    if not isinstance(links, list):
+        return settings
+    node_ids = _collect_node_ids(root)
+    seen: set[tuple[str, str]] = set()
+    clean: list[dict[str, Any]] = []
+    for link in links:
+        if not isinstance(link, dict) or len(clean) >= 200:
+            continue
+        # 前端实际字段为 sourceId/targetId；兼容 source/target 别名
+        src = str(link.get("sourceId") or link.get("source") or "").strip()
+        tgt = str(link.get("targetId") or link.get("target") or "").strip()
+        if not src or not tgt or src == tgt:
+            continue  # 自环与空端点丢弃
+        if node_ids and (src not in node_ids or tgt not in node_ids):
+            continue  # 指向不存在节点的悬空连线丢弃
+        key = (src, tgt)
+        if key in seen:
+            continue
+        seen.add(key)
+        clean.append(link)
+    return {**settings, "cross_links": clean}
+
+
 async def update_mindmap(db: AsyncSession, mindmap_id: str, data: MindMapUpdate) -> MindMap | None:
-    mm = await db.get(MindMap, mindmap_id)
-    if not mm:
-        return None
-    if data.title is not None:
-        mm.title = data.title.strip() or mm.title
-    if data.topic is not None:
-        mm.topic = data.topic.strip()
-    if data.root is not None:
-        mm.root = normalize_node(
-            data.root if isinstance(data.root, dict) else data.root.model_dump(),
-            mm.title
-        )
-    if data.settings is not None:
-        mm.settings = {**(mm.settings or {}), **data.settings}
-    await db.commit()
-    await db.refresh(mm)
-    return mm
+    async with _mm_lock(mindmap_id):
+        mm = await db.get(MindMap, mindmap_id)
+        if not mm:
+            return None
+        if data.title is not None:
+            mm.title = data.title.strip() or mm.title
+        if data.topic is not None:
+            mm.topic = data.topic.strip()
+        if data.root is not None:
+            mm.root = normalize_node(
+                data.root if isinstance(data.root, dict) else data.root.model_dump(),
+                mm.title
+            )
+        if data.settings is not None:
+            merged = {**(mm.settings or {}), **data.settings}
+            mm.settings = sanitize_settings(merged, mm.root)
+        await db.commit()
+        await db.refresh(mm)
+        return mm
 
 
 async def delete_mindmap(db: AsyncSession, mindmap_id: str) -> bool:
@@ -659,7 +730,9 @@ async def stream_mindmap_agent(
                     if fargs.get("title"):
                         target["title"] = clean_title(fargs["title"])
                     if "summary" in fargs:
-                        target["summary"] = fargs["summary"]
+                        raw_summary = fargs["summary"]
+                        # 模型可能给 null/数字：强转 str，None 视为清空
+                        target["summary"] = "" if raw_summary is None else str(raw_summary)
                     return True, ""
                 return False, f"未找到节点 {nid}"
             if fname == "expand_branch":
@@ -697,21 +770,24 @@ async def stream_mindmap_agent(
 
             persisted = False
             try:
-                async with async_session_factory() as fresh_db:
-                    fresh = await fresh_db.get(MindMap, mindmap.id)
-                    if fresh is not None:
-                        for op in ops:
-                            _apply_op(fresh.root, op["name"], op["args"])
-                        fresh.root = normalize_node(fresh.root, fresh.title)
-                        await fresh_db.commit()
-                        mindmap.root = fresh.root
-                        persisted = True
+                async with _mm_lock(mindmap.id):
+                    async with async_session_factory() as fresh_db:
+                        fresh = await fresh_db.get(MindMap, mindmap.id)
+                        if fresh is not None:
+                            for op in ops:
+                                _apply_op(fresh.root, op["name"], op["args"])
+                            fresh.root = normalize_node(fresh.root, fresh.title)
+                            await fresh_db.commit()
+                            mindmap.root = fresh.root
+                            persisted = True
             except Exception:
                 logger.exception("Agent 树修改持久化失败: mindmap=%s", mindmap.id)
             if persisted:
                 yield {"type": "tree_update", "tree": mindmap.root}
             else:
-                # 持久化失败时不能下发 tree_update：前端展示了、库里没存，刷新即丢
+                # 持久化失败时不能下发 tree_update：前端展示了、库里没存，刷新即丢；
+                # 复位 tree_changed，收尾 done 事件也不再携带未落库的树
+                tree_changed = False
                 yield {
                     "type": "error",
                     "detail": "Agent 已理解指令，但保存导图失败，请稍后重试（当前修改未落库）",
@@ -806,15 +882,16 @@ async def stream_node_detail(
 
     persisted = False
     try:
-        async with async_session_factory() as fresh_db:
-            fresh = await fresh_db.get(MindMap, mindmap.id)
-            if fresh is not None:
-                target = find_node(fresh.root, node_id)
-                if target is not None:
-                    target["detail"] = full_text.strip()
-                    fresh.root = normalize_node(fresh.root, fresh.title)
-                    await fresh_db.commit()
-                    persisted = True
+        async with _mm_lock(mindmap.id):
+            async with async_session_factory() as fresh_db:
+                fresh = await fresh_db.get(MindMap, mindmap.id)
+                if fresh is not None:
+                    target = find_node(fresh.root, node_id)
+                    if target is not None:
+                        target["detail"] = full_text.strip()
+                        fresh.root = normalize_node(fresh.root, fresh.title)
+                        await fresh_db.commit()
+                        persisted = True
     except Exception:
         logger.exception("节点详情持久化失败: mindmap=%s node=%s", mindmap.id, node_id)
 

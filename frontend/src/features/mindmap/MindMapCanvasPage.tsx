@@ -4,6 +4,8 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import type { MindMapCrossLink, MindMapDetail, MindMapNode } from "../../lib/types";
+import { findNodeInTree } from "../../lib/mindmap";
+import { notify } from "../../lib/notify";
 import { Button, Input, Modal, Spinner, Textarea } from "../../components/ui";
 import FontSizeControl from "../../components/FontSizeControl";
 import { useFontSize } from "../../lib/fontSize";
@@ -86,6 +88,8 @@ export default function MindMapCanvasPage() {
   // 在途保存 Promise：Agent 回包时若有旧树 PUT 还在飞，需要在其完成后补写一次最新树
   const savePromiseRef = useRef<Promise<void> | null>(null);
   const saveStatusRef = useRef<"saved" | "saving" | "unsaved">("saved");
+  // 最新本地树快照：Agent 回包冲刷待存改动时按此落库
+  const treeDataRef = useRef<MindMapNode | null>(null);
 
   // 快捷重命名或新增节点模态框
   const [editingNode, setEditingNode] = useState<{ id: string; title: string } | null>(null);
@@ -101,6 +105,9 @@ export default function MindMapCanvasPage() {
   });
 
   const [crossLinks, setCrossLinks] = useState<MindMapCrossLink[]>([]);
+  // 最新连线快照（render 期同步）：Agent 回包等异步闭包里做悬空清理时不能读到旧列表
+  const crossLinksRef = useRef<MindMapCrossLink[]>([]);
+  crossLinksRef.current = crossLinks;
   const [linkingFromId, setLinkingFromId] = useState<string | null>(null);
   const [pendingLinkTarget, setPendingLinkTarget] = useState<{ sourceId: string; targetId: string } | null>(null);
   const [linkRelationLabel, setLinkRelationLabel] = useState("底层基于");
@@ -119,7 +126,7 @@ export default function MindMapCanvasPage() {
   }, [mapDetail?.id, mapDetail?.updated_at, mapDetail?.settings?.cross_links]);
 
   const saveCrossLinks = async (nextLinks: MindMapCrossLink[]) => {
-    const prevLinks = crossLinks;
+    const prevLinks = crossLinksRef.current;
     setCrossLinks(nextLinks);
     if (!mapId) return;
     const newSettings = { ...(mapDetail?.settings || {}), cross_links: nextLinks };
@@ -136,6 +143,47 @@ export default function MindMapCanvasPage() {
     }
   };
 
+  // 实际落库一次树：防抖保存与 Agent 回包前的冲刷共用
+  const putTree = useCallback(
+    (tree: MindMapNode): Promise<void> => {
+      if (!mapId) return Promise.resolve();
+      const put: Promise<void> = api.mindmaps
+        .update(mapId, { root: tree })
+        .then(() => {
+          setSaveStatus("saved");
+          saveStatusRef.current = "saved";
+          queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
+          // 同步详情缓存，防止 15s staleTime 内重进页面读到旧树覆盖刚保存的内容
+          queryClient.setQueryData<MindMapDetail>(["mindmap", mapId], (old) =>
+            old ? { ...old, root: tree } : old
+          );
+        })
+        .catch(() => {
+          setSaveStatus("unsaved");
+          saveStatusRef.current = "unsaved";
+        })
+        .finally(() => {
+          if (savePromiseRef.current === put) savePromiseRef.current = null;
+        });
+      savePromiseRef.current = put;
+      return put;
+    },
+    [mapId, queryClient]
+  );
+
+  // 冲刷在途/待存的本地保存：取消未触发的防抖并立即按当前本地树落库，再等在途 PUT 结束。
+  // Agent 回包覆盖本地树前必须调用，否则防抖 PUT 可能晚于 Agent 落库把旧树覆盖回去
+  const flushPendingSave = useCallback((): Promise<void> => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    if (saveStatusRef.current !== "saved" && treeDataRef.current) {
+      putTree(treeDataRef.current);
+    }
+    return (savePromiseRef.current ?? Promise.resolve()).catch(() => {});
+  }, [putTree]);
+
   // 防抖异步自动保存树数据
   const saveTreeDebounced = useCallback(
     (newTree: MindMapNode) => {
@@ -143,33 +191,13 @@ export default function MindMapCanvasPage() {
       saveStatusRef.current = "saving";
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
       saveTimerRef.current = setTimeout(() => {
-        if (!mapId) return;
-        const put: Promise<void> = api.mindmaps
-          .update(mapId, { root: newTree })
-          .then(() => {
-            setSaveStatus("saved");
-            saveStatusRef.current = "saved";
-            queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
-            // 同步详情缓存，防止 15s staleTime 内重进页面读到旧树覆盖刚保存的内容
-            queryClient.setQueryData<MindMapDetail>(["mindmap", mapId], (old) =>
-              old ? { ...old, root: newTree } : old
-            );
-          })
-          .catch(() => {
-            setSaveStatus("unsaved");
-            saveStatusRef.current = "unsaved";
-          })
-          .finally(() => {
-            if (savePromiseRef.current === put) savePromiseRef.current = null;
-          });
-        savePromiseRef.current = put;
+        putTree(newTree);
       }, 800);
     },
-    [mapId, queryClient]
+    [putTree]
   );
 
   // 卸载时若有待保存的防抖任务立即落库，防止快速返回列表页丢失最后一次编辑
-  const treeDataRef = useRef<MindMapNode | null>(null);
   useEffect(() => {
     treeDataRef.current = treeData;
   }, [treeData]);
@@ -275,17 +303,7 @@ export default function MindMapCanvasPage() {
         removedIds.add(n.id);
         (n.children || []).forEach(collectIds);
       };
-      const victim = (() => {
-        const find = (n: MindMapNode): MindMapNode | null => {
-          if (n.id === nodeId) return n;
-          for (const c of n.children || []) {
-            const r = find(c);
-            if (r) return r;
-          }
-          return null;
-        };
-        return treeData ? find(treeData) : null;
-      })();
+      const victim = treeData ? findNodeInTree(treeData, nodeId) : null;
       if (victim) collectIds(victim);
       const dangling = crossLinks.filter(
         (l) => removedIds.has(l.sourceId) || removedIds.has(l.targetId)
@@ -1135,50 +1153,35 @@ export default function MindMapCanvasPage() {
           selectedNode={selectedNode}
           closing={isClosingAgent}
           onTreeUpdate={(newTree) => {
-            // Agent 服务端已落库，这里仅同步本地树与详情缓存，不再重复 PUT
-            setTreeData((prev) => {
-              // 选中节点已被 Agent 删除时同步清理选中态，防止详情抽屉静默消失
-              if (selectedNodeId) {
-                const stillThere = JSON.stringify(newTree).includes(`"${selectedNodeId}"`);
-                if (!stillThere) {
-                  setSelectedNodeId(null);
-                  setDetailDrawerOpen(false);
-                }
+            // Agent 服务端已落库，这里先冲刷在途/待存的手动保存（否则防抖 PUT 可能
+            // 晚于 Agent 落库把旧树覆盖回去），再应用 Agent 树并标脏触发一次防抖保存兜底
+            const hadUnsaved = saveStatusRef.current !== "saved";
+            void flushPendingSave().then(() => {
+              if (hadUnsaved) {
+                notify("思维导图", "AI 修改已应用，你在生成期间的手动改动已保存");
               }
-              return newTree;
-            });
-            setSaveStatus("saved");
-            saveStatusRef.current = "saved";
-            if (saveTimerRef.current) {
-              clearTimeout(saveTimerRef.current);
-              saveTimerRef.current = null;
-            }
-            if (mapId) {
-              queryClient.setQueryData<MindMapDetail>(["mindmap", mapId], (old) =>
-                old ? { ...old, root: newTree } : old
+              // 选中节点已被 Agent 删除时同步清理选中态，防止详情抽屉静默消失
+              if (selectedNodeId && !findNodeInTree(newTree, selectedNodeId)) {
+                setSelectedNodeId(null);
+                setDetailDrawerOpen(false);
+              }
+              setTreeData(newTree);
+              saveTreeDebounced(newTree);
+              // 悬空横向连线清理：Agent 修剪可能删掉连线两端引用的节点
+              const currentLinks = crossLinksRef.current;
+              const validLinks = currentLinks.filter(
+                (l) => findNodeInTree(newTree, l.sourceId) && findNodeInTree(newTree, l.targetId)
               );
-              queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
-            }
-            // 竞态收敛：若旧树的防抖 PUT 已在途，它可能在 Agent 落库之后到达服务端、
-            // 把树覆盖回旧版。等它结束后用 Agent 树补写一次，保证最终一致
-            const prevSave = savePromiseRef.current ?? Promise.resolve();
-            const trailing: Promise<void> = prevSave
-              .catch(() => {})
-              .then(async () => {
-                if (!mapId) return;
-                try {
-                  await api.mindmaps.update(mapId, { root: newTree });
-                  queryClient.setQueryData<MindMapDetail>(["mindmap", mapId], (old) =>
-                    old ? { ...old, root: newTree } : old
-                  );
-                } catch {
-                  /* 补写失败时详情缓存仍是 Agent 树，下次编辑会重新保存 */
-                }
-              })
-              .finally(() => {
-                if (savePromiseRef.current === trailing) savePromiseRef.current = null;
-              });
-            savePromiseRef.current = trailing;
+              if (validLinks.length !== currentLinks.length) {
+                saveCrossLinks(validLinks);
+              }
+              if (mapId) {
+                queryClient.setQueryData<MindMapDetail>(["mindmap", mapId], (old) =>
+                  old ? { ...old, root: newTree } : old
+                );
+                queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
+              }
+            });
           }}
           onClose={closeAgent}
         />
@@ -1327,10 +1330,24 @@ export default function MindMapCanvasPage() {
                 variant="primary"
                 disabled={!linkRelationLabel.trim()}
                 onClick={() => {
+                  const { sourceId, targetId } = pendingLinkTarget;
+                  // 与后端校验口径对齐：禁自环、同方向去重、总量上限 200
+                  if (sourceId === targetId) {
+                    alert("起点与终点不能是同一个节点，无法建立自环连线。");
+                    return;
+                  }
+                  if (crossLinks.some((l) => l.sourceId === sourceId && l.targetId === targetId)) {
+                    alert("这两个概念之间已存在同方向的横向连线，无需重复建立。");
+                    return;
+                  }
+                  if (crossLinks.length >= 200) {
+                    alert("横向连线数量已达上限（200），请先清理不需要的连线。");
+                    return;
+                  }
                   const newLink: MindMapCrossLink = {
                     id: `link-${Date.now()}`,
-                    sourceId: pendingLinkTarget.sourceId,
-                    targetId: pendingLinkTarget.targetId,
+                    sourceId,
+                    targetId,
                     label: linkRelationLabel.trim() || "关联",
                   };
                   saveCrossLinks([...crossLinks, newLink]);

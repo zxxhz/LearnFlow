@@ -1,12 +1,14 @@
 """系统级服务：局域网访问令牌 + 数据目录备份/恢复（本地优先的数据资产保障）。"""
+import json
 import logging
+import os
 import secrets
 import shutil
 import socket
 import zipfile
 from pathlib import Path
 
-from app.core.config import settings
+from app.core.config import APP_VERSION, settings
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,24 @@ _TOKEN_CACHE: tuple[Path, float, str] | None = None
 
 def token_path() -> Path:
     return settings.data_dir / "access_token.txt"
+
+
+def _write_token_atomic(p: Path, token: str) -> None:
+    """tmp + os.replace 原子写令牌：进程崩溃/断电不会留下空或截断的令牌文件
+    （截断的令牌会让局域网访问全部 401 且难以排查）。"""
+    import tempfile
+
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(token)
+        os.replace(tmp, p)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def get_access_token() -> str:
@@ -36,7 +56,7 @@ def get_access_token() -> str:
     token = secrets.token_urlsafe(16)
     try:
         settings.data_dir.mkdir(parents=True, exist_ok=True)
-        p.write_text(token, encoding="utf-8")
+        _write_token_atomic(p, token)
     except OSError:
         # 写失败时不要回填 mtime 缓存：p.stat() 可能同样抛错（目录不可写），
         # 且缓存了错误 mtime 会让后续请求反复踩同一失败路径
@@ -50,10 +70,19 @@ def get_access_token() -> str:
 
 
 def rotate_access_token() -> str:
+    """轮换访问令牌。写失败（目录不可写/磁盘满）时给出可行动的错误信息，
+    而非让 API 层吐出裸 OSError 的 500。"""
     global _TOKEN_CACHE
     token = secrets.token_urlsafe(16)
-    token_path().write_text(token, encoding="utf-8")
-    _TOKEN_CACHE = (token_path(), token_path().stat().st_mtime, token)
+    p = token_path()
+    try:
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+        _write_token_atomic(p, token)
+        mtime = p.stat().st_mtime
+    except OSError as e:
+        logger.warning("访问令牌轮换写入失败：%s", e)
+        raise RuntimeError("令牌写入失败：请检查数据目录写入权限与磁盘剩余空间") from e
+    _TOKEN_CACHE = (p, mtime, token)
     return token
 
 
@@ -120,10 +149,48 @@ def lan_urls() -> list[str]:
 
 # ---------- 备份 / 恢复 ----------
 
+BACKUP_KEEP = 10  # 备份保留份数，超出自动淘汰最旧
+
+
 def backups_dir() -> Path:
     d = settings.data_dir / "backups"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _vacuum_snapshot(snapshot: Path) -> bool:
+    """用 SQLite VACUUM INTO 产出 app.db 的一致性快照（Python 3.11+ 自带 SQLite ≥ 3.27）。
+
+    直接拷贝 db 文件可能撞上写入中的撕裂页；VACUUM INTO 在读事务里产出
+    紧凑完整副本。失败（库损坏/磁盘满/老 SQLite）返回 False，调用方回退旧路径。
+    """
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(settings.db_path)
+        try:
+            conn.execute("VACUUM INTO ?", (str(snapshot),))
+        finally:
+            conn.close()
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.warning("VACUUM INTO 一致性快照失败，回退直接打包 db 文件：%s", e)
+        return False
+
+
+def _rotate_backups(keep: int = BACKUP_KEEP) -> None:
+    """按保留份数轮转：仅删最旧的 backup-*.zip（文件名含毫秒时间戳，字典序=时间序）。
+    删除失败仅记日志，不影响本次备份结果。"""
+    try:
+        backups = sorted(backups_dir().glob("backup-*.zip"))
+        for old in backups[:-keep] if len(backups) > keep else []:
+            try:
+                old.unlink()
+                logger.info("已清理超出保留份数的旧备份：%s", old.name)
+            except OSError as e:
+                logger.warning("旧备份删除失败（不影响本次备份）：%s: %s", old.name, e)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("备份轮转检查失败：%s", e)
 
 
 def create_backup() -> Path:
@@ -142,43 +209,69 @@ def create_backup() -> Path:
         pass
 
     dest = backups_dir() / f"backup-{utcnow_compact()}.zip"
-    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
-        # 写库前合并 WAL，保证 app.db 单文件完整。
-        # TRUNCATE 在有并发读时可能 busy（返回 busy=1）——重试几次，
-        # 仍 busy 则把 -wal 一并打包，恢复时由 SQLite 自动重放
-        engine.sync_engine.dispose()
-        import sqlite3
+    # VACUUM INTO 要求目标文件不存在，先清残留（上次崩溃可能留下）
+    snapshot = settings.data_dir / f".backup-snapshot-{os.getpid()}.db"
+    snapshot.unlink(missing_ok=True)
+    try:
+        with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+            engine.sync_engine.dispose()
+            import sqlite3
 
-        wal_busy = False
-        conn = sqlite3.connect(settings.db_path)
-        try:
-            for _ in range(4):
-                row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-                if row and row[0] == 0:  # busy 标志为 0 = 成功
-                    break
-                time.sleep(0.3)
-            else:
-                wal_busy = True
-                logger.warning("WAL checkpoint 未能完全合并（busy），备份将附带 -wal 文件")
-        finally:
-            conn.close()
-        if settings.db_path.exists():
-            z.write(settings.db_path, "app.db")
-        if wal_busy:
-            wal = Path(str(settings.db_path) + "-wal")
-            if wal.exists():
-                z.write(wal, "app.db-wal")
-        for sub in ("courses", "banks"):
-            d = settings.data_dir / sub
-            if d.exists():
-                for f in d.rglob("*"):
-                    if f.is_file():
-                        z.write(f, f.relative_to(settings.data_dir).as_posix())
-        # 自定义镜像源与手动锁定选择一并备份
-        for name in ("custom_mirrors.json", "mirror_selection.json"):
-            f = settings.data_dir / name
-            if f.exists():
-                z.write(f, name)
+            consistent = settings.db_path.exists() and _vacuum_snapshot(snapshot)
+            wal_busy = False
+            if not consistent:
+                # 回退旧路径：写库前合并 WAL，保证 app.db 单文件完整。
+                # TRUNCATE 在有并发读时可能 busy（返回 busy=1）——重试几次，
+                # 仍 busy 则把 -wal 一并打包，恢复时由 SQLite 自动重放
+                conn = sqlite3.connect(settings.db_path)
+                try:
+                    for _ in range(4):
+                        row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                        if row and row[0] == 0:  # busy 标志为 0 = 成功
+                            break
+                        time.sleep(0.3)
+                    else:
+                        wal_busy = True
+                        logger.warning("WAL checkpoint 未能完全合并（busy），备份将附带 -wal 文件")
+                finally:
+                    conn.close()
+            if settings.db_path.exists():
+                if consistent:
+                    z.write(snapshot, "app.db")
+                else:
+                    z.write(settings.db_path, "app.db")
+            if wal_busy:
+                wal = Path(str(settings.db_path) + "-wal")
+                if wal.exists():
+                    z.write(wal, "app.db-wal")
+            for sub in ("courses", "banks"):
+                d = settings.data_dir / sub
+                if d.exists():
+                    for f in d.rglob("*"):
+                        if f.is_file():
+                            z.write(f, f.relative_to(settings.data_dir).as_posix())
+            # 自定义镜像源与手动锁定选择一并备份
+            for name in ("custom_mirrors.json", "mirror_selection.json"):
+                f = settings.data_dir / name
+                if f.exists():
+                    z.write(f, name)
+            # 备份元数据：恢复时用于告警版本不匹配（不阻断）
+            from datetime import datetime, timezone
+
+            z.writestr(
+                "meta.json",
+                json.dumps(
+                    {
+                        "app_version": APP_VERSION,
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+            )
+    finally:
+        snapshot.unlink(missing_ok=True)
+    _rotate_backups()
     return dest
 
 
@@ -267,8 +360,27 @@ def apply_pending_restore() -> None:
         z.extractall(staging)
         z.close()
 
+        # 备份元数据：记录来源版本，与当前不一致仅告警不阻断（允许跨版本恢复）
+        meta_file = staging / "meta.json"
+        if meta_file.is_file():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                b_ver = str(meta.get("app_version") or "?")
+                created = str(meta.get("created_at") or "?")
+                if b_ver != APP_VERSION:
+                    logger.warning(
+                        "备份版本 %s（创建于 %s）与当前版本 %s 不一致，继续恢复",
+                        b_ver, created, APP_VERSION,
+                    )
+                else:
+                    logger.info("备份版本 %s，创建于 %s", b_ver, created)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("读取备份 meta.json 失败（忽略）：%s", e)
+
         # 旧库先挪进暂存目录而不是直接删：move 阶段中途失败时，
-        # 旧数据 + 完整备份都还在，可手工恢复（而不是两头全丢）
+        # 旧数据 + 完整备份都还在，可手工恢复（而不是两头全丢）。
+        # 镜像配置一并入列：备份里没有时按"恢复到备份时点"语义清掉，
+        # 有时随后由解压产物覆盖
         rescued = staging / "_rescued_old"
         rescued.mkdir(exist_ok=True)
         for victim in (
@@ -277,6 +389,8 @@ def apply_pending_restore() -> None:
             Path(str(settings.db_path) + "-shm"),
             settings.data_dir / "courses",
             settings.data_dir / "banks",
+            settings.data_dir / "custom_mirrors.json",
+            settings.data_dir / "mirror_selection.json",
         ):
             if victim.exists():
                 shutil.move(str(victim), str(rescued / victim.name))
@@ -300,6 +414,9 @@ def apply_pending_restore() -> None:
 
 
 def utcnow_compact() -> str:
-    from datetime import datetime
+    """UTC 紧凑时间戳（精确到毫秒）：本地时间会造成命名误导；毫秒避免同一秒
+    内创建多个备份时文件名平局互相覆盖。"""
+    from datetime import datetime, timezone
 
-    return datetime.now().strftime("%Y%m%d-%H%M%S")
+    now = datetime.now(timezone.utc)
+    return now.strftime("%Y%m%d-%H%M%S") + f"-{now.microsecond // 1000:03d}"

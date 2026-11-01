@@ -5,7 +5,7 @@ import subprocess
 import sys
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,9 +52,24 @@ async def _load_row(db: AsyncSession) -> AppSetting:
     return row
 
 
+def _load_llm_json(row: AppSetting) -> dict:
+    """解析库里的 LLM 配置：历史版本/异常进程可能写坏 JSON（截断、非法字符）。
+
+    损坏时回落默认配置并记 warning（对齐 openai_compat 的自愈策略）——
+    GET 正常呈现，PUT 成功后即用合法 JSON 覆盖，完成自愈。
+    """
+    try:
+        data = json.loads(row.llm)
+    except (json.JSONDecodeError, TypeError) as e:
+        logger.warning("本地设置 llm 字段损坏（%s），已回落默认配置", e)
+        return dict(DEFAULT_LLM)
+    return data if isinstance(data, dict) else dict(DEFAULT_LLM)
+
+
 def _masked_out(row: AppSetting) -> SettingsOut:
-    llm = LLMConfig(**{k: v for k, v in json.loads(row.llm).items() if k in LLMConfig.model_fields})
-    scenes = ScenesConfig(**(json.loads(row.llm).get("scenes") or {}))
+    llm_data = _load_llm_json(row)
+    llm = LLMConfig(**{k: v for k, v in llm_data.items() if k in LLMConfig.model_fields})
+    scenes = ScenesConfig(**(llm_data.get("scenes") or {}))
     prefs = Preferences(**json.loads(row.preferences))
     return SettingsOut.masked(llm, scenes, prefs)
 
@@ -77,7 +92,7 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
 @router.put("/settings", response_model=SettingsOut)
 async def update_settings(body: SettingsUpdate, db: AsyncSession = Depends(get_db)):
     row = await _load_row(db)
-    current = json.loads(row.llm)
+    current = _load_llm_json(row)
     if body.llm is not None:
         incoming = body.llm.model_dump()
         # api_key 传空或掩码 → 保留库里旧值（PRD §5.7）
@@ -277,11 +292,51 @@ async def fast_latest_json():
     return RedirectResponse(raw)
 
 
-@router.get("/update/in-app-install")
-async def in_app_install(target_version: str, url: str | None = None):
-    """通过加速镜像源在软件内流式下载最新安装包并自动静默重启安装。"""
+@router.post("/update/in-app-install")
+async def in_app_install(request: Request, target_version: str, url: str | None = None):
+    """在软件内流式下载官方最新安装包并自动静默重启安装（SSE 事件流）。
+
+    改为 POST 且强制同源：本端点会下载并执行安装包（重副作用），
+    必须排除被浏览器跨站请求（CSRF）或误触 GET 触发的可能。
+    """
+    from urllib.parse import urlparse
+
     from fastapi.responses import StreamingResponse
     from app.services.update import stream_download_and_install
+
+    def _hostport(value: str, default_port: int) -> tuple[str, int] | None:
+        """host[:port]（含 IPv6 [::1]:8420 形式）规整为 (host, port)。"""
+        v = (value or "").strip()
+        if not v:
+            return None
+        if v.startswith("["):  # IPv6
+            host, _, rest = v[1:].partition("]")
+            if not rest.startswith(":"):
+                return host.lower(), default_port
+            try:
+                return host.lower(), int(rest[1:])
+            except ValueError:
+                return None
+        if ":" in v:
+            host, _, port_s = v.rpartition(":")
+            try:
+                return host.lower(), int(port_s)
+            except ValueError:
+                return None
+        return v.lower(), default_port
+
+    # 同源校验：Origin 带 host:port 时必须与请求的 Host 一致；
+    # Sec-Fetch-Site（现代浏览器自动附带）只放行 same-origin / none
+    origin = request.headers.get("origin", "").strip()
+    if origin:
+        op = urlparse(origin)
+        oh = _hostport(op.netloc, 443 if op.scheme == "https" else 80) if op.hostname else None
+        rh = _hostport(request.headers.get("host", ""), 80)
+        if oh is None or oh != rh:
+            raise HTTPException(status_code=403, detail="跨源请求已拒绝（仅接受应用自身页面发起的更新）")
+    fetch_site = request.headers.get("sec-fetch-site", "").strip().lower()
+    if fetch_site and fetch_site not in ("same-origin", "none"):
+        raise HTTPException(status_code=403, detail="跨站请求已拒绝（仅接受应用自身页面发起的更新）")
 
     return StreamingResponse(
         stream_download_and_install(target_version, url),

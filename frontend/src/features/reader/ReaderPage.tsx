@@ -19,9 +19,11 @@ import { ChapterSummaryCard } from "./ChapterSummaryCard";
 import { SectionReviseModal } from "./SectionReviseModal";
 import { hlColorVars, useHlColors } from "./colors";
 import { useTheme } from "../../lib/theme";
+import { safeStorage } from "../../lib/safeStorage";
 import { useAdhdMode } from "./adhd";
 import { useFontSize } from "../../lib/fontSize";
 import { FontSizeControl } from "../../components/FontSizeControl";
+import ErrorBoundary from "../../components/ErrorBoundary";
 
 export default function ReaderPage() {
   const { documentId } = useParams<{ documentId: string }>();
@@ -151,14 +153,14 @@ export default function ReaderPage() {
   const [runErrors, setRunErrors] = useState<Record<string, string>>({});
   const [tocOpen, setTocOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
-    const saved = localStorage.getItem("learnflow-reader-sidebar-open");
+    const saved = safeStorage.get("learnflow-reader-sidebar-open");
     return saved !== null ? saved === "true" : true;
   });
 
   const toggleSidebar = useCallback(() => {
     setSidebarOpen((prev) => {
       const next = !prev;
-      localStorage.setItem("learnflow-reader-sidebar-open", String(next));
+      safeStorage.set("learnflow-reader-sidebar-open", String(next));
       return next;
     });
   }, []);
@@ -495,17 +497,25 @@ export default function ReaderPage() {
     } catch {
       /* 损坏的进度记录忽略 */
     }
+    // 滚动进度写 localStorage 节流：300ms 尾沿合并写（滚动事件高频，逐事件同步写会卡顿）；
+    // 卸载/换章时冲刷一次最终位置。键名与数据结构与旧版一致
+    let progressTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingProgress: { ratio: number; top: number } | null = null;
+    const flushProgress = () => {
+      progressTimer = null;
+      if (pendingProgress) {
+        safeStorage.set(
+          `reading-progress-${documentId}`,
+          JSON.stringify(pendingProgress)
+        );
+        pendingProgress = null;
+      }
+    };
     const onScroll = () => {
       const scrollable = el.scrollHeight - el.clientHeight;
       const ratio = scrollable > 0 ? el.scrollTop / scrollable : 0;
-      try {
-        localStorage.setItem(
-          `reading-progress-${documentId}`,
-          JSON.stringify({ ratio: Math.min(1, Math.max(0, ratio)), top: el.scrollTop })
-        );
-      } catch {
-        /* 存储不可用忽略 */
-      }
+      pendingProgress = { ratio: Math.min(1, Math.max(0, ratio)), top: el.scrollTop };
+      if (progressTimer == null) progressTimer = setTimeout(flushProgress, 300);
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     // 晚到的布局变化（Shiki 高亮/运行结果/图片）会把已恢复位置推走：延迟补偿两次；
@@ -526,6 +536,9 @@ export default function ReaderPage() {
     el.addEventListener("touchstart", markUser, { once: true, passive: true });
     return () => {
       el.removeEventListener("scroll", onScroll);
+      // 冲刷未落盘的最终滚动位置（换章/卸载都不丢）
+      if (progressTimer != null) clearTimeout(progressTimer);
+      flushProgress();
       clearTimeout(t1);
       clearTimeout(t2);
       delete el.dataset.userScrolled;
@@ -604,7 +617,11 @@ export default function ReaderPage() {
           }
         },
         ac.signal
-      ).catch(() => setRegenMsg(""));
+      ).catch(() => {
+        // 断流兜底：进度事件可能半途丢失，强制刷新正文使最新生成内容落地
+        queryClient.invalidateQueries({ queryKey: ["doc", documentId] });
+        setRegenMsg("");
+      });
     },
     onError: (e) => alert((e as Error).message),
   });
@@ -884,22 +901,23 @@ export default function ReaderPage() {
           {parsed.map((b, i) => {
             const sid = sectionIdOf(i);
             return (
-              <BlockView
-                key={`${i}-${sid ?? "none"}`}
-                block={b}
-                sectionId={sid}
-                annotations={sid ? annsBySection.get(sid) ?? [] : []}
-                activeAnnId={activeAnn?.id ?? null}
-                onOpenAnnotation={(a) => openAnnotation(a)}
-                flashSectionId={flashSection}
-                execution={sid ? execBySection.get(sid) ?? null : null}
-                running={runningSection === sid}
-                runError={(sid && runErrors[sid]) || ""}
-                onRun={onRunCode}
-                adhdMode={adhdMode}
-                pIndex={paragraphIndices[i]}
-                onReviseSection={(sid, raw) => setReviseTarget({ sectionId: sid, raw })}
-              />
+              <ErrorBoundary key={`${i}-${sid ?? "none"}`} compact>
+                <BlockView
+                  block={b}
+                  sectionId={sid}
+                  annotations={sid ? annsBySection.get(sid) ?? [] : []}
+                  activeAnnId={activeAnn?.id ?? null}
+                  onOpenAnnotation={(a) => openAnnotation(a)}
+                  flashSectionId={flashSection}
+                  execution={sid ? execBySection.get(sid) ?? null : null}
+                  running={runningSection === sid}
+                  runError={(sid && runErrors[sid]) || ""}
+                  onRun={onRunCode}
+                  adhdMode={adhdMode}
+                  pIndex={paragraphIndices[i]}
+                  onReviseSection={(sid, raw) => setReviseTarget({ sectionId: sid, raw })}
+                />
+              </ErrorBoundary>
             );
           })}
 
@@ -1088,12 +1106,14 @@ export default function ReaderPage() {
           onStartReAnchor={setReAnchoring}
           onDelete={(a) => {
             if (confirm("删除该标注及其对话？")) {
-              api.annotations.remove(a.id).then(() => {
-                invalidate();
-                if (activeAnn?.id === a.id) {
-                  closeAnnotation();
-                }
-              });
+              api.annotations.remove(a.id)
+                .then(() => {
+                  invalidate();
+                  if (activeAnn?.id === a.id) {
+                    closeAnnotation();
+                  }
+                })
+                .catch((e) => alert(e?.message || "删除失败"));
             }
           }}
           onClose={closeDrawer}

@@ -1,10 +1,10 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.common import ORMModel, OutlineItem
 
 
 class CourseCreate(BaseModel):
-    topic: str
+    topic: str = Field(min_length=1, max_length=200, description="课程主题（1-200 字符）")
     level: str | None = None
     scope: str | None = None
     chapter_count: int | None = None

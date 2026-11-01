@@ -1,7 +1,11 @@
 """集成冒烟测试（不依赖 LLM）：直接经服务层构造已完成课程，再走真实 HTTP API 验证。
 
 运行：uv run python scripts/smoke_test.py
-结束时会用 DELETE /api/courses/{id} 清理测试数据（顺带验证级联删除）。
+- APP_DATA_DIR 未设置时自动指向 backend/data-smoke 隔离目录；检测到真实数据目录
+  （桌面版目录名，或 courses/ 已有内容且无 .smoke-ok 标记）会拒绝运行，
+  除非显式追加参数 --i-know-this-is-real-data。
+- 结束时会用 DELETE /api/courses/{id} 清理测试数据（顺带验证级联删除），
+  并把运行前的设置（llm/scenes/preferences）、局域网开关与访问令牌按快照还原。
 """
 import asyncio
 import json
@@ -9,9 +13,43 @@ import os
 import sys
 import threading
 import time
+from pathlib import Path
 
 os.environ["APP_SMOKE_TEST"] = "1"
 sys.stdout.reconfigure(encoding="utf-8")
+
+# ---------- 数据目录隔离防护：必须在导入 app.*（读取 APP_DATA_DIR）之前决定好数据目录 ----------
+_REAL_DATA_DIR_NAME = "com.learnflow.desktop"  # 桌面版真实应用数据目录名（Tauri identifier）
+_REAL_DATA_ARG = "--i-know-this-is-real-data"
+
+
+def _has_real_artifacts(target: Path) -> bool:
+    """目录中已有非冒烟产物：courses/ 下有内容，且没有冒烟标记文件。"""
+    courses = target / "courses"
+    try:
+        has_content = courses.is_dir() and any(courses.iterdir())
+    except OSError:
+        return False
+    return has_content and not (target / ".smoke-ok").exists()
+
+
+_env_dir = os.environ.get("APP_DATA_DIR")
+if not _env_dir:
+    # 未显式指定数据目录：自动指向仓库内的一次性冒烟目录，不触碰真实数据
+    _smoke_dir = Path(__file__).resolve().parents[1] / "data-smoke"
+    os.environ["APP_DATA_DIR"] = str(_smoke_dir)
+    print(f"[smoke] APP_DATA_DIR 未设置，自动使用隔离数据目录：{_smoke_dir}")
+elif Path(_env_dir).name == _REAL_DATA_DIR_NAME or _has_real_artifacts(Path(_env_dir)):
+    if _REAL_DATA_ARG not in sys.argv:
+        print(
+            f"[smoke] 警告：APP_DATA_DIR={_env_dir} 疑似真实数据目录"
+            "（桌面版数据目录名，或 courses/ 下已有内容且无 .smoke-ok 标记）。\n"
+            "冒烟测试会写入/删除测试课程并改动设置。\n"
+            f"确认要在真实数据上运行，请追加参数：{_REAL_DATA_ARG}"
+        )
+        sys.exit(2)
+    print(f"[smoke] 已按 {_REAL_DATA_ARG} 在指定数据目录上运行冒烟测试：{_env_dir}")
+
 import urllib.error
 import urllib.request
 
@@ -22,6 +60,27 @@ from app.core.db import async_session_factory, init_db
 from app.models import Course, Document, Exercise, KnowledgePoint
 from app.models.base import utcnow_iso
 from app.services.generation.indexing import rebuild_sections
+
+# 给冒烟数据目录留标记：后续重跑时据此识别「该目录是冒烟产物」，不误判为真实数据
+if Path(os.environ["APP_DATA_DIR"]).name == "data-smoke":
+    try:
+        (settings.data_dir / ".smoke-ok").write_text(
+            "LearnFlow 冒烟测试数据目录（可整体删除）\n", encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+# ---------- 运行前状态快照（结束时由 _restore_state 统一还原） ----------
+_lan_flag_path = settings.data_dir / "lan_access_enabled.txt"
+_token_path = settings.data_dir / "access_token.txt"
+try:
+    _ORIG_LAN_FLAG = _lan_flag_path.read_text(encoding="utf-8") if _lan_flag_path.exists() else None
+except OSError:
+    _ORIG_LAN_FLAG = None
+try:
+    _ORIG_TOKEN = _token_path.read_text(encoding="utf-8") if _token_path.exists() else None
+except OSError:
+    _ORIG_TOKEN = None
 
 SAMPLE_MD = """# 第一章 指针入门
 
@@ -241,6 +300,83 @@ new 与 delete 必须配对。
 """
 
 
+async def _snapshot_settings_raw() -> dict | None:
+    """运行前从库里直接读原始设置。
+
+    GET /api/settings 的 api_key 是掩码，而 PUT 掩码只会「保留现值」、无法还原真实
+    key，所以快照必须取未掩码的库内值（llm/scenes/preferences）。
+    """
+    from app.models import AppSetting
+
+    async with async_session_factory() as db:
+        row = await db.get(AppSetting, "local")
+    if row is None:
+        return None
+    try:
+        llm = json.loads(row.llm or "{}")
+        prefs = json.loads(row.preferences or "{}")
+    except json.JSONDecodeError:
+        return None
+    return {
+        "llm": {k: (llm.get(k) or "") for k in ("base_url", "api_key", "model")},
+        "scenes": {
+            name: {k: (scene.get(k) or "") for k in ("base_url", "api_key", "model")}
+            for name, scene in (llm.get("scenes") or {}).items()
+            if isinstance(scene, dict)
+        },
+        "preferences": prefs,
+    }
+
+
+def _settings_match(cur: dict, orig: dict) -> bool:
+    """对比当前 GET /api/settings 响应与运行前原始值（api_key 按设置页掩码规则比较）。"""
+    from app.schemas.settings import _mask  # noqa: SLF001  掩码规则须与设置页一致
+
+    cur_llm = cur.get("llm") or {}
+    orig_llm = orig.get("llm") or {}
+    if cur_llm.get("base_url") != orig_llm.get("base_url") or cur_llm.get("model") != orig_llm.get("model"):
+        return False
+    if cur_llm.get("api_key") != _mask(orig_llm.get("api_key") or ""):
+        return False
+    for name in ("generation", "chat"):
+        c = (cur.get("scenes") or {}).get(name) or {}
+        o = (orig.get("scenes") or {}).get(name) or {}
+        if c.get("model") != o.get("model") or c.get("api_key") != _mask(o.get("api_key") or ""):
+            return False
+    # preferences 只比较当前可见字段（库里的历史遗留多余键无法经 API 还原，忽略）
+    cur_prefs = cur.get("preferences") or {}
+    orig_prefs = orig.get("preferences") or {}
+    return all(orig_prefs.get(k) == v for k, v in cur_prefs.items())
+
+
+def _restore_state(base: str, orig_settings: dict | None) -> None:
+    """按运行前快照统一还原：设置（llm/scenes/preferences）→ 局域网开关 → 访问令牌。"""
+    # 1) 设置页三项：取到过快照且与当前不同才回写
+    if orig_settings is not None:
+        s, cur = call(base, "/api/settings")
+        if s == 200 and not _settings_match(cur, orig_settings):
+            call(base, "/api/settings", "PUT", {
+                "llm": orig_settings["llm"],
+                "scenes": orig_settings["scenes"],
+                "preferences": orig_settings["preferences"],
+            })
+    # 2) 局域网开关：原本不存在 → 删除；存在 → 写回原内容
+    try:
+        if _ORIG_LAN_FLAG is None:
+            if _lan_flag_path.exists():
+                _lan_flag_path.unlink()
+        else:
+            _lan_flag_path.write_text(_ORIG_LAN_FLAG, encoding="utf-8")
+    except OSError:
+        pass
+    # 3) 访问令牌：原本存在才写回原内容
+    try:
+        if _ORIG_TOKEN is not None:
+            _token_path.write_text(_ORIG_TOKEN, encoding="utf-8")
+    except OSError:
+        pass
+
+
 def main() -> None:
     # 确保冒烟测试验证默认无配置状态（清理残留的局域网开关标记）
     lan_flag = settings.data_dir / "lan_access_enabled.txt"
@@ -251,6 +387,8 @@ def main() -> None:
             pass
 
     course_id, document_id, kp_id = asyncio.run(seed())
+    # 运行前快照设置原始值（llm/scenes/preferences，含未掩码 api_key），结束时统一还原
+    orig_settings = asyncio.run(_snapshot_settings_raw())
     port = settings.port  # 尊重 APP_PORT：8420 被已在跑的实例占用时可换端口
     base = f"http://127.0.0.1:{port}"
     config = uvicorn.Config("app.main:app", host="127.0.0.1", port=port, log_level="warning")
@@ -625,8 +763,7 @@ def main() -> None:
         s, body = call(base, f"/api/courses/{imported_course}", "DELETE")
         check("清理导入课程", s == 200)
 
-    # 8. 场景化 LLM（PRD §5.7）：保存场景覆盖 → 适配层回落验证 → 还原
-    s, orig = call(base, "/api/settings")
+    # 8. 场景化 LLM（PRD §5.7）：保存场景覆盖 → 适配层回落验证 → （结束时统一还原）
     test_llm = {"base_url": "https://api.example.com/v1", "api_key": "sk-smoketest-123456", "model": "main-model"}
     s, body = call(base, "/api/settings", "PUT", {
         "llm": test_llm,
@@ -663,9 +800,6 @@ def main() -> None:
     check("全课问答(LLM未配置) → 400", s == 400, str(body)[:120])
     s, body = call(base, "/api/tutor/diagnose", "POST", {"exercise_id": ex_code["id"], "content": "print(1)"})
     check("助教诊断(LLM未配置) → 400", s == 400, str(body)[:120])
-
-
-    call(base, "/api/settings", "PUT", {"llm": {"base_url": orig["llm"]["base_url"], "api_key": orig["llm"]["api_key"], "model": orig["llm"]["model"]}, "scenes": {"generation": {}, "chat": {}}})
 
     # 9. 高数图形化（PRD §5.9）：SymPy + Matplotlib 渲染
     s, body = call(base, "/api/math/render", "POST", {"expressions": "sin(x)/x\ntan(x)", "x_min": -6.5, "x_max": 6.5})
@@ -855,6 +989,9 @@ def main() -> None:
 
     n_ex, n_at = _aio.run(_exercise_left())
     check("课程删除后练习/作答级联清零", (n_ex, n_at) == (0, 0), f"{n_ex}/{n_at}")
+
+    # 统一还原运行前状态（设置 / 局域网开关 / 访问令牌），须在服务器仍在运行时执行
+    _restore_state(base, orig_settings)
 
     print("\n结果:", "全部通过 ✅" if ok else "存在失败 ❌")
     server.should_exit = True

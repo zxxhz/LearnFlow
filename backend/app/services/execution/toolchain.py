@@ -46,10 +46,14 @@ PYTHON_VERSION = "3.12.10"
 PYTHON_ASSET = f"python-{PYTHON_VERSION}-embed-amd64.zip"
 
 # 下载产物 SHA-256（供应链校验：镜像路径可能被替换，不符即拒装）。
-# bump 版本时随资产名一起从官方源重取；空串 = 未录入，跳过校验并记 warning（勿长期留空）。
+# bump 版本时随资产名一起从官方源重取；空串 = 未录入，安装直接拒绝（发版必须录入 hash）。
 MINGW_SHA256 = "918732a84fc8006586be0f5909b75896ab85d5e0e9df521b4d4f9202e7debc12"
 PYTHON_SHA256 = "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
 ASSET_SHA256: dict[str, str] = {"cpp": MINGW_SHA256, "python": PYTHON_SHA256}
+
+# 资产体积硬上限（防被替换成超大文件拖死磁盘/流量）：mingw 7z 实际 ~92MB 留 4 倍余量，
+# python embeddable ~11MB 留近 3 倍；超限中断并清分片
+_ASSET_MAX_BYTES: dict[str, int] = {"cpp": 400 * 1024 * 1024, "python": 30 * 1024 * 1024}
 
 # 镜像前缀按优先级排列，并发竞速试读择优；空串 = GitHub 直连
 
@@ -174,10 +178,8 @@ def start_install(component: str) -> None:
     t = _THREADS.get(component)
     if t and t.is_alive():
         raise RuntimeError(f"{component} 正在安装中")
-    root = toolchains_root()
-    _cleanup_stale_workdirs(root)
-    _cleanup_stale_partials(root)
-    _cleanup_stale_archives(root)
+    # 注意：陈旧目录/分片/旧包的清理在 _install_worker 线程内做——本函数运行在
+    # 事件循环里，递归 chmod/删除上千文件（含杀软锁定重试等待）会卡住全部请求
     _update(component, state="downloading", percent=0.0, error=None, message="准备下载…")
     thread = threading.Thread(target=_install_worker, args=(component,), daemon=True, name=f"tc-install-{component}")
     _THREADS[component] = thread
@@ -522,7 +524,12 @@ def _sha256_file(p: Path) -> str:
 
 def _download_to(url: str, dest: Path, kind: Component) -> None:
     """流式下载到 dest：断点续传（分片存 .partials/，失败后下次安装接着下）+
-    SHA-256 校验（不符则清分片拒装）。校验通过才落位 dest。"""
+    体积硬上限 + SHA-256 校验（不符则清分片拒装）。校验通过才落位 dest。"""
+    expected = ASSET_SHA256[kind]
+    if not expected:
+        # fail-closed：镜像路径可能被整体替换，没有官方 hash 就没有完整性闸门
+        raise RuntimeError(f"toolchain {kind} 未预置 SHA-256（发版流程必须录入 hash），拒绝安装")
+    max_bytes = _ASSET_MAX_BYTES[kind]
     partial = _partial_path(kind)
     partial.parent.mkdir(parents=True, exist_ok=True)
     offset = partial.stat().st_size if partial.exists() else 0
@@ -535,12 +542,22 @@ def _download_to(url: str, dest: Path, kind: Component) -> None:
                 r.raise_for_status()
                 start = 0  # 无分片 / 服务器不支持 Range：从头下
             total = start + int(r.headers.get("content-length") or 0)
+            if total and total > max_bytes:
+                raise RuntimeError(
+                    f"安装包体积超上限（{total // (1024 * 1024)}MB > {max_bytes // (1024 * 1024)}MB），已跳过该源"
+                )
             done = start
             last_pct, last_mb = -1, -1
             with open(partial, "ab" if start else "wb") as f:
                 for chunk in r.iter_bytes(262144):
                     f.write(chunk)
                     done += len(chunk)
+                    if done > max_bytes:
+                        f.close()
+                        partial.unlink(missing_ok=True)  # 超限半截文件不留
+                        raise RuntimeError(
+                            f"下载超过 {max_bytes // (1024 * 1024)}MB 上限，已中断并清除分片"
+                        )
                     if total:
                         pct = int(5 + done / total * 85)
                         if pct >= last_pct + 2:  # 节流：状态最多每 2% 写一次
@@ -551,14 +568,10 @@ def _download_to(url: str, dest: Path, kind: Component) -> None:
                         last_mb = done
                         _update(kind, state="downloading", percent=0.0,
                                 message=f"下载中 {done / 1e6:.0f} MB")
-    expected = ASSET_SHA256[kind]
     actual = _sha256_file(partial)
-    if expected:
-        if actual != expected:
-            partial.unlink(missing_ok=True)
-            raise RuntimeError("下载内容 SHA-256 校验失败（源可能被污染），已清除分片，可重试或换网络环境")
-    else:
-        logger.warning("toolchain %s 未预置 SHA-256，跳过完整性校验", kind)
+    if actual != expected:
+        partial.unlink(missing_ok=True)
+        raise RuntimeError("下载内容 SHA-256 校验失败（源可能被污染），已清除分片，可重试或换网络环境")
     shutil.move(str(partial), str(dest))
 
 
@@ -569,10 +582,17 @@ def _zip_member_unsafe(name: str) -> bool:
 
 
 def _extract_zip_safe(archive: Path, dest: Path, kind: Component) -> None:
-    """解压 zip，带 zip-slip 防护（跳过绝对路径 / .. 成员）+ 进度。"""
+    """解压 zip，带 zip-slip 防护 + 进度。
+
+    含绝对路径 / .. 成员的归档整包拒收（与 7z 对齐）：跳过单个成员继续解压会
+    让被篡改的包部分落地，且 SHA-256 留空时这是唯一闸门。
+    """
     dest.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive) as z:
-        infos = [m for m in z.infolist() if not _zip_member_unsafe(m.filename)]
+        unsafe = [m.filename for m in z.infolist() if _zip_member_unsafe(m.filename)]
+        if unsafe:
+            raise RuntimeError(f"zip 压缩包含非法路径成员（{unsafe[:3]}…），已拒绝解压")
+        infos = z.infolist()
         total = max(1, len(infos))
         for i, m in enumerate(infos):
             target = dest / m.filename.replace("\\", "/")
@@ -646,6 +666,11 @@ def _locate_payload(stage: Path, kind: Component) -> Path:
 
 def _install_worker(kind: Component) -> None:
     root = toolchains_root()
+    # 陈旧临时目录/分片/旧包清理：放在安装线程内执行（start_install 只做登记与启动，
+    # 不在事件循环里做可能被杀软锁慢的磁盘清理）。只清各自过期物，两个组件并发安装互不影响。
+    _cleanup_stale_workdirs(root)
+    _cleanup_stale_partials(root)
+    _cleanup_stale_archives(root)
     workdir = Path(tempfile.mkdtemp(prefix=f"learnflow-tc-{kind}-", dir=root))
     dest = root / ("mingw64" if kind == "cpp" else "python")
     try:
@@ -695,7 +720,10 @@ def _install_worker(kind: Component) -> None:
             _update(kind, state="done", percent=100.0, message=f"安装完成：{version}")
         else:
             version = _probe_version_steady([str(dest / f"python{_EXE}"), "-I", "--version"])
-            _update(kind, state="done", percent=100.0, message=f"安装完成：{version or 'Python'}")
+            if not version:
+                # 与 cpp 分支对齐：探测失败如实报错，绝不假报完成（可能被杀软隔离/拦截）
+                raise RuntimeError("安装后 python.exe 无法运行（可能被杀软拦截），请检查杀软隔离区后重试")
+            _update(kind, state="done", percent=100.0, message=f"安装完成：{version}")
         logger.info("toolchain %s installed at %s", kind, dest)
     except Exception as e:  # noqa: BLE001
         logger.exception("toolchain install failed: %s", kind)

@@ -5,6 +5,8 @@ import { api } from "../../lib/api";
 import type { Exercise, ExerciseAttempt } from "../../lib/types";
 import { Badge, Button, Spinner } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
+import { createStreamFlusher } from "../../lib/streamFlusher";
+import { sanitizeSvg } from "../../lib/sanitize";
 
 interface Props {
   exercise: Exercise;
@@ -171,11 +173,16 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
     setTutorOpen(true);
     setTutorLoading(true);
     setTutorStatus(null);
+    // 流式增量缓冲：delta 只进 ref，120ms 批量刷新进 state，避免每 token 全量重渲染
+    const flusher = createStreamFlusher((text) => setTutorText(text));
+    let acc: string;
     if (!questionText) {
+      acc = "";
       setTutorText("");
       setTutorPlot("");
     } else {
-      setTutorText((prev) => prev + `\n\n**追问：${questionText}**\n\n`);
+      acc = tutorText + `\n\n**追问：${questionText}**\n\n`;
+      setTutorText(acc);
     }
 
     try {
@@ -194,19 +201,23 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
             }
           } else if (ev.type === "delta" && ev.text) {
             setTutorStatus(null);
-            setTutorText((prev) => prev + ev.text);
+            acc += ev.text;
+            flusher.push(acc);
           } else if (ev.type === "error") {
             setTutorStatus(null);
+            flusher.flushNow();
             setTutorText((prev) => prev + `\n\n> ⚠️ ${ev.detail || "助教诊断失败"}`);
             setTutorLoading(false);
           } else if (ev.type === "done") {
             setTutorStatus(null);
+            flusher.flushNow();
             setTutorLoading(false);
           }
         },
         ctrl.signal
       );
     } catch (err: any) {
+      flusher.flushNow();
       if (err.name !== "AbortError") {
         setTutorStatus(null);
         setTutorText((prev) => prev + `\n\n> ⚠️ ${err.message || "连接失败"}`);
@@ -269,12 +280,12 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
         {tutorPlot && (
           <div
             className="rounded-md border border-amber-100 dark:border-amber-900/50 bg-white p-2 dark:bg-gray-900/80 [&_svg]:h-auto [&_svg]:max-w-full"
-            dangerouslySetInnerHTML={{ __html: tutorPlot }}
+            dangerouslySetInnerHTML={{ __html: sanitizeSvg(tutorPlot) }}
           />
         )}
         {tutorText && (
           <div className="msg-md text-[0.9em] leading-relaxed text-gray-800 dark:text-gray-200 bg-white/80 dark:bg-gray-900/80 rounded-md p-2.5 border border-amber-100 dark:border-amber-900/50">
-            <MarkdownLite text={tutorText} />
+            <MarkdownLite text={tutorText} deferMath={tutorLoading} />
           </div>
         )}
         <div className="flex items-center gap-1.5 pt-1">

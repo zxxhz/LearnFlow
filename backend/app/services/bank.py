@@ -4,6 +4,7 @@
 0 题型 | 1 题干 | 2-9 选项A-H | 10 正确答案 | 11 备用 | 12 解析 | 13 难度
 """
 import json
+import logging
 import random
 import shutil
 from io import BytesIO
@@ -23,6 +24,8 @@ from app.models.bank import (
 )
 from app.services.llm import create_adapter_from_settings
 from app.services.prompt import load_prompt, render_prompt
+
+logger = logging.getLogger(__name__)
 
 BANK_EXTENSIONS = (".xls", ".xlsx")
 MAX_BANK_BYTES = 20 * 1024 * 1024
@@ -239,7 +242,13 @@ async def create_bank(
                 explanation=q["explanation"],
             )
         )
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        # 落库失败：回滚并清掉已写的归档目录，不留无主孤儿
+        await db.rollback()
+        shutil.rmtree(bank_dir, ignore_errors=True)
+        raise
     return bank
 
 
@@ -375,6 +384,120 @@ async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
     }
 
 
+async def bulk_bank_stats(db: AsyncSession, bank_ids: list[str]) -> dict[str, dict]:
+    """批量统计（list_banks 用）：固定 3 条聚合查询 + 内存组装，消除逐库 bank_stats 的 N+1。
+
+    返回 {bank_id: 与 bank_stats 同构的 dict}，口径与单库版一致。
+    """
+    out: dict[str, dict] = {
+        bid: {
+            "question_count": 0,
+            "answered": 0,
+            "new_count": 0,
+            "attempts": 0,
+            "correct": 0,
+            "accuracy": 0,
+            "wrong_count": 0,
+            "by_type": {},
+        }
+        for bid in bank_ids
+    }
+    if not bank_ids:
+        return out
+
+    # 1) 全量作答次数/正确次数（GROUP BY bank_id 单条聚合）
+    totals = (
+        await db.execute(
+            select(
+                BankAttempt.bank_id.label("bid"),
+                func.count().label("n"),
+                func.sum(case((BankAttempt.passed.is_(True), 1), else_=0)).label("ok"),
+            )
+            .where(BankAttempt.bank_id.in_(bank_ids))
+            .group_by(BankAttempt.bank_id)
+        )
+    ).all()
+    attempts_by_bank = {r.bid: (int(r.n or 0), int(r.ok or 0)) for r in totals}
+
+    # 2) 每题最近一次作答（窗口函数 rn=1，一次取全部库）
+    rn = func.row_number().over(
+        partition_by=BankAttempt.question_id, order_by=BankAttempt.created_at.desc()
+    ).label("rn")
+    ranked = (
+        select(
+            BankAttempt.bank_id.label("bid"),
+            BankAttempt.question_id.label("qid"),
+            BankAttempt.passed.label("ok"),
+            BankAttempt.is_doubtful.label("is_doubtful"),
+            rn,
+        )
+        .where(BankAttempt.bank_id.in_(bank_ids))
+        .subquery()
+    )
+    latest_rows = (
+        await db.execute(
+            select(ranked.c.bid, ranked.c.qid, ranked.c.ok, ranked.c.is_doubtful).where(
+                ranked.c.rn == 1
+            )
+        )
+    ).all()
+    latest_by_bank: dict[str, dict[str, object]] = {}
+    for r in latest_rows:
+        latest_by_bank.setdefault(r.bid, {})[r.qid] = r
+
+    # 3) 题目轻量列一次拉全（分布/指纹均在内存计算，不拉解析长文本）
+    q_rows = (
+        await db.execute(
+            select(
+                BankQuestion.bank_id.label("bid"),
+                BankQuestion.id.label("qid"),
+                BankQuestion.qtype.label("qtype"),
+                BankQuestion.title.label("title"),
+                BankQuestion.options.label("options"),
+                BankQuestion.answer.label("answer"),
+            ).where(BankQuestion.bank_id.in_(bank_ids))
+        )
+    ).all()
+    qs_by_bank: dict[str, list] = {}
+    for r in q_rows:
+        qs_by_bank.setdefault(r.bid, []).append(r)
+
+    for bid, stats in out.items():
+        qs = qs_by_bank.get(bid, [])
+        latest = latest_by_bank.get(bid, {})
+        stats["question_count"] = len(qs)
+        stats["answered"] = len(latest)
+        stats["wrong_count"] = sum(
+            1 for r in latest.values() if (not r.ok) or getattr(r, "is_doubtful", False)
+        )
+        stats["correct"] = sum(
+            1 for r in latest.values() if r.ok is True and not r.is_doubtful
+        )
+        by_type: dict[str, dict] = {}
+        wrong_ids = {qid for qid, r in latest.items() if (not r.ok) or r.is_doubtful}
+        for r in qs:
+            slot = by_type.setdefault(r.qtype, {"total": 0, "wrong": 0})
+            slot["total"] += 1
+            if r.qid in wrong_ids:
+                slot["wrong"] += 1
+        stats["by_type"] = by_type
+
+        total_attempts, correct_attempts = attempts_by_bank.get(bid, (0, 0))
+        stats["attempts"] = total_attempts
+        stats["accuracy"] = (
+            round(correct_attempts / total_attempts * 100, 1) if total_attempts else 0
+        )
+
+        # new_count 与 draw_round("new") 同口径：指纹去重后从未作答的题数
+        new_count = len(qs)
+        if qs and latest:
+            fp_by_id = {r.qid: _question_dedup_key(r) for r in qs}
+            answered_fp = {fp_by_id[qid] for qid in latest if qid in fp_by_id}
+            new_count = len({key for key in fp_by_id.values() if key not in answered_fp})
+        stats["new_count"] = new_count
+    return out
+
+
 def _question_dedup_key(q: BankQuestion) -> tuple:
     """提取题目内容归一化指纹，用于识别完全相同的题目。
 
@@ -456,7 +579,10 @@ async def draw_round(
 
 
 async def delete_bank(db: AsyncSession, bank: QuestionBank) -> None:
-    """级联删除：作答流水 → 题目 → 题库 → 归档目录。"""
+    """级联删除：作答流水 → 题目 → 题库 → 归档目录。
+
+    目录先改名 banks/.trash-{id} 再删：rmtree 中途崩溃不会留下"看似完好"的半删目录。
+    """
     await db.execute(
         BankAttempt.__table__.delete().where(BankAttempt.bank_id == bank.id)
     )
@@ -465,7 +591,19 @@ async def delete_bank(db: AsyncSession, bank: QuestionBank) -> None:
     )
     await db.delete(bank)
     await db.commit()
-    shutil.rmtree(settings.data_dir / "banks" / bank.id, ignore_errors=True)
+    bank_dir = settings.data_dir / "banks" / bank.id
+    trash_dir = settings.data_dir / "banks" / f".trash-{bank.id}"
+    if not bank_dir.exists():
+        return
+    try:
+        shutil.rmtree(trash_dir, ignore_errors=True)  # 清掉历史残留的同名回收目录
+        bank_dir.rename(trash_dir)
+    except OSError as e:
+        # 改名失败（如归档被占用）仅记录，直接兜底原地删除，不阻断删除请求
+        logger.warning("bank %s archive rename to trash failed: %r", bank.id, e)
+        shutil.rmtree(bank_dir, ignore_errors=True)
+        return
+    shutil.rmtree(trash_dir, ignore_errors=True)
 
 
 DEFAULT_BANK_AI_PROMPT = load_prompt("bank_default_ai")

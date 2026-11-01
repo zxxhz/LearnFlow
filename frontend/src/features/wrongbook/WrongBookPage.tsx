@@ -24,7 +24,7 @@ export default function WrongBookPage() {
             最近一次作答未通过的题都在这里；重刷通过后自动出池。
           </p>
         </div>
-        <FontSizeControl value={fontSize} onChange={setFontSize} defaultValue={16} label="字号" />
+        <FontSizeControl value={fontSize} onChange={setFontSize} defaultValue={15} label="字号" />
       </div>
       {isLoading ? (
         <div className="mt-10 flex justify-center">

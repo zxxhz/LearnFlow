@@ -261,7 +261,8 @@ class _AccessGuard:
                     await resp(scope, receive, send)
                     return
 
-                if not secrets.compare_digest(token, server_token):
+                # compare_digest 仅接受 ASCII 字符串：非 ASCII 令牌（手输污染等）先拦下，避免 TypeError 500
+                if not token or not token.isascii() or not secrets.compare_digest(token, server_token):
                     detail_msg = "访问令牌错误或已失效：请在电脑端设置页重新复制最新的局域网访问地址。"
                     if is_html_req:
                         resp = HTMLResponse(
@@ -278,7 +279,8 @@ class _AccessGuard:
                     async def send_with_cookie(message):
                         if message["type"] == "http.response.start":
                             headers = list(message.get("headers", []))
-                            cookie_val = f"lf_token={urllib.parse.quote(token)}; Path=/; SameSite=Lax; Max-Age=2592000"
+                            # HttpOnly：前端只从 localStorage/query 取 token 走 x-access-token 头，不读 cookie
+                            cookie_val = f"lf_token={urllib.parse.quote(token)}; Path=/; SameSite=Lax; Max-Age=2592000; HttpOnly"
                             headers.append((b"set-cookie", cookie_val.encode("latin-1")))
                             message["headers"] = headers
                         await send(message)
@@ -289,9 +291,48 @@ class _AccessGuard:
         await self.app(scope, receive, send)
 
 
+class _SecurityHeaders:
+    """纯 ASGI 中间件：仅给 text/html 响应追加 Content-Security-Policy。
+
+    只覆盖 HTML 页面（SPA 入口与局域网认证页）；SSE（text/event-stream）与 API JSON
+    不加头、也不经手响应体（无缓冲层，不影响流式）。script-src 保留 'unsafe-inline'
+    是 Tauri 桌面壳的取舍：webview 依赖注入内联脚本桥接 IPC，前端主题初始化也是内联
+    脚本，收紧到 nonce 会破坏桌面壳与认证页表单，故仅对 object/base-uri/frame 收口。
+    """
+
+    _CSP = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; "
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    )
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_csp(message):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                if any(
+                    k.lower() == b"content-type" and v.lower().startswith(b"text/html")
+                    for k, v in headers
+                ):
+                    headers.append((b"content-security-policy", self._CSP.encode("latin-1")))
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_csp)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="LearnFlow", lifespan=lifespan)
     app.add_middleware(_AccessGuard)
+    # 后添加的中间件在外层：CSP 包住门禁生成的 401/403 HTML 认证页一并加头
+    app.add_middleware(_SecurityHeaders)
     app.include_router(api_router)
 
     @app.exception_handler(LLMError)

@@ -82,7 +82,11 @@ export default function MindMapAgentPanel({
       return;
     }
     try {
-      localStorage.setItem(`learnflow_mindmap_agent_msgs_${mindmapId}`, JSON.stringify(messages));
+      // 持久化前裁剪至最近 20 条（与发送侧 history 口径一致）：历史无上限会撑爆 localStorage 配额
+      localStorage.setItem(
+        `learnflow_mindmap_agent_msgs_${mindmapId}`,
+        JSON.stringify(messages.slice(-20))
+      );
     } catch (e) {
       console.warn("Agent 对话历史持久化失败（可能超出 localStorage 配额）", e);
     }

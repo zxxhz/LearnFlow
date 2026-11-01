@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import get_db
 from app.models import Course, Document, KnowledgePoint, Section
-from app.models.base import utcnow_iso
+from app.models.base import new_id, utcnow_iso
 from app.schemas.common import OutlineItem
 from app.schemas.course import CourseOut
 from app.services.docparser import parse_blocks
@@ -197,14 +197,14 @@ async def import_confirm(
     except Exception:  # 未配置 LLM：跳过知识点提取，导入本身仍可用
         adapter = None
 
+    # 显式预生成 id：课程行延后到 Phase 2 才挂起/落库，目录先用 id 建好
     course = Course(
+        id=new_id(),
         title=spec_obj.title.strip() or "导入课程",
         topic=f"导入自：{'、'.join(names)}",
         outline="[]",
         status="ready",
     )
-    db.add(course)
-    await db.flush()
 
     # 原件归档（用户磁盘上的源文件只读不写）
     originals_dir = settings.courses_dir / course.id / "originals"
@@ -225,6 +225,9 @@ async def import_confirm(
                 raise HTTPException(status_code=400, detail=f"章节「{ch.title}」内容为空")
             meta = await _extract_kp(adapter, content) if adapter is not None else None
             chapter_prepared.append((j, ch, content, meta))
+
+        # Phase 1 结束后才挂起课程写入：避免提前持 SQLite 写锁横跨整个 LLM 循环
+        db.add(course)
 
         # Phase 2：无 LLM 的短写事务集中落库
         for j, ch, content, meta in chapter_prepared:
@@ -292,19 +295,20 @@ async def import_confirm(
                     )
                     db.add(kp)
                     await db.flush()
+
+        course.outline = json.dumps([o.model_dump() for o in outline_items], ensure_ascii=False)
+        course.updated_at = utcnow_iso()
+
+        for i, name in enumerate(names):
+            (originals_dir / f"{i:02d}_{name}").write_text(texts[i], encoding="utf-8")
+
+        await db.commit()
     except Exception:
         # 中途失败：DB 回滚，但已写入的 courses/{cid}/ 目录会变成无主孤儿——一并清掉
         await db.rollback()
         shutil.rmtree(settings.courses_dir / course.id, ignore_errors=True)
         raise
 
-    course.outline = json.dumps([o.model_dump() for o in outline_items], ensure_ascii=False)
-    course.updated_at = utcnow_iso()
-
-    for i, name in enumerate(names):
-        (originals_dir / f"{i:02d}_{name}").write_text(texts[i], encoding="utf-8")
-
-    await db.commit()
     logger.info(
         "imported course %s: %d chapters, %d knowledge points",
         course.id,

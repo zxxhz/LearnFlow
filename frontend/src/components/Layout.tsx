@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { UpdateCheckResult } from "../lib/types";
 import { useTheme } from "../lib/theme";
+import { safeSessionStorage } from "../lib/safeStorage";
 import { isTauri, openExternalUrl } from "../lib/updater";
 import UpdateDialog from "./UpdateDialog";
 
@@ -100,7 +101,7 @@ export default function Layout() {
   });
 
   useEffect(() => {
-    if (update?.has_update && update.latest && sessionStorage.getItem("update-dismissed") !== update.latest) {
+    if (update?.has_update && update.latest && safeSessionStorage.get("update-dismissed") !== update.latest) {
       setDialogUpdate(update);
     }
   }, [update]);
@@ -130,7 +131,7 @@ export default function Layout() {
   }, []);
 
   const closeUpdateDialog = () => {
-    if (dialogUpdate?.latest) sessionStorage.setItem("update-dismissed", dialogUpdate.latest);
+    if (dialogUpdate?.latest) safeSessionStorage.set("update-dismissed", dialogUpdate.latest);
     setDialogUpdate(null);
   };
 

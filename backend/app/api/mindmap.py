@@ -47,13 +47,19 @@ async def list_mindmaps(db: AsyncSession = Depends(get_db)):
 @router.post("", response_model=MindMapDetail)
 async def create_mindmap(data: MindMapCreate, db: AsyncSession = Depends(get_db)):
     """新建空白思维导图。"""
-    mm = await mindmap_service.create_mindmap(db, data)
+    try:
+        mm = await mindmap_service.create_mindmap(db, data)
+    except ValueError as e:
+        # 树深度超限等结构不合法 → 422
+        raise HTTPException(status_code=422, detail=str(e))
     return _to_detail(mm)
 
 
 @router.post("/import", response_model=MindMapDetail)
 async def import_mindmap(data: MindMapImportRequest, db: AsyncSession = Depends(get_db)):
     """从 Markdown 大纲或 JSON 字符串导入生成思维导图。"""
+    if len(data.content) > 2_000_000:
+        raise HTTPException(status_code=422, detail="导入内容过长（上限 200 万字符）")
     raw_content = data.content.strip()
     if not raw_content:
         raise HTTPException(status_code=400, detail="导入内容不可为空")
@@ -73,12 +79,17 @@ async def import_mindmap(data: MindMapImportRequest, db: AsyncSession = Depends(
                 if not detected_title and parsed.get("title"):
                     detected_title = str(parsed["title"]).strip()
                 is_json = True
+        except ValueError:
+            raise HTTPException(status_code=422, detail="导入的导图层级超过上限（最多 30 层）")
         except Exception:
             pass
 
     if not is_json:
         # 按 Markdown 层级大纲解析
-        tree = mindmap_service.parse_markdown_to_tree(raw_content, detected_title)
+        try:
+            tree = mindmap_service.parse_markdown_to_tree(raw_content, detected_title)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
 
     final_title = detected_title or tree.get("title") or "导入思维导图"
     tree["title"] = final_title
@@ -88,7 +99,10 @@ async def import_mindmap(data: MindMapImportRequest, db: AsyncSession = Depends(
         topic="导入知识体系",
         root=tree,
     )
-    mm = await mindmap_service.create_mindmap(db, create_data)
+    try:
+        mm = await mindmap_service.create_mindmap(db, create_data)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     return _to_detail(mm)
 
 
@@ -115,9 +129,12 @@ async def generate_mindmap(data: MindMapGenerateRequest, db: AsyncSession = Depe
     except LLMError:
         # 交给全局 llm_error_handler（400 + 中文提示），不得吞掉转 500
         raise
+    except ValueError as e:
+        # 树深度超限等结构不合法 → 422
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.exception("生成思维导图异常")
-        raise HTTPException(status_code=500, detail=f"AI 生成思维导图失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="AI 生成思维导图失败，请稍后重试")
 
 
 @router.get("/{mindmap_id}", response_model=MindMapDetail)
@@ -132,7 +149,11 @@ async def get_mindmap(mindmap_id: str, db: AsyncSession = Depends(get_db)):
 @router.put("/{mindmap_id}", response_model=MindMapDetail)
 async def update_mindmap(mindmap_id: str, data: MindMapUpdate, db: AsyncSession = Depends(get_db)):
     """更新思维导图（重命名、保存树修改、视图偏好）。"""
-    mm = await mindmap_service.update_mindmap(db, mindmap_id, data)
+    try:
+        mm = await mindmap_service.update_mindmap(db, mindmap_id, data)
+    except ValueError as e:
+        # 树深度超限等结构不合法 → 422
+        raise HTTPException(status_code=422, detail=str(e))
     if not mm:
         raise HTTPException(status_code=404, detail="思维导图不存在")
     return _to_detail(mm)
@@ -201,9 +222,12 @@ async def chat_with_mindmap_agent(
                 db=db,
             ):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-        except Exception as e:
+        except LLMError as e:
+            # 业务可展示的 LLM 错误：透传中文提示
+            yield f"data: {json.dumps({'type': 'error', 'detail': e.message}, ensure_ascii=False)}\n\n"
+        except Exception:
             logger.exception("MindMap agent stream error")
-            yield f"data: {json.dumps({'type': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'detail': '服务异常，请稍后重试'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -233,9 +257,11 @@ async def generate_node_detail_stream(
                 db=db,
             ):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-        except Exception as e:
+        except LLMError as e:
+            yield f"data: {json.dumps({'type': 'error', 'detail': e.message}, ensure_ascii=False)}\n\n"
+        except Exception:
             logger.exception("Node detail stream error")
-            yield f"data: {json.dumps({'type': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'detail': '服务异常，请稍后重试'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -266,9 +292,11 @@ async def node_qa_stream(
                 db=db,
             ):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
-        except Exception as e:
+        except LLMError as e:
+            yield f"data: {json.dumps({'type': 'error', 'detail': e.message}, ensure_ascii=False)}\n\n"
+        except Exception:
             logger.exception("Node QA stream error")
-            yield f"data: {json.dumps({'type': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'detail': '服务异常，请稍后重试'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
         event_generator(),

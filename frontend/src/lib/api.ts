@@ -38,9 +38,11 @@ import type {
   Bank,
   BankAnalysis,
   BankAttemptResult,
+  BankExplainSSEEvent,
   BankRound,
   BankStats,
   BankWrongQuestion,
+  InAppInstallSSEEvent,
   ParsedTextQuestionItem,
   PasteParseResponse,
   LearnerProfile,
@@ -194,20 +196,15 @@ export const api = {
     inAppInstallSSE: (
       version: string,
       url: string | undefined,
-      onEvent: (payload: {
-        type: "start" | "progress" | "retry" | "ready" | "installing" | "error";
-        downloaded?: number;
-        total?: number;
-        percent?: number;
-        speed_mb?: number;
-        message?: string;
-        detail?: string;
-      }) => void,
+      onEvent: (payload: InAppInstallSSEEvent) => void,
       signal?: AbortSignal
     ) => {
       const params = new URLSearchParams({ target_version: version });
       if (url) params.set("url", url);
-      return subscribeSSE(`/update/in-app-install?${params.toString()}`, onEvent, signal);
+      // 后端已改为 POST 且强制同源（本端点会下载并执行安装包，重副作用）
+      return subscribeSSE(`/update/in-app-install?${params.toString()}`, onEvent, signal, {
+        method: "POST",
+      });
     },
   },
   runtime: {
@@ -390,9 +387,9 @@ export const api = {
     explainSSE: (
       questionId: string,
       picked: string[],
-      onEvent: (payload: any) => void,
+      onEvent: (payload: BankExplainSSEEvent) => void,
       signal?: AbortSignal
-    ) => streamSSE(`/banks/questions/${questionId}/ai-explain`, { picked }, onEvent, signal),
+    ) => streamSSE<BankExplainSSEEvent>(`/banks/questions/${questionId}/ai-explain`, { picked }, onEvent, signal),
     remove: (id: string) => request<{ ok: boolean }>(`/banks/${id}`, { method: "DELETE" }),
   },
   study: {
@@ -504,7 +501,7 @@ export const api = {
     nodeQASSE: (
       id: string,
       nodeId: string,
-      body: { question: string; history?: any[] },
+      body: { question: string; history?: Array<{ role: "user" | "assistant"; content: string }> },
       onEvent: (ev: MindMapNodeQASSEEvent) => void,
       signal?: AbortSignal
     ) => streamSSE<MindMapNodeQASSEEvent>(`/mindmaps/${id}/nodes/${nodeId}/qa`, body, onEvent, signal),

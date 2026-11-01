@@ -3,12 +3,14 @@
 代码关在同一知识点内按 order_index 成链，前一关通过后才解锁下一关；
 提交后由执行沙箱运行，stdout 与目标输出精确对比判定；做错的题进错题本。
 """
+import ast
 import asyncio
 import json
 import logging
+import re
 from pydantic import BaseModel
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Course, Document, Exercise, ExerciseAttempt, KnowledgePoint
@@ -61,39 +63,74 @@ def _norm_choice(s: str) -> str:
     return t[:1] if t and t[0] in CHOICE_LETTERS else t
 
 
+def _is_hardcoded_python(content: str) -> bool | None:
+    """ast 判定 Python 是否纯打印固定文案：模块体仅由 Expr(print(常量...)) 组成。
+    返回 None 表示无法用 Python 语法解析（交给调用方回退）。"""
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return None
+    if not tree.body:
+        return False
+    for stmt in tree.body:
+        if not (
+            isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Call)
+            and isinstance(stmt.value.func, ast.Name)
+            and stmt.value.func.id == "print"
+            and not stmt.value.keywords
+        ):
+            return False  # 出现赋值/变量/运算等任何其它语句 → 有逻辑
+        for arg in stmt.value.args:
+            if isinstance(arg, ast.Constant):
+                continue
+            # 无占位替换的 f-string 等价于固定文案（f"1 2 3"）；带 {} 插值则视为有逻辑
+            if isinstance(arg, ast.JoinedStr) and not any(
+                isinstance(v, ast.FormattedValue) for v in arg.values
+            ):
+                continue
+            return False
+    return True
+
+
+# C++ 预处理：剥注释（// 与 /* */）与字符串/字符字面量内容
+_CPP_COMMENT_RE = re.compile(r"/\*.*?\*/|//[^\n]*", re.DOTALL)
+_CPP_STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'', re.DOTALL)
+# 输出语句：cout << ... ; 与 printf(...);（字符串已剥空，语句体整体摘出）
+_CPP_OUTPUT_RE = re.compile(r"(?:std::)?\w*cout\b[^;]*;|printf\s*\([^;]*\)\s*;", re.DOTALL)
+
+def _is_hardcoded_cpp(content: str) -> bool:
+    """剥掉注释与字符串后，剩余文本若仅由输出语句、#include、using、int main、
+    return 0; 与花括号/分号组成，且不含流程控制/算术运算 → 判硬编码。"""
+    text = _CPP_COMMENT_RE.sub(" ", content)
+    text = _CPP_STRING_RE.sub('""', text)
+    text = re.sub(r"^\s*#\s*include[^\n]*", " ", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*#[^\n]*", " ", text, flags=re.MULTILINE)  # 其余预处理指令
+    # 流程控制关键字与算术运算符（含输出语句内部的计算，如 cout << 1+2）都算逻辑
+    if re.search(r"\b(?:for|while|if|else|switch|case|def|class)\b", text):
+        return False
+    if re.search(r"[+\-*/%]", text):
+        return False
+    outputs = _CPP_OUTPUT_RE.findall(text)
+    if not outputs:
+        return False
+    rest = _CPP_OUTPUT_RE.sub(" ", text)
+    # 只剩壳语法：using/namespace/std/int/main/return/0 与花括号分号括号逗号
+    rest = re.sub(r"\b(?:using|namespace|std|int|void|main|return|char|const)\b", " ", rest)
+    rest = re.sub(r"\b0\b", " ", rest)
+    rest = re.sub(r"[{}();,<>]", " ", rest)  # <> 来自 #include 的尖括号，不属于逻辑
+    return not rest.strip()
+
+
 def is_hardcoded_output(content: str, expected_output: str) -> bool:
     """检测代码是否直接通过打印语句硬编码目标输出（缺乏变量计算或算法逻辑，§2）。"""
     norm_exp = normalize_output(expected_output)
     if not norm_exp or len(norm_exp) < 3:
         return False
-
-    code_lines = [
-        line.strip()
-        for line in content.split("\n")
-        if line.strip() and not line.strip().startswith(("#", "//", "/*", "*"))
-    ]
-    if len(code_lines) > 5:
-        return False
-
-    code_text = " ".join(code_lines)
-    quoted_match = (
-        f'"{norm_exp}"' in code_text
-        or f"'{norm_exp}'" in code_text
-        or f'"""{norm_exp}"""' in code_text
-        or f"'''{norm_exp}'''" in code_text
-    )
-    if not quoted_match:
-        return False
-
-    has_logic = any(
-        kw in code_text
-        for kw in (
-            "for ", "while ", "def ", "class ", "if ", "else",
-            "+", "-", "*", "/", "%", "==", "!=", "<", ">",
-            "sum(", "len(", "range(", "map(", "filter(", "std::vector", "std::cin"
-        )
-    )
-    return not has_logic
+    python_verdict = _is_hardcoded_python(content)
+    if python_verdict is not None:
+        return python_verdict
+    return _is_hardcoded_cpp(content)
 
 
 def _fill_answers(answer_json: str) -> list[str]:
@@ -146,24 +183,32 @@ async def _kp_context(db: AsyncSession, kp: KnowledgePoint) -> tuple[Document, l
     return document, texts
 
 
-async def delete_kp_exercises(db: AsyncSession, kp_ids: list[str]) -> None:
-    """删除知识点的全部练习与作答（出题替换 / 章节重建级联共用）。"""
+async def delete_kp_exercises(db: AsyncSession, kp_ids: list[str]) -> list[str]:
+    """删除知识点的全部练习与作答（出题替换 / 章节重建级联共用）。
+
+    返回被删题目涉及的小测 quiz_id 列表，供调用方清理删空的小测壳行。
+    """
     if not kp_ids:
-        return
+        return []
     old = (
         await db.scalars(select(Exercise).where(Exercise.knowledge_point_id.in_(kp_ids)))
     ).all()
     old_ids = [e.id for e in old]
-    if old_ids:
-        await db.execute(
-            ExerciseAttempt.__table__.delete().where(ExerciseAttempt.exercise_id.in_(old_ids))
-        )
-        await db.execute(Exercise.__table__.delete().where(Exercise.id.in_(old_ids)))
+    if not old_ids:
+        return []
+    affected_quiz_ids = sorted({e.quiz_id for e in old if e.quiz_id})
+    await db.execute(
+        ExerciseAttempt.__table__.delete().where(ExerciseAttempt.exercise_id.in_(old_ids))
+    )
+    await db.execute(Exercise.__table__.delete().where(Exercise.id.in_(old_ids)))
+    return affected_quiz_ids
 
 
 def detect_course_discipline(topic: str, title: str) -> str:
     """推断学科属性：math（数理与物理）/ theory（理论概念）/ coding（编程开发，§3）。"""
     text = f"{topic} {title}".lower()
+    # 先剥掉括号补充说明（"数学实验（Python）"不该因括号里的 Python 误判为 coding）
+    text = re.sub(r"（[^）]*）|\([^)]*\)", "", text)
     math_kws = (
         # 数学类
         "数学", "高数", "微积分", "数分", "高等代数", "线性代数", "线代",
@@ -189,7 +234,8 @@ def detect_course_discipline(topic: str, title: str) -> str:
         return "math"
     if any(k in text for k in theory_kws):
         return "theory"
-    return "coding"
+    # 无法识别时按理论概念课处理（兜底生成代码关对非编程课伤害最大）
+    return "theory"
 
 
 async def generate_for_kp(
@@ -259,7 +305,7 @@ async def generate_for_kp(
             reference_code=item.reference_code if item.kind == EXERCISE_CODE else "",
             hints=(
                 json.dumps([h for h in item.hints if str(h).strip()][:3], ensure_ascii=False)
-                if item.kind == EXERCISE_CODE
+                if item.kind in (EXERCISE_CODE, EXERCISE_MATH)
                 else "[]"
             ),
             order_index=idx,
@@ -382,12 +428,17 @@ async def wrongbook(db: AsyncSession) -> list[ExerciseOut]:
         ExerciseAttempt.exercise_id.label("eid"),
         ExerciseAttempt.created_at.label("cat"),
         ExerciseAttempt.passed.label("ok"),
+        ExerciseAttempt.is_doubtful.label("doubt"),
         rn,
     ).subquery()
     rows = (
         await db.execute(
             select(sq.c.eid, sq.c.cat)
-            .where(sq.c.rn == 1, sq.c.ok.is_(False))  # 最新一次仍未通过才进错题本
+            .where(
+                sq.c.rn == 1,
+                # 口径与题库错题本一致：最新一次未通过，或被学员标记存疑
+                or_(sq.c.ok.is_(False), sq.c.doubt.is_(True)),
+            )
             .order_by(sq.c.cat.desc())
             .limit(200)
         )
@@ -587,10 +638,17 @@ async def delete_exercise(db: AsyncSession, exercise_id: str) -> None:
     exercise = await db.get(Exercise, exercise_id)
     if exercise is None:
         raise LookupError("练习题不存在")
+    # 级联：先删该题的支线搭桥小题（及其作答），再删题目本身
+    child_ids = (
+        await db.scalars(
+            select(Exercise.id).where(Exercise.parent_exercise_id == exercise.id)
+        )
+    ).all()
+    doomed = [*child_ids, exercise.id]
     await db.execute(
-        ExerciseAttempt.__table__.delete().where(ExerciseAttempt.exercise_id == exercise.id)
+        ExerciseAttempt.__table__.delete().where(ExerciseAttempt.exercise_id.in_(doomed))
     )
-    await db.execute(Exercise.__table__.delete().where(Exercise.id == exercise.id))
+    await db.execute(Exercise.__table__.delete().where(Exercise.id.in_(doomed)))
     await db.commit()
 
 
@@ -640,8 +698,26 @@ async def generate_bridge_exercises(db: AsyncSession, exercise_id: str) -> list[
         schema=BridgeExercisesOutput,
     )
 
+    # 生成前先清掉该父题下的旧搭桥小题（含作答），避免反复生成无限叠加
+    old_bridges = (
+        await db.scalars(select(Exercise).where(Exercise.parent_exercise_id == ex.id))
+    ).all()
+    if old_bridges:
+        await db.execute(
+            ExerciseAttempt.__table__.delete().where(
+                ExerciseAttempt.exercise_id.in_([b.id for b in old_bridges])
+            )
+        )
+        await db.execute(
+            Exercise.__table__.delete().where(Exercise.id.in_([b.id for b in old_bridges]))
+        )
+
     created: list[Exercise] = []
     for i, item in enumerate(result.bridge_exercises, 1):
+        # 题面/目标输出缺失的小题无法判题，直接跳过
+        if not item.task.strip() or not item.expected_output.strip():
+            logger.warning("skip incomplete bridge exercise draft: title=%s", item.title)
+            continue
         bridge_ex = Exercise(
             knowledge_point_id=ex.knowledge_point_id,
             document_id=ex.document_id,
@@ -659,6 +735,8 @@ async def generate_bridge_exercises(db: AsyncSession, exercise_id: str) -> list[
         db.add(bridge_ex)
         created.append(bridge_ex)
 
+    if not created:
+        raise ValueError("未生成有效的搭桥小题，请重试")
     await db.commit()
     return created
 

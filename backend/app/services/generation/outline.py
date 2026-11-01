@@ -46,7 +46,7 @@ async def generate_outline(
     profile_text = await format_profile_for_prompt(db)
     prompt = render_prompt(
         "outline",
-        TOPIC=req.topic,
+        TOPIC=req.topic or "（未填写）",
         LEVEL=req.level or "（未填写）",
         LEARNER_PROFILE=profile_text,
         SCOPE=req.scope or "（未填写）",

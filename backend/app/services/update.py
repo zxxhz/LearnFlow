@@ -5,6 +5,7 @@
 - 节流：自动检查（打开应用时前端触发）1 小时内不重复请求；设置页按钮可强制刷新
 - 跨版本日志聚合：若当前版本为 0.0.1，最新版本为 0.0.4，将聚合中间所有已发布版本的更新说明，跳过无日志或不存在的版本
 """
+import asyncio
 import logging
 import time
 
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 AUTO_INTERVAL_SECONDS = 3600
 REQUEST_TIMEOUT = 5.0
+
+# in-app-install 安装包下载硬上限：单包体积 600MB（超限弃源）、全部源合计 20 分钟
+_INSTALLER_MAX_BYTES = 600 * 1024 * 1024
+_DOWNLOAD_TOTAL_TIMEOUT = 20 * 60
 
 _cache: dict = {"checked_at": 0.0, "result": None}
 
@@ -233,6 +238,89 @@ async def check_update(db: AsyncSession, force: bool = False) -> dict:
 
 
 
+def _find_parent_desktop_pid() -> int | None:
+    """取父进程 PID（仅当其映像名为 LearnFlow.exe，即打包版桌面壳）。
+
+    更新链必须先杀壳再杀后端：壳的 watchdog 检测到后端失联后会用旧安装目录
+    重拉后端，与安装器写文件互踩。按 PID /T 终止比按映像名（/IM 会杀掉所有
+    同名实例）保守；父进程不可得或映像名不符（开发模式父进程是终端/IDE）时
+    返回 None，由调用方退回映像名兜底。
+    """
+    import ctypes
+    import os
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.POINTER(wintypes.ULONG)),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if not snap or snap == ctypes.c_void_p(-1).value:
+        return None
+    try:
+        me = os.getpid()
+        parent_pid = None
+        names: dict[int, str] = {}
+        pe = PROCESSENTRY32W()
+        pe.dwSize = ctypes.sizeof(pe)
+        ok = bool(k32.Process32FirstW(snap, ctypes.byref(pe)))
+        while ok:
+            names[int(pe.th32ProcessID)] = str(pe.szExeFile)
+            if int(pe.th32ProcessID) == me:
+                parent_pid = int(pe.th32ParentProcessID)
+            pe.dwSize = ctypes.sizeof(pe)
+            ok = bool(k32.Process32NextW(snap, ctypes.byref(pe)))
+    finally:
+        k32.CloseHandle(snap)
+    if parent_pid and names.get(parent_pid, "").lower() == "learnflow.exe":
+        return parent_pid
+    return None
+
+
+def _kill_update_targets() -> None:
+    """终止旧版进程（桌面壳 + 后端），释放安装目录文件锁。
+
+    - 桌面壳：backend 由壳 spawn，父进程映像名 = LearnFlow.exe 时按父 PID /T
+      （整树，连带 WebView 子进程）终止；否则退回映像名兜底。
+      learnflow-desktop.exe 为已废弃旧名，不再处理。
+    - 后端：按自身 PID /T 终止（连带编译器/沙箱子进程）；taskkill 不会终止
+      自身所在的调用链之外的进程，且打包版该 PID 即 learnflow-backend.exe。
+
+    所有 taskkill 带超时且吞异常：退出路径绝不能被外部命令挂起卡死。
+    """
+    import os
+    import subprocess
+
+    def _run(cmd, **kw) -> None:
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=10, **kw)
+        except Exception:  # noqa: BLE001  含 TimeoutExpired/FileNotFoundError
+            pass
+
+    desktop_pid = _find_parent_desktop_pid()
+    if desktop_pid:
+        _run(["taskkill", "/F", "/T", "/PID", str(desktop_pid)])
+    else:
+        _run("taskkill /F /IM LearnFlow.exe >nul 2>&1", shell=True)
+    _run(["taskkill", "/F", "/T", "/PID", str(os.getpid())])
+
+
 def _launch_installer_and_exit(installer_path: "Path") -> None:
     """唤起已下载的最新安装包界面并平稳退出当前旧版本进程，彻底释放文件锁。
 
@@ -240,6 +328,7 @@ def _launch_installer_and_exit(installer_path: "Path") -> None:
     那会让用户既没更新成功、应用也没了。
     """
     import os
+    import socket
     import subprocess
     import sys
     import threading
@@ -257,15 +346,47 @@ def _launch_installer_and_exit(installer_path: "Path") -> None:
         logger.warning("os.startfile 唤起失败，尝试调用 explorer.exe: %s", e)
         subprocess.Popen(["explorer.exe", installer_str])
 
-    # 2. 延迟 1.5 秒后主动终止旧版本前端壳与后端，释放所有文件占用
+    # 2. 主动确认旧版本已停止服务后终止，而非盲等固定秒数
     def _delayed_exit():
         import subprocess
         import sys
-        time.sleep(1.5)
+
+        # 生成管线在跑则等它收尾（最多 30s）：硬杀会截断半生成的章节与 DB 事务
+        try:
+            from app.services.generation import pipeline as _pipeline
+
+            for _ in range(30):
+                if not _pipeline.any_running():
+                    break
+                time.sleep(1)
+        except Exception:  # noqa: BLE001
+            pass
+
         if sys.platform == "win32":
-            subprocess.run("taskkill /F /IM learnflow-desktop.exe >nul 2>&1", shell=True)
-            subprocess.run("taskkill /F /IM LearnFlow.exe >nul 2>&1", shell=True)
-            subprocess.run("taskkill /F /IM learnflow-backend.exe >nul 2>&1", shell=True)
+            try:
+                _kill_update_targets()
+                # 主动确认后端健康检查消失（最多 10s），而非固定 sleep。
+                # 打包版上一步 taskkill /T 已把本进程带走，轮询随进程消亡（属预期）；
+                # 存活到这里说明后端不在壳进程树下（如开发模式），等它真正失联，
+                # 超时照旧强杀兜底
+                deadline = time.time() + 10
+                while time.time() < deadline:
+                    try:
+                        with socket.create_connection(("127.0.0.1", app_settings.port), timeout=0.5):
+                            time.sleep(0.3)  # 端口仍可连 = 后端还在服务，继续等
+                    except OSError:
+                        break  # 健康检查消失：后端确已停止
+                for _cmd in (
+                    "taskkill /F /IM LearnFlow.exe >nul 2>&1",
+                    "taskkill /F /IM learnflow-backend.exe >nul 2>&1",
+                ):
+                    try:
+                        subprocess.run(_cmd, shell=True, timeout=10)
+                    except Exception:  # noqa: BLE001
+                        pass
+            except Exception:  # noqa: BLE001
+                # 清理链路任何一步出问题都不能阻止退出（否则旧版残留锁死安装目录）
+                logger.exception("旧版本退出清理失败，仍将强制退出")
         # sys.exit 在非主线程只结束本线程（开发模式后端会存活锁文件），必须硬退出进程
         os._exit(0)
 
@@ -275,31 +396,19 @@ def _launch_installer_and_exit(installer_path: "Path") -> None:
 
 
 def _allowed_download_hosts() -> set[str]:
-    """下载源域名白名单：官方 GitHub 域 + 已配置镜像源的域。
+    """下载源域名白名单：仅官方 GitHub 域。
 
     该接口执行下载并唤起安装包，direct_url 不做白名单校验就是任意下载执行链
-    （回环免令牌 + GET，浏览器任意页面均可触发）。
+    （回环免令牌 + GET，浏览器任意页面均可触发）。镜像域不再参与安装包下载
+    ——完整性锚点是 GitHub API 官方 digest，镜像路径可能被整体替换。
     """
-    from urllib.parse import urlparse
-
-    hosts = {
+    return {
         "github.com",
         "api.github.com",
         "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
         "codeload.github.com",
     }
-    try:
-        for prefix in get_ordered_mirror_prefixes():
-            try:
-                host = urlparse(prefix if "://" in prefix else f"https://{prefix}").hostname
-                if host:
-                    hosts.add(host.lower())
-            except Exception:  # noqa: BLE001
-                continue
-    except Exception:  # noqa: BLE001
-        pass
-    return hosts
 
 
 def _sanitize_version(version: str) -> str:
@@ -317,24 +426,21 @@ def _canonical_exe(repo: str, clean_v: str) -> str:
 
 
 def _direct_url_allowed(candidate: str, raw_github_exe: str) -> bool:
-    """direct_url 只接受 canonical 安装包 URL 本身或其镜像前缀变体。
+    """direct_url 只接受 canonical 官方安装包 URL 本身。
 
     仅按域名白名单校验不够：github.com 域下任意仓库/路径的 exe 也会被下载执行，
     等于把"更新"变成任意下载执行链（回环免令牌，本地任意网页可触发）。
+    镜像前缀变体一律不再参与安装包下载（镜像仅保留为 check_update 的
+    latest.json 回退源），故只放行官方 canonical URL。
     """
-    if candidate == raw_github_exe:
-        return True
-    for prefix in get_ordered_mirror_prefixes():
-        if prefix and candidate == f"{prefix}{raw_github_exe}":
-            return True
-    return candidate == apply_mirror(raw_github_exe)
+    return candidate == raw_github_exe
 
 
 async def _fetch_release_asset_sha256(repo: str, tag: str, filename: str) -> str | None:
-    """尽力从 GitHub API 读取该 release 资产的官方 sha256（digest 字段）。
+    """从 GitHub API 读取该 release 资产的官方 sha256（digest 字段）。
 
-    拿不到（API 不可达/限流/老资产无 digest）时返回 None，调用方按"无法校验"放行——
-    镜像场景下 GitHub API 常不可达，硬校验会砍掉全部镜像更新路径。
+    拿不到（API 不可达/限流/老资产无 digest）时返回 None，调用方 fail-closed
+    终止安装：安装包要被下载执行，无官方 digest 可比对时绝不放行下载。
     """
     url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
     headers = {"User-Agent": "LearnFlow-Update-Check", "Accept": "application/vnd.github+json"}
@@ -352,8 +458,59 @@ async def _fetch_release_asset_sha256(repo: str, tag: str, filename: str) -> str
     return None
 
 
+async def _stream_installer(url: str, installer_path: "Path", headers: dict[str, str]):
+    """单源下载安装包（流式，产出 SSE 进度事件行；异常上抛由调用方换源）。
+
+    超限防护：content-length 超体积上限直接报错换源（不落盘）；落盘超过上限
+    中断并删除半截文件。单连接卡死由 httpx 180s 超时兜底，整体时长由调用方
+    的 deadline（经 asyncio.wait_for）约束。
+    """
+    import json
+
+    async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
+        async with client.stream("GET", url, headers=headers) as resp:
+            if resp.status_code != 200:
+                raise RuntimeError(f"HTTP {resp.status_code}")
+
+            total = int(resp.headers.get("content-length", 0))
+            if total > _INSTALLER_MAX_BYTES:
+                raise RuntimeError(
+                    f"安装包体积超过 {_INSTALLER_MAX_BYTES // (1024 * 1024)}MB 上限"
+                    f"（{total // (1024 * 1024)}MB），已跳过该源"
+                )
+            downloaded = 0
+            t_last = time.time()
+            bytes_last = 0
+            speed_mb = 0.0
+
+            with open(installer_path, "wb") as f:
+                async for chunk in resp.aiter_bytes(chunk_size=128 * 1024):
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if downloaded > _INSTALLER_MAX_BYTES:
+                        raise RuntimeError(
+                            f"下载超过 {_INSTALLER_MAX_BYTES // (1024 * 1024)}MB 上限，已中断并删除半截文件"
+                        )
+
+                    now = time.time()
+                    if now - t_last >= 0.25:
+                        dt = now - t_last
+                        speed_mb = round(((downloaded - bytes_last) / dt) / (1024 * 1024), 2)
+                        t_last = now
+                        bytes_last = downloaded
+                        pct = round((downloaded / total) * 100) if total > 0 else None
+                        yield f"data: {json.dumps({'type': 'progress', 'downloaded': downloaded, 'total': total, 'percent': pct, 'speed_mb': speed_mb}, ensure_ascii=False)}\n\n"
+
+
 async def stream_download_and_install(target_version: str, direct_url: str | None = None):
-    """通过加速镜像源流式下载最新安装包，向前端实时推送进度，并在完成后以静默模式触发安装。"""
+    """流式下载官方最新安装包，向前端实时推送进度，并在完成后以静默模式触发安装。
+
+    完整性 fail-closed：仅当能从 GitHub API 取到官方 sha256 时才允许下载与校验；
+    镜像不再参与安装包下载（仅保留为 check_update 的 latest.json 回退源）。
+    """
+    import hashlib
     import json
     import tempfile
     from pathlib import Path
@@ -365,12 +522,19 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
     except ValueError as e:
         yield f"data: {json.dumps({'type': 'error', 'detail': str(e)}, ensure_ascii=False)}\n\n"
         return
+
+    # 防降级/重装：目标版本必须高于当前版本（相等也拒绝）
+    if _ver_tuple(f"v{clean_v}") <= _ver_tuple(APP_VERSION):
+        detail = f"目标版本 v{clean_v} 不高于当前版本 {APP_VERSION}，已拒绝安装"
+        logger.warning(detail)
+        yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+        return
+
+    # 域名白名单校验：direct_url 只接受官方域
+    allowed_hosts = _allowed_download_hosts()
     raw_github_exe = _canonical_exe(repo, clean_v)
 
-    # 域名白名单校验：direct_url 只接受官方域或已配置镜像域
-    allowed_hosts = _allowed_download_hosts()
-
-    # 确定候选下载 URL 列表（首选用已加速链接或当前最优镜像，随后按测速优先级排序）
+    # 确定候选下载 URL 列表：仅官方 canonical 安装包 URL（direct_url 校验通过即与之相同）
     urls_to_try: list[str] = []
     if direct_url and direct_url.strip():
         candidate = direct_url.strip()
@@ -384,15 +548,8 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
             urls_to_try.append(candidate)
         else:
             logger.warning("拒绝白名单或路径校验外的 direct_url: %s", candidate)
-
-    active_accelerated = apply_mirror(raw_github_exe)
-    if active_accelerated not in urls_to_try:
-        urls_to_try.append(active_accelerated)
-
-    for prefix in get_ordered_mirror_prefixes():
-        p_url = f"{prefix}{raw_github_exe}" if prefix else raw_github_exe
-        if p_url not in urls_to_try:
-            urls_to_try.append(p_url)
+    if raw_github_exe not in urls_to_try:
+        urls_to_try.append(raw_github_exe)
 
     temp_dir = Path(tempfile.gettempdir()) / "LearnFlow_Update"
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -408,58 +565,54 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
             pass
     # 文件名带随机后缀：并发触发两次安装互不覆盖、互不删对方的在途文件
     installer_path = temp_dir / f"LearnFlow_{clean_v}_{uuid.uuid4().hex[:8]}_x64-setup.exe"
+
+    # 完整性校验 fail-closed：取不到官方 sha256（API 不可达/限流/资产无 digest）
+    # 时直接终止，绝不下载执行无法验证完整性的安装包
     expected_sha256 = await _fetch_release_asset_sha256(repo, f"v{clean_v}", f"LearnFlow_{clean_v}_x64-setup.exe")
+    if not expected_sha256:
+        detail = "无法验证安装包完整性，请稍后重试或使用应用内更新（Tauri updater）"
+        logger.error("拒绝安装 v%s：%s", clean_v, detail)
+        yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+        return
 
     headers = {"User-Agent": "LearnFlow-InAppUpdater/1.0"}
     success = False
     last_error = ""
+    dl_deadline = time.monotonic() + _DOWNLOAD_TOTAL_TIMEOUT
 
     for url in urls_to_try:
+        if time.monotonic() > dl_deadline:
+            last_error = "下载总时长超过 20 分钟上限，已中止"
+            break
         try:
             logger.info("尝试从下载源拉取安装包: %s", url)
             yield f"data: {json.dumps({'type': 'start', 'url': url, 'message': '正在建立加速通道…'}, ensure_ascii=False)}\n\n"
 
-            async with httpx.AsyncClient(timeout=180.0, follow_redirects=True) as client:
-                async with client.stream("GET", url, headers=headers) as resp:
-                    if resp.status_code != 200:
-                        raise RuntimeError(f"HTTP {resp.status_code}")
-
-                    total = int(resp.headers.get("content-length", 0))
-                    downloaded = 0
-                    t_last = time.time()
-                    bytes_last = 0
-                    speed_mb = 0.0
-
-                    with open(installer_path, "wb") as f:
-                        async for chunk in resp.aiter_bytes(chunk_size=128 * 1024):
-                            if not chunk:
-                                continue
-                            f.write(chunk)
-                            downloaded += len(chunk)
-
-                            now = time.time()
-                            if now - t_last >= 0.25:
-                                dt = now - t_last
-                                speed_mb = round(((downloaded - bytes_last) / dt) / (1024 * 1024), 2)
-                                t_last = now
-                                bytes_last = downloaded
-                                pct = round((downloaded / total) * 100) if total > 0 else None
-                                yield f"data: {json.dumps({'type': 'progress', 'downloaded': downloaded, 'total': total, 'percent': pct, 'speed_mb': speed_mb}, ensure_ascii=False)}\n\n"
+            gen = _stream_installer(url, installer_path, headers)
+            try:
+                while True:
+                    remaining = dl_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("下载总时长超过 20 分钟上限，已中止")
+                    try:
+                        event = await asyncio.wait_for(gen.__anext__(), timeout=remaining)
+                    except StopAsyncIteration:
+                        break
+                    yield event
+            finally:
+                await gen.aclose()
 
             if installer_path.exists() and installer_path.stat().st_size > 10 * 1024 * 1024:
-                if expected_sha256:
-                    import hashlib
-
-                    h = hashlib.sha256()
-                    with open(installer_path, "rb") as vf:
-                        for block in iter(lambda: vf.read(1024 * 1024), b""):
-                            h.update(block)
-                    if h.hexdigest() != expected_sha256:
-                        installer_path.unlink(missing_ok=True)
-                        last_error = "安装包 sha256 校验失败（来源不可信），已拒绝安装"
-                        logger.error(last_error)
-                        yield f"data: {json.dumps({'type': 'retry', 'message': last_error}, ensure_ascii=False)}\n\n"
-                        continue
+                h = hashlib.sha256()
+                with open(installer_path, "rb") as vf:
+                    for block in iter(lambda: vf.read(1024 * 1024), b""):
+                        h.update(block)
+                if h.hexdigest() != expected_sha256:
+                    installer_path.unlink(missing_ok=True)
+                    last_error = "安装包 sha256 校验失败（来源不可信），已拒绝安装"
+                    logger.error(last_error)
+                    yield f"data: {json.dumps({'type': 'retry', 'message': last_error}, ensure_ascii=False)}\n\n"
+                    continue
                 success = True
                 break
             else:
@@ -467,8 +620,9 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
                 logger.warning(last_error)
         except Exception as e:
             last_error = str(e)
-            logger.warning("下载源 %s 失败: %s，正在切换下一个加速源…", url, e)
-            yield f"data: {json.dumps({'type': 'retry', 'message': '当前线路响应较慢，正在切换下一个加速源…'}, ensure_ascii=False)}\n\n"
+            installer_path.unlink(missing_ok=True)  # 超限/中断的半截文件不留
+            logger.warning("下载源 %s 失败: %s，正在切换下一个下载源…", url, e)
+            yield f"data: {json.dumps({'type': 'retry', 'message': '当前线路响应较慢，正在切换下一个下载源…'}, ensure_ascii=False)}\n\n"
 
     if not success:
         yield f"data: {json.dumps({'type': 'error', 'detail': f'安装包下载失败：{last_error}'}, ensure_ascii=False)}\n\n"

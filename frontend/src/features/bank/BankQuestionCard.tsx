@@ -5,6 +5,7 @@ import renderMathInElement from "katex/contrib/auto-render";
 import { Badge, Button, ErrorText, Spinner } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
 import { api } from "../../lib/api";
+import { createStreamFlusher } from "../../lib/streamFlusher";
 import type { BankAttemptResult, BankQuestion } from "../../lib/types";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
@@ -127,6 +128,11 @@ export default function BankQuestionCard({
     setAiError("");
 
     let acc = "";
+    // 流式增量缓冲：delta 只进 flusher，120ms 批量刷新进 state，避免每 token 全量重渲染
+    const flusher = createStreamFlusher((text) => {
+      setAiText(text);
+      onAiExplained?.(text);
+    });
     explainAbortRef.current?.abort();
     const ctrl = new AbortController();
     explainAbortRef.current = ctrl;
@@ -138,13 +144,13 @@ export default function BankQuestionCard({
           if (ev.type === "delta" && ev.text) {
             setAiThinking(false);
             acc += ev.text;
-            setAiText(acc);
-            onAiExplained?.(acc);
+            flusher.push(acc);
           } else if (ev.type === "done") {
+            flusher.flushNow();
             setAiThinking(false);
             setAiStreaming(false);
-            onAiExplained?.(acc);
           } else if (ev.type === "error") {
+            flusher.flushNow();
             setAiThinking(false);
             setAiStreaming(false);
             setAiError(ev.detail || "AI 解答遇到异常，请稍后重试");
@@ -153,6 +159,7 @@ export default function BankQuestionCard({
         ctrl.signal
       );
     } catch (e) {
+      flusher.flushNow();
       if ((e as Error).name !== "AbortError") {
         setAiThinking(false);
         setAiStreaming(false);
@@ -297,6 +304,7 @@ export default function BankQuestionCard({
                     <div className="mt-2 text-gray-800 dark:text-gray-200 leading-relaxed overflow-x-auto">
                       <MarkdownLite
                         text={aiText}
+                        deferMath={aiStreaming}
                         className="drill-ai-content prose prose-sm dark:prose-invert max-w-none leading-relaxed"
                       />
                       {aiStreaming && (

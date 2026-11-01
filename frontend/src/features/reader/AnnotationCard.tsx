@@ -8,6 +8,7 @@ import { streamSSE } from "../../lib/sse";
 import type { Annotation, AnnotationColor, ChatSSEEvent } from "../../lib/types";
 import { Button, ConfirmDialog, Spinner, Textarea } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
+import { createStreamFlusher } from "../../lib/streamFlusher";
 import { HL_COLOR_KEYS, useHlColors } from "./colors";
 import { useFontSize } from "../../lib/fontSize";
 
@@ -46,6 +47,8 @@ export default function AnnotationCard({
   >([]);
   const [isThinking, setIsThinking] = useState(false);
   const [streaming, setStreaming] = useState("");
+  // 流式期间跳过 KaTeX 排版（每个 120ms 帧都排公式开销过大），结束后补一次最终渲染
+  const [mathDeferred, setMathDeferred] = useState(false);
   const [streamErr, setStreamErr] = useState("");
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState(annotation.note ?? "");
@@ -119,12 +122,13 @@ export default function AnnotationCard({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [displayMsgs.length, isThinking, streaming]);
 
-  // 流式气泡：innerHTML 变化后补渲染公式
+  // 流式气泡：innerHTML 变化后补渲染公式（流式期间 defer 跳过，结束/中断后对最终文本渲染一次）
   useEffect(() => {
+    if (mathDeferred) return;
     if (streamRef.current) {
       renderMathInElement(streamRef.current, { delimiters: KATEX_DELIMITERS, throwOnError: false });
     }
-  }, [streaming]);
+  }, [streaming, mathDeferred]);
 
   const send = async () => {
     const content = input.trim();
@@ -143,6 +147,9 @@ export default function AnnotationCard({
     }, 30);
 
     let acc = "";
+    // 流式增量缓冲：delta 只进 flusher，120ms 批量刷新进 state，避免每 token 全量重渲染
+    const flusher = createStreamFlusher((text) => setStreaming(text));
+    setMathDeferred(true);
     sseAbortRef.current?.abort();
     const ctrl = new AbortController();
     sseAbortRef.current = ctrl;
@@ -160,8 +167,9 @@ export default function AnnotationCard({
           } else if (ev.type === "delta" && ev.text) {
             setIsThinking(false);
             acc += ev.text;
-            setStreaming(acc);
+            flusher.push(acc);
           } else if (ev.type === "done") {
+            flusher.cancel(); // 最终全文走 localMsgs 的 MarkdownLite 渲染（含公式），流式气泡直接清空
             const assistantText = acc || ev.content || "";
             if (assistantText) {
               setLocalMsgs((prev) => [
@@ -174,9 +182,12 @@ export default function AnnotationCard({
               ]);
             }
             setStreaming("");
+            setMathDeferred(false);
             setIsThinking(false);
             queryClient.invalidateQueries({ queryKey: ["conv", conversationId] });
           } else if (ev.type === "error") {
+            flusher.flushNow(); // 半截回答保留在气泡里，对最终文本补一次公式渲染
+            setMathDeferred(false);
             setIsThinking(false);
             setStreamErr(ev.detail ?? "生成失败，请重试");
             if (!acc) {
@@ -187,6 +198,9 @@ export default function AnnotationCard({
         ctrl.signal
       );
     } catch (e) {
+      // 断流/中断：把缓冲里未刷新的尾部刷出来，保持气泡显示到最新已收内容
+      flusher.flushNow();
+      setMathDeferred(false);
       if ((e as Error).name !== "AbortError") {
         setIsThinking(false);
         setStreamErr(`网络错误：${(e as Error).message}`);
@@ -194,6 +208,7 @@ export default function AnnotationCard({
     } finally {
       // 服务端干净关流但没发 done/error 事件时（如静默断连），不能永久卡在思考态
       setIsThinking(false);
+      setMathDeferred(false);
     }
   };
 

@@ -4,7 +4,13 @@
 - 作答中（BankQuestionOut）：永不下发答案与解析
 - 错题复习（BankWrongQuestionOut）：含答案原文与解析
 """
-from pydantic import BaseModel, Field, field_validator
+from typing import Annotated
+
+from pydantic import BaseModel, Field, StringConstraints, field_validator
+
+# 关键文本限长：题面 20k、选项单条 2k
+MAX_TITLE_LENGTH = 20_000
+MAX_OPTION_LENGTH = 2_000
 
 
 class BankSkippedRow(BaseModel):
@@ -85,15 +91,15 @@ class BankUpdateIn(BaseModel):
 
 class ParsedTextQuestionItem(BaseModel):
     qtype: str = "single"  # single | multi | judge
-    title: str
-    options: list[str] = []
+    title: Annotated[str, StringConstraints(max_length=MAX_TITLE_LENGTH)]
+    options: list[Annotated[str, StringConstraints(max_length=MAX_OPTION_LENGTH)]] = []
     answer: str = "A"
     difficulty: str = "普通"
     explanation: str = ""
 
 
 class PasteParseRequest(BaseModel):
-    text: str
+    text: Annotated[str, StringConstraints(max_length=400_000)]
 
 
 class PasteParseResponse(BaseModel):

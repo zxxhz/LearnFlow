@@ -1,5 +1,6 @@
 """OpenAI 兼容协议适配器：智谱 GLM / DeepSeek / OpenAI / Moonshot 等均可接入。"""
 import json
+import logging
 import time
 from typing import AsyncIterator
 
@@ -22,6 +23,35 @@ from app.services.llm.errors import (
     LLMServiceError,
 )
 
+logger = logging.getLogger(__name__)
+
+# AsyncOpenAI 客户端按 (base_url, api_key) 模块级缓存复用，避免每次调用重建连接池。
+# 键含 api_key：密钥更换时自然命中新客户端（旧连接由 SDK 侧 GC）。
+# 单用户桌面应用键空间极小（主配置 + 两个场景槽位），无需淘汰策略；
+# 仅缓存默认超时的客户端——"测试连接"等短超时请求每次独立新建，避免污染缓存。
+_openai_clients: dict[tuple[str, str], AsyncOpenAI] = {}
+
+
+def _get_client(base_url: str, api_key: str, request_timeout: float | None) -> AsyncOpenAI:
+    import httpx
+
+    if request_timeout is None:
+        key = (base_url or "", api_key or "EMPTY")
+        cached = _openai_clients.get(key)
+        if cached is not None:
+            return cached
+
+    total = request_timeout if request_timeout is not None else 180
+    client = AsyncOpenAI(
+        base_url=base_url or None, api_key=api_key or "EMPTY",
+        # 连接超时独立收紧 + SDK 默认重试关掉：黑洞地址否则要挂满 3×180s
+        timeout=httpx.Timeout(total, connect=10.0),
+        max_retries=1,
+    )
+    if request_timeout is None:
+        _openai_clients[(base_url or "", api_key or "EMPTY")] = client
+    return client
+
 
 def translate_openai_error(e: Exception) -> Exception:
     if isinstance(e, APIConnectionError):
@@ -34,21 +64,15 @@ def translate_openai_error(e: Exception) -> Exception:
         return LLMServiceError(str(e))
     if isinstance(e, LLMServiceError):
         return e
-    return LLMServiceError(repr(e))
+    # 未知错误：repr 只进日志（可能带密钥等内部细节），对外给类型名 + 简述
+    logger.error("unrecognized LLM error: %r", e)
+    return LLMServiceError(f"{type(e).__name__}: {e}")
 
 
 class OpenAICompatAdapter(LLMAdapter):
     def __init__(self, base_url: str, api_key: str, model: str, scene: str = "chat",
                  request_timeout: float | None = None):
-        import httpx
-
-        total = request_timeout if request_timeout is not None else 180
-        self.client = AsyncOpenAI(
-            base_url=base_url or None, api_key=api_key or "EMPTY",
-            # 连接超时独立收紧 + SDK 默认重试关掉：黑洞地址否则要挂满 3×180s
-            timeout=httpx.Timeout(total, connect=10.0),
-            max_retries=1,
-        )
+        self.client = _get_client(base_url, api_key, request_timeout)
         self.model = model
         self.scene = scene
 
@@ -173,6 +197,10 @@ class OpenAICompatAdapter(LLMAdapter):
             )
         except Exception as e:
             if isinstance(e, BadRequestError):
+                # 与非流式 BadRequest 回退对齐：stream_options 与 response_format 都剥掉
+                # （剥掉 stream_options 意味着拿不到 usage，本次调用的用量统计丢失）
+                kwargs.pop("stream_options", None)
+                kwargs.pop("response_format", None)
                 try:
                     stream = await self.client.chat.completions.create(**kwargs, stream=True)
                 except Exception as e2:

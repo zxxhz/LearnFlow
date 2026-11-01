@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +13,7 @@ from app.schemas.exercise import (
 from app.services import exercise as exercise_service
 from app.services.llm.errors import LLMError
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/exercises", tags=["exercise"])
 
 
@@ -74,8 +77,14 @@ async def generate_bridge(exercise_id: str, db: AsyncSession = Depends(get_db)):
         return await exercise_service._attach_meta(db, bridges)
     except LookupError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"生成支线小题失败：{e}") from e
+    except LLMError:
+        # LLM 业务错误（未配置/限流等）交全局处理器给中文提示
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        logger.exception("生成支线小题失败: exercise=%s", exercise_id)
+        raise HTTPException(status_code=500, detail="生成支线小题失败，请稍后重试")
 
 
 @router.delete("/{exercise_id}")

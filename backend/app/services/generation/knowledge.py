@@ -1,6 +1,11 @@
 """章节输出解析：正文 + <LEARNFLOW_META> 分隔符后的 JSON 元数据（PRD 实现备注 5）。"""
-import json
+import logging
+
 from pydantic import BaseModel
+
+from app.services.llm.base import extract_json
+
+logger = logging.getLogger(__name__)
 
 META_SEPARATOR = "<LEARNFLOW_META>"
 
@@ -27,16 +32,12 @@ def parse_chapter_output(raw: str) -> tuple[str, ChapterMeta | None]:
     """返回 (正文 markdown, 元数据|None)。元数据解析失败不致命。"""
     if META_SEPARATOR not in raw:
         return raw.strip(), None
-    body, _, meta_part = raw.partition(META_SEPARATOR)
+    # rfind 取最后一次出现：正文里若碰巧出现分隔符字样，不会截断正文
+    body, meta_part = raw.rsplit(META_SEPARATOR, 1)
     meta_part = meta_part.strip()
-    # 兼容模型把 JSON 包进代码块的情况（```json / ```JSON / ```Json 均可能出现）
-    if meta_part.startswith("```"):
-        meta_part = meta_part.strip("`")
-        if meta_part[:4].lower() == "json":
-            meta_part = meta_part[4:]
-        meta_part = meta_part.strip()
     try:
-        meta = ChapterMeta.model_validate(json.loads(meta_part))
+        meta = ChapterMeta.model_validate(extract_json(meta_part))
     except Exception:
+        logger.warning("章节 META 解析失败（原文前 200 字符）：%r", meta_part[:200])
         return body.strip(), None
     return body.strip(), meta

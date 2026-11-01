@@ -2,8 +2,9 @@
 
 红线措施（Windows 实现）：
 - 时间限制：wall-clock 超时 + 进程树终止（taskkill /T /F，含子进程）
-- 内存限制：Job Object PROCESS_MEMORY 上限 256MB
+- 内存限制：Job Object 单进程（PROCESS_MEMORY）256MB / Job 全体（JOB_MEMORY）512MB
 - 进程数限制：Job Object ActiveProcessLimit，防 fork 炸弹
+- 启动时序：CREATE_SUSPENDED 创建 → 赋入 Job → 恢复主线程（消除逃逸窗口）
 - 孤儿清理：KILL_ON_JOB_CLOSE，句柄关闭即全杀
 - 工作目录：一次性临时目录，运行结束销毁；stdin 接 DEVNULL（防 input() 挂起）
 - 输出截断：stdout/stderr 各保留末尾 64K 字符
@@ -46,12 +47,22 @@ _exec_lock = asyncio.Lock()  # 全局串行：本地单用户，避免资源风�
 _MAX_OUTPUT_BYTES = 64 * 1024 * 1024
 
 if _IS_WINDOWS:
+    # use_last_error=True：ctypes 在每次调用后把 GetLastError 存入线程私有槽，
+    # 经 ctypes.get_last_error() 读取，避免错误码被中间 Python 调用覆盖
+    import ctypes
+    from ctypes import wintypes
+
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
     # 沙箱子进程继承此错误模式：缺 DLL 等加载失败不再弹「系统错误」模态框
     # （曾致 cc1plus 找不到 libwinpthread-1.dll 时弹窗挂起），而是直接以退出码失败；
-    # NOGPFAULTERRORBOX 让用户代码段错误时的 WER 崩溃对话框一并静默
-    import ctypes
-
-    ctypes.windll.kernel32.SetErrorMode(0x0001 | 0x0002)  # FAILCRITICALERRORS | NOGPFAULTERRORBOX
+    # NOGPFAULTERRORBOX 让用户代码段错误时的 WER 崩溃对话框一并静默。
+    # 先 GetErrorMode 取当前值再 OR 合并，避免覆盖宿主进程已设置的其他错误模式位
+    _k32.GetErrorMode.restype = wintypes.UINT
+    _k32.GetErrorMode.argtypes = []
+    _k32.SetErrorMode.restype = wintypes.UINT
+    _k32.SetErrorMode.argtypes = [wintypes.UINT]
+    _k32.SetErrorMode(_k32.GetErrorMode() | 0x0001 | 0x0002)  # FAILCRITICALERRORS | NOGPFAULTERRORBOX
 
 
 def _tail(data: bytes) -> str:
@@ -111,7 +122,7 @@ def _windows_job():
             ("PeakJobMemoryUsed", ctypes.c_size_t),
         ]
 
-    k32 = ctypes.windll.kernel32
+    k32 = _k32
     # 显式声明参数/返回类型：默认按 C int（32 位）转换，HANDLE 语义上不安全
     k32.CreateJobObjectW.restype = wintypes.HANDLE
     k32.CreateJobObjectW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
@@ -120,28 +131,103 @@ def _windows_job():
     k32.CloseHandle.argtypes = [wintypes.HANDLE]
     job = k32.CreateJobObjectW(None, None)
     if not job:
+        logger.warning(
+            f"CreateJobObjectW 失败（err={ctypes.get_last_error()}）：本次运行未启用内存/进程红线，仅超时与输出量兜底"
+        )
         return None
     limits = EXTENDED_LIMITS()
     limits.BasicLimitInformation.LimitFlags = (
         0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         | 0x100  # JOB_OBJECT_LIMIT_PROCESS_MEMORY
+        | 0x200  # JOB_OBJECT_LIMIT_JOB_MEMORY（Job 全体进程提交内存总和上限，防多进程摊薄单进程限额）
         | 0x8  # JOB_OBJECT_LIMIT_ACTIVE_PROCESS（0x4 是 JOB_TIME，且未设 Job 时间会 err=87 整体失败）
     )
     limits.ProcessMemoryLimit = MEMORY_LIMIT_BYTES
+    # Job 级总内存 = 2× 单进程红线（256MB）：用户代码可 spawn 少量子进程，
+    # 总提交内存超过该值时整个 Job 内分配失败（优先于单进程上限触发兜底）
+    limits.JobMemoryLimit = 2 * MEMORY_LIMIT_BYTES
     limits.BasicLimitInformation.ActiveProcessLimit = 64
     if not k32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
-        err = ctypes.get_last_error() if hasattr(ctypes, "get_last_error") else k32.GetLastError()
-        logger.error(f"SetInformationJobObject 失败（err={err}）：沙箱内存/进程红线全部失效，仍以超时兜底继续")
+        err = ctypes.get_last_error()
+        logger.warning(
+            f"SetInformationJobObject 失败（err={err}）：本次运行未启用内存/进程红线，仅超时与输出量兜底"
+        )
         k32.CloseHandle(job)
         return None
     return job, k32
 
 
-def _assign_to_job(job_handle, k32, proc: subprocess.Popen) -> None:
+def _assign_to_job(job_handle, k32, proc: subprocess.Popen) -> bool:
+    """把进程赋入 Job。返回是否成功；失败时降级运行（由调用方在 stderr 里标注）。"""
     try:
-        k32.AssignProcessToJobObject(job_handle, int(proc._handle))  # noqa: SLF001
-    except Exception:  # noqa: BLE001
-        logger.warning("AssignProcessToJobObject failed；降级为无内存限制运行")
+        if k32.AssignProcessToJobObject(job_handle, int(proc._handle)):  # noqa: SLF001
+            return True
+        logger.warning(
+            f"AssignProcessToJobObject 失败（err={ctypes.get_last_error()}）；本次运行未启用内存/进程红线"
+        )
+        return False
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"AssignProcessToJobObject 异常（{e}）；本次运行未启用内存/进程红线")
+        return False
+
+
+_TH32CS_SNAPTHREAD = 0x4
+_THREAD_SUSPEND_RESUME = 0x0002
+_CREATE_SUSPENDED = 0x4
+
+
+def _resume_suspended_process(pid: int) -> bool:
+    """恢复 CREATE_SUSPENDED 启动的进程（经 Toolhelp 快照按 pid 枚举其线程）。
+
+    CREATE_SUSPENDED 刚创建时进程内只有主线程一个线程，按 pid 枚举全部线程
+    逐个 ResumeThread 即等价于恢复主线程。返回是否至少成功恢复了一个线程；
+    调用方对 False 必须终止进程，绝不能留下挂起进程。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class THREADENTRY32(ctypes.Structure):
+        """Toolhelp 线程快照条目。"""
+
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ThreadID", wintypes.DWORD),
+            ("th32OwnerProcessID", wintypes.DWORD),
+            ("tpBasePri", wintypes.LONG),
+            ("tpDeltaPri", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+        ]
+
+    k32 = _k32
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Thread32First.argtypes = [wintypes.HANDLE, ctypes.POINTER(THREADENTRY32)]
+    k32.Thread32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(THREADENTRY32)]
+    k32.OpenThread.restype = wintypes.HANDLE
+    k32.OpenThread.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.ResumeThread.restype = wintypes.DWORD
+    k32.ResumeThread.argtypes = [wintypes.HANDLE]
+
+    snap = k32.CreateToolhelp32Snapshot(_TH32CS_SNAPTHREAD, 0)
+    if not snap or snap == ctypes.c_void_p(-1).value:
+        return False
+    resumed = False
+    te = THREADENTRY32()
+    te.dwSize = ctypes.sizeof(te)
+    ok = bool(k32.Thread32First(snap, ctypes.byref(te)))
+    while ok:
+        if te.th32OwnerProcessID == pid:
+            th = k32.OpenThread(_THREAD_SUSPEND_RESUME, False, te.th32ThreadID)
+            if th:
+                # 返回 (DWORD)-1 才是失败；0 表示本就未挂起（非主线程残留，同样放行）
+                if k32.ResumeThread(th) != 0xFFFFFFFF:
+                    resumed = True
+                k32.CloseHandle(th)
+        te.dwSize = ctypes.sizeof(te)
+        ok = bool(k32.Thread32Next(snap, ctypes.byref(te)))
+    k32.CloseHandle(snap)
+    return resumed
 
 
 def _run_process(
@@ -150,6 +236,9 @@ def _run_process(
     """运行进程，返回 (stdout_tail, stderr_tail, exit_code|None, timed_out)。env=None 继承当前环境。"""
     with tempfile.TemporaryFile() as out_f, tempfile.TemporaryFile() as err_f:
         job_ctx = _windows_job() if _IS_WINDOWS else None
+        degraded_notes: list[str] = []
+        if _IS_WINDOWS and job_ctx is None:
+            degraded_notes.append("[LearnFlow] 本次运行未启用内存/进程红线（Job Object 创建失败），仅超时与输出量兜底。")
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -158,17 +247,35 @@ def _run_process(
                 stdout=out_f,
                 stderr=err_f,
                 stdin=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0,
+                # CREATE_SUSPENDED（0x4）：主线程先挂起，赋入 Job 后再恢复，
+                # 消除「进程已跑、尚未进 Job」的逃逸窗口
+                creationflags=(subprocess.CREATE_NO_WINDOW | _CREATE_SUSPENDED) if _IS_WINDOWS else 0,
             )
         except BaseException:
             if job_ctx:  # Popen 失败时没人接手 job 句柄，必须就地关闭（KILL_ON_JOB_CLOSE 兜底）
-                _jh, _k32 = job_ctx
-                _k32.CloseHandle(_jh)
+                _jh, _kh = job_ctx
+                _kh.CloseHandle(_jh)
             raise
         job_handle = None
         if job_ctx:
             job_handle, k32 = job_ctx
-            _assign_to_job(job_handle, k32, proc)
+            if not _assign_to_job(job_handle, k32, proc):
+                degraded_notes.append("[LearnFlow] 本次运行未启用内存/进程红线（进程未能加入 Job Object），仅超时与输出量兜底。")
+        if _IS_WINDOWS:
+            # 赋入 Job 后立即恢复主线程；快照偶发失败重试几次，
+            # 彻底失败必须终止——绝不能留下挂起进程（用户会看到"运行卡死"）
+            resumed = False
+            for _ in range(3):
+                if _resume_suspended_process(proc.pid):
+                    resumed = True
+                    break
+                time.sleep(0.05)
+            if not resumed:
+                _kill_tree(proc)
+                if job_handle:
+                    k32.TerminateJobObject(job_handle, 0)
+                    k32.CloseHandle(job_handle)
+                raise RuntimeError("沙箱进程主线程恢复失败（ResumeThread），已终止进程")
         timed_out = False
         flood_killed = False
 
@@ -210,6 +317,8 @@ def _run_process(
                 err_tail
                 + f"\n[LearnFlow] 输出量超过 {_MAX_OUTPUT_BYTES // (1024 * 1024)}MB 上限，已强制终止。"
             ).strip()
+        if degraded_notes:
+            err_tail = "\n".join([err_tail.strip(), *degraded_notes]).strip()
         return out_tail, err_tail, proc.returncode, timed_out
 
 

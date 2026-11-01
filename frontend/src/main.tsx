@@ -15,9 +15,19 @@ if (typeof window !== "undefined") {
   const urlParams = new URLSearchParams(window.location.search);
   const token = urlParams.get("token");
   if (token) {
+    let stored = false;
     try {
       localStorage.setItem("lf_access_token", token);
+      stored = true;
     } catch {}
+    // 令牌已入 localStorage 后从地址栏抹掉 query，避免 token 残留在
+    // URL / 浏览器历史 / PWA 导航缓存键中被复制外泄；
+    // 存储写入失败时保留 URL（getAccessToken 仍会从 query 兜底读取，首跳鉴权不受影响）
+    if (stored) {
+      try {
+        window.history.replaceState(null, "", window.location.pathname + window.location.hash);
+      } catch {}
+    }
   }
 }
 

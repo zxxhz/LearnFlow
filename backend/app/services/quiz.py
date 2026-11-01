@@ -140,6 +140,28 @@ async def _delete_quiz_rows(db: AsyncSession, quiz_id: str) -> None:
     await db.execute(Exercise.__table__.delete().where(Exercise.quiz_id == quiz_id))
 
 
+async def cleanup_empty_quizzes(db: AsyncSession, quiz_ids: list[str]) -> int:
+    """清理已无任何题目的 Quiz 壳行（章节重建连带删题后遗留），返回删除数。
+
+    Quiz 无独立的 study 关联表（仅 Exercise.quiz_id 回指，作答已随题删除），无额外级联。
+    """
+    if not quiz_ids:
+        return 0
+    candidates = {q for q in quiz_ids if q}
+    if not candidates:
+        return 0
+    remaining = set(
+        await db.scalars(select(Exercise.quiz_id).where(Exercise.quiz_id.in_(candidates)))
+    )
+    removed = 0
+    for qid in candidates - remaining:
+        quiz = await db.get(Quiz, qid)
+        if quiz is not None:
+            await db.delete(quiz)
+            removed += 1
+    return removed
+
+
 async def list_quizzes(db: AsyncSession, document_id: str) -> list[QuizOut]:
     quizzes = (
         await db.scalars(

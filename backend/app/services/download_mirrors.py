@@ -280,10 +280,27 @@ async def _probe_mirror(client: httpx.AsyncClient, item: dict[str, Any], test_ta
     t0 = time.time()
     is_custom = bool(item.get("is_custom", False))
     try:
-        # 使用轻量 Range 请求或 GET 小包，超时限制 4.5s
-        resp = await client.get(url, timeout=4.5)
-        dt = (time.time() - t0) * 1000
-        if resp.status_code in (200, 206):
+        # 流式读满 64KB 即算成功并关闭连接：测速只关心首包吞吐，
+        # 整包 client.get 会把响应体全部拉完（latest.json 可能不小）且无读取上限
+        async with client.stream("GET", url, timeout=4.5) as resp:
+            if resp.status_code not in (200, 206):
+                dt = (time.time() - t0) * 1000
+                return {
+                    "id": item["id"],
+                    "name": item["name"],
+                    "prefix": item["prefix"],
+                    "desc": item["desc"],
+                    "is_custom": is_custom,
+                    "ok": False,
+                    "latency_ms": round(dt, 1),
+                    "error": f"HTTP {resp.status_code}",
+                }
+            got = 0
+            async for chunk in resp.aiter_bytes(65536):
+                got += len(chunk)
+                if got >= 65536:
+                    break
+            dt = (time.time() - t0) * 1000
             return {
                 "id": item["id"],
                 "name": item["name"],
@@ -294,16 +311,6 @@ async def _probe_mirror(client: httpx.AsyncClient, item: dict[str, Any], test_ta
                 "latency_ms": round(dt, 1),
                 "error": None,
             }
-        return {
-            "id": item["id"],
-            "name": item["name"],
-            "prefix": item["prefix"],
-            "desc": item["desc"],
-            "is_custom": is_custom,
-            "ok": False,
-            "latency_ms": round(dt, 1),
-            "error": f"HTTP {resp.status_code}",
-        }
     except Exception as e:
         dt = (time.time() - t0) * 1000
         err_msg = str(e)
@@ -334,11 +341,39 @@ async def run_speed_test(test_target: str | None = None) -> dict[str, Any]:
     all_mirrors = get_all_mirrors()
     headers = {"User-Agent": "LearnFlow-SpeedTest/1.0"}
     async with httpx.AsyncClient(follow_redirects=True, headers=headers) as client:
-        tasks = [_probe_mirror(client, item, test_target) for item in all_mirrors]
-        results = await asyncio.gather(*tasks)
+        tasks = [
+            asyncio.ensure_future(_probe_mirror(client, item, test_target))
+            for item in all_mirrors
+        ]
+        try:
+            # 整体 15s 上限：个别源挂起（TCP 半开等）不能拖住整个测速接口
+            results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=15)
+        except asyncio.TimeoutError:
+            logger.warning("下载源测速整体超时（15s），未完成的镜像按失败处理")
+            for t in tasks:
+                t.cancel()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # 排序：成功在前，且延迟从低到高排列
-    sorted_results = sorted(results, key=lambda x: (not x["ok"], x.get("latency_ms", 999999)))
+    # 归一化：gather 按任务顺序返回；异常/被取消的 probe 统一按失败记录，
+    # 防止 CancelledError 等非 dict 结果漏进下游导致 TypeError
+    normalized: list[dict[str, Any]] = []
+    for item, res in zip(all_mirrors, results):
+        if isinstance(res, dict):
+            normalized.append(res)
+            continue
+        normalized.append({
+            "id": item["id"],
+            "name": item["name"],
+            "prefix": item["prefix"],
+            "desc": item["desc"],
+            "is_custom": bool(item.get("is_custom", False)),
+            "ok": False,
+            "latency_ms": None,
+            "error": "测速超时或被取消",
+        })
+
+    # 排序：成功在前，且延迟从低到高排列（None 视为最慢）
+    sorted_results = sorted(normalized, key=lambda x: (not x["ok"], x.get("latency_ms") or 999999))
 
     fastest_id = "official"
     for r in sorted_results:

@@ -24,6 +24,8 @@ export default function CourseDetailPage() {
     queryKey: ["course", courseId],
     queryFn: () => api.courses.get(courseId!),
     enabled: !!courseId,
+    // 生成中轮询兜底：SSE 断流后进度不再永久冻结（5s 一次，生成结束自动停止）
+    refetchInterval: (query) => (query.state.data?.status === "generating" ? 5000 : false),
   });
 
   const [liveDocs, setLiveDocs] = useState<ChapterProgress[] | null>(null);
@@ -88,7 +90,11 @@ export default function CourseDetailPage() {
         queryClient.invalidateQueries({ queryKey: ["courses"] });
       }
     }, ac.signal).catch(() => {
-      /* 流结束/中断，静默；查询会兜底刷新 */
+      // 断流兜底：课程仍在生成中时强制刷新一次查询，进度不再停在旧状态
+      //（主动 abort 的不算断流，避免卸载/状态切换时的多余请求）
+      if (!ac.signal.aborted && courseId) {
+        queryClient.invalidateQueries({ queryKey: ["course", courseId] });
+      }
     });
     return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -168,7 +174,10 @@ export default function CourseDetailPage() {
         },
         ac.signal
       ).catch(() => {
-        /* 流中断静默；查询兜底刷新 */
+        // 断流兜底：单章重生成中断后强制刷新查询，章节状态不再停在「生成中」
+        if (!ac.signal.aborted && courseId) {
+          queryClient.invalidateQueries({ queryKey: ["course", courseId] });
+        }
       });
     } catch (e) {
       alert((e as Error).message);

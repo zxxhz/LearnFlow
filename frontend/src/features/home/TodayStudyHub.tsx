@@ -114,7 +114,7 @@ export function TodayStudyHub() {
             <Button
               variant="secondary"
               className="text-xs !py-1 !px-2.5 border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-900/40 shrink-0 font-medium"
-              onClick={() => navigate("/banks")}
+              onClick={() => navigate("/bank")}
             >
               前往刷题 ➔
             </Button>

@@ -1,6 +1,7 @@
 """题库刷题 API：导入（analyze/confirm）、抽轮作答、错题池、统计、删除。
 
-独立于课程体系；答案只在提交后由后端下发，抽轮列表永不含 answer/explanation。
+独立于课程体系；答案只在提交后由后端下发，抽轮列表永不含 answer/explanation；
+ai_explanation 仅在该题最近一次作答已通过时随轮下发（未答/答错不预告解析）。
 """
 import json
 import logging
@@ -45,7 +46,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/banks", tags=["bank"])
 
 
-def _question_out(q: BankQuestion) -> BankQuestionOut:
+def _question_out(q: BankQuestion, include_explanation: bool = False) -> BankQuestionOut:
+    """题目出参脱敏：ai_explanation 仅在明确允许时下发（抽轮只给已答对的题）。"""
     import json
 
     return BankQuestionOut(
@@ -55,7 +57,7 @@ def _question_out(q: BankQuestion) -> BankQuestionOut:
         title=q.title,
         options=json.loads(q.options) if q.options else [],
         difficulty=q.difficulty,
-        ai_explanation=q.ai_explanation or "",
+        ai_explanation=(q.ai_explanation or "") if include_explanation else "",
     )
 
 
@@ -151,9 +153,12 @@ async def paste_parse(body: PasteParseRequest, db: AsyncSession = Depends(get_db
             ],
             schema=PasteParseResponse,
         )
-    except Exception as e:
+    except LLMError as e:
         logger.error("paste parse failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"试题切分解析失败：{e}") from e
+        raise HTTPException(status_code=500, detail=f"试题切分解析失败：{e.message}") from e
+    except Exception as e:  # noqa: BLE001
+        logger.exception("paste parse failed")
+        raise HTTPException(status_code=500, detail="试题切分解析失败，请稍后重试") from e
 
     return parsed
 
@@ -215,9 +220,10 @@ async def list_banks(db: AsyncSession = Depends(get_db)):
     banks = (
         await db.scalars(select(QuestionBank).order_by(QuestionBank.created_at.desc()))
     ).all()
+    # 批量统计（3 条聚合查询 + 内存组装），消除逐库 bank_stats 的 N+1
+    stats_map = await bank_service.bulk_bank_stats(db, [b.id for b in banks])
     out = []
     for b in banks:
-        stats = await bank_service.bank_stats(db, b)
         out.append(
             BankOut(
                 id=b.id,
@@ -226,7 +232,7 @@ async def list_banks(db: AsyncSession = Depends(get_db)):
                 question_count=b.question_count,
                 ai_prompt=b.ai_prompt or "",
                 created_at=b.created_at,
-                stats=BankStatsOut(**stats),
+                stats=BankStatsOut(**stats_map.get(b.id, {})),
             )
         )
     return out
@@ -252,10 +258,16 @@ async def draw_round(
         else:
             detail = "题库为空"
         raise HTTPException(status_code=400, detail=detail)
+    # 已有 AI 解析仅对"答对过"的题回带（复习时可直接看），未答/答错的不预告
+    latest = await bank_service.latest_attempts(db, bank.id)
+    outs = [
+        _question_out(q, include_explanation=bool(latest.get(q.id) and latest[q.id].passed))
+        for q in questions
+    ]
     return BankRoundOut(
         bank_id=bank.id,
         mode=body.mode,
-        questions=[_question_out(q) for q in questions],
+        questions=outs,
         wrong_pool_size=pool_size,
     )
 
@@ -293,7 +305,10 @@ async def submit_attempt(
 
 @router.get("/{bank_id}/wrong", response_model=list[BankWrongQuestionOut])
 async def wrong_book(bank_id: str, db: AsyncSession = Depends(get_db)):
-    """错题池浏览（含答案与解析）：最近一次作答未通过的题，seq 升序。"""
+    """错题池浏览（含答案与解析）：最近一次作答未通过或存疑的题，seq 升序。
+
+    与 draw_round("wrong") 同口径：按内容指纹去重，同一道重复题只出现一次。
+    """
     bank = await _bank_or_404(db, bank_id)
     wrong_ids = await bank_service.wrong_question_ids(db, bank.id)
     if not wrong_ids:
@@ -305,13 +320,15 @@ async def wrong_book(bank_id: str, db: AsyncSession = Depends(get_db)):
             .order_by(BankQuestion.seq)
         )
     ).all()
+    wrong_id_set = set(wrong_ids)
+    wrong_questions = [q for q in questions if q.id in wrong_id_set]
+    # 与 services.bank.draw_round("wrong") 同款指纹去重（题库可能含完全相同的重复题）
+    unique_wrong = bank_service._dedup_question_list(wrong_questions)  # noqa: SLF001
     import json
 
     out = []
-    for q in questions:
-        if q.id not in set(wrong_ids):
-            continue
-        base = _question_out(q)
+    for q in unique_wrong:
+        base = _question_out(q, include_explanation=True)
         out.append(
             BankWrongQuestionOut(
                 **base.model_dump(),
@@ -339,9 +356,12 @@ async def polish_bank_prompt(
             db, body.prompt, body.bank_name
         )
         return BankPromptPolishOut(polished_prompt=polished)
-    except Exception as e:
+    except LLMError as e:
         logger.exception("Bank prompt polish failed")
-        raise HTTPException(status_code=500, detail=f"AI 润色失败：{e}") from e
+        raise HTTPException(status_code=500, detail=f"AI 润色失败：{e.message}") from e
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Bank prompt polish failed")
+        raise HTTPException(status_code=500, detail="AI 润色失败，请稍后重试") from e
 
 
 @router.post("/questions/{question_id}/ai-explain")
@@ -373,9 +393,9 @@ async def ai_explain_question(
             logger.warning(f"Bank explain LLM error: {e}")
             yield f"data: {json.dumps({'type': 'error', 'detail': e.message}, ensure_ascii=False)}\n\n"
             return
-        except Exception as e:  # noqa: BLE001
-            logger.exception(f"Bank explain stream error: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'detail': f'服务异常：{e}'}, ensure_ascii=False)}\n\n"
+        except Exception:  # noqa: BLE001
+            logger.exception("Bank explain stream error")
+            yield f"data: {json.dumps({'type': 'error', 'detail': '服务异常，请稍后重试'}, ensure_ascii=False)}\n\n"
             return
 
         # 流式顺利结束，持久化到 bank_questions.ai_explanation

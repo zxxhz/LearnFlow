@@ -18,7 +18,7 @@ _ALLOWED_FUNCS = frozenset(
     asin acos atan acot asec acsc atan2
     sinh cosh tanh asinh acosh atanh
     exp log log2 log10 ln sqrt cbrt root
-    Abs abs sign floor ceiling ceiling frac
+    Abs abs sign floor ceiling frac
     factorial binomial gamma beta erf erfc
     Min Max re im arg conjugate
     zeta LambertW Ei Si Ci Shi Chi li li2
@@ -28,7 +28,13 @@ _ALLOWED_FUNCS = frozenset(
     """.split()
 )
 
-def assert_math_expr_safe(expr: str, max_len: int = 500) -> None:
+# 增长过快/符号求值昂贵的函数：参数必须是有界数字常量，防止 sympy 整数/级数爆炸挂死线程
+_BOUNDED_FUNCS = frozenset(
+    "factorial binomial gamma beta zeta LambertW Ei Si Ci Shi Chi li li2".split()
+)
+_BOUNDED_ARG_LIMIT = 10_000
+
+def assert_math_expr_safe(expr: str, max_len: int = 500, max_nodes: int = 400) -> None:
     """校验表达式只含白名单语法；不安全时抛 UnsafeExpression。"""
     if len(expr) > max_len:
         raise UnsafeExpression(f"表达式过长（>{max_len} 字符）")
@@ -36,6 +42,8 @@ def assert_math_expr_safe(expr: str, max_len: int = 500) -> None:
         tree = ast.parse(expr, mode="eval")
     except SyntaxError as e:
         raise UnsafeExpression(f"表达式语法错误：{e}") from e
+    if sum(1 for _ in ast.walk(tree)) > max_nodes:
+        raise UnsafeExpression("表达式过长或过于复杂")
 
     def _const_abs(node) -> float | None:
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
@@ -66,6 +74,19 @@ def assert_math_expr_safe(expr: str, max_len: int = 500) -> None:
                 raise UnsafeExpression("只允许调用白名单内的数学函数")
             if node.keywords:
                 raise UnsafeExpression("函数调用不允许关键字参数")
+            if node.func.id in _BOUNDED_FUNCS:
+                # factorial/binomial 等参数无界会挂死共享线程池：只允许有界数字常量，
+                # 且禁止嵌套（参数里再出现任何 Call 一律拒绝）
+                for arg in node.args:
+                    if isinstance(arg, ast.Call):
+                        raise UnsafeExpression(
+                            f"{node.func.id} 的参数不允许再嵌套函数调用"
+                        )
+                    mag = _const_abs(arg)
+                    if mag is None or mag > _BOUNDED_ARG_LIMIT:
+                        raise UnsafeExpression(
+                            f"{node.func.id} 的参数必须是绝对值 ≤ {_BOUNDED_ARG_LIMIT} 的数字常量"
+                        )
         elif isinstance(node, (ast.Name, ast.Constant)):
             if isinstance(node, ast.Constant) and not isinstance(node.value, (int, float)):
                 raise UnsafeExpression("只允许数字常量")

@@ -1,7 +1,9 @@
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -218,7 +220,17 @@ async def get_course(course_id: str, db: AsyncSession = Depends(get_db)):
 @router.delete("/{course_id}")
 async def delete_course(course_id: str, db: AsyncSession = Depends(get_db)):
     course = await _get_course(db, course_id)
-    pipeline.cancel(course_id)
+    # 防御式兼容 pipeline.cancel 的返回（list / 单 Task / None）：取消后等待任务真正退出，
+    # 再清理数据，避免删除后生成任务仍写库/写文件的竞态
+    raw = pipeline.cancel(course_id)
+    if raw is None:
+        tasks = []
+    elif isinstance(raw, (list, tuple)):
+        tasks = list(raw)
+    else:
+        tasks = [raw]
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
     await pipeline.purge_course_data(db, course)
     await db.delete(course)
     await db.commit()
@@ -269,11 +281,15 @@ async def export_notes_md(course_id: str, db: AsyncSession = Depends(get_db)):
     )
 
 
+class AskCourseIn(BaseModel):
+    question: str = Field(min_length=1, max_length=4000)
+
+
 @router.post("/{course_id}/ask")
-async def ask_course(course_id: str, body: dict, db: AsyncSession = Depends(get_db)):
+async def ask_course(course_id: str, body: AskCourseIn, db: AsyncSession = Depends(get_db)):
     """全课程问答：章节摘要 + FTS 命中原文拼接上下文，SSE 流式回答（不落对话记录）。"""
     course = await _get_course(db, course_id)
-    question = str(body.get("question") or "").strip()
+    question = body.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="问题不能为空")
 

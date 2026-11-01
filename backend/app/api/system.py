@@ -49,7 +49,10 @@ async def set_lan_access(enabled: bool):
 async def rotate_token():
     if not system_service.is_lan_access_enabled():
         raise HTTPException(status_code=400, detail="当前未开启局域网模式")
-    system_service.rotate_access_token()
+    try:
+        system_service.rotate_access_token()
+    except RuntimeError as e:  # 令牌写入失败等带用户文案的运行时错误直接透传
+        raise HTTPException(status_code=500, detail=str(e))
     return await access_info()
 
 
@@ -61,7 +64,9 @@ async def create_backup():
         # zip + WAL checkpoint 是重阻塞 IO，放线程池避免冻结事件循环（SSE/心跳全部卡住）
         p = await asyncio.to_thread(system_service.create_backup)
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"备份失败：{e}") from e
+        logger.exception("创建备份失败")
+        # 不透传内部异常细节（可能含路径等），给用户可行动的提示即可
+        raise HTTPException(status_code=500, detail="备份失败：请检查磁盘剩余空间与数据目录写入权限") from e
     return {"name": p.name, "size": p.stat().st_size}
 
 
@@ -117,5 +122,6 @@ async def open_url(payload: OpenUrlIn):
         ok = webbrowser.open(url)
         return {"ok": bool(ok)}
     except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"打开浏览器失败：{e}") from e
+        logger.exception("打开浏览器失败: %s", url)
+        raise HTTPException(status_code=500, detail="打开浏览器失败，请手动复制链接到浏览器打开") from e
 

@@ -2,6 +2,7 @@
 import logging
 
 from sqlalchemy import event
+from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -12,8 +13,10 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# 用 URL.create 而非 f-string 拼 URL：路径含 ? / # 时会被误解析成 query/fragment，
+# create 会对 database 字段做正确转义（方言保持 sqlite+aiosqlite 不变）
 engine = create_async_engine(
-    f"sqlite+aiosqlite:///{settings.db_path.as_posix()}",
+    URL.create("sqlite+aiosqlite", database=str(settings.db_path)),
     connect_args={"timeout": 30},
 )
 
@@ -70,12 +73,21 @@ async def init_db() -> None:
             "ALTER TABLE exercise_attempts ADD COLUMN is_doubtful INTEGER DEFAULT 0",
             "ALTER TABLE exercises ADD COLUMN is_hard_bone INTEGER DEFAULT 0",
             "ALTER TABLE exercises ADD COLUMN parent_exercise_id VARCHAR(32) DEFAULT ''",
+            # v0.4.52 补齐高频查询索引（IF NOT EXISTS，幂等）：仪表盘/错题池/窗口函数取最近作答
+            "CREATE INDEX IF NOT EXISTS ix_exercises_quiz_id ON exercises(quiz_id)",
+            "CREATE INDEX IF NOT EXISTS ix_exercises_parent_exercise_id ON exercises(parent_exercise_id)",
+            "CREATE INDEX IF NOT EXISTS ix_bank_attempts_question_created ON bank_attempts(question_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS ix_exercise_attempts_exercise_created ON exercise_attempts(exercise_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS ix_messages_created_at ON messages(created_at)",
         ]
         for ddl in migrations:
             try:
                 await conn.execute(text(ddl))
-            except Exception:  # 列已存在
-                pass
+            except Exception as e:  # noqa: BLE001
+                # 仅幂等忽略「列已存在」；其余迁移失败记录告警后继续，不让老库阻断启动
+                if "duplicate column" in str(e).lower():
+                    continue
+                logger.warning("轻量迁移执行失败（跳过并继续启动）: %s；原因: %s", ddl, e)
 
     # v0.4.0 移除费曼/复习模块的老库清理。须在 foreign_keys=OFF 的独立连接上做：
     # feynman 对话连带消息先删 → DROP 三张表；conversations 里指向已删表的
@@ -129,4 +141,17 @@ async def init_db() -> None:
         finally:
             # 归还连接池前恢复外键约束（即使迁移中途抛错），避免污染池内连接
             await legacy.exec_driver_sql("PRAGMA foreign_keys=ON")
+
+    # 数据保留裁剪：仅裁运行痕迹类大表（代码执行记录 / LLM 用量），messages、
+    # 作答记录等用户内容一律不动。created_at 为 UTC ISO 字符串，字典序即时间序。
+    async with engine.begin() as conn:
+        for table, keep in (("code_executions", 500), ("llm_usages", 5000)):
+            result = await conn.execute(
+                text(
+                    f"DELETE FROM {table} WHERE id NOT IN "
+                    f"(SELECT id FROM {table} ORDER BY created_at DESC LIMIT {keep})"
+                )
+            )
+            if result.rowcount:
+                logger.info("数据保留裁剪：%s 清理 %s 行（仅保留最近 %s 条）", table, result.rowcount, keep)
     logger.info("数据库已就绪: %s", settings.db_path)

@@ -9,7 +9,7 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -45,8 +45,9 @@ fn backend_dir() -> PathBuf {
 }
 
 fn backend_ready(port: u16) -> bool {
-    // TCP 可连只说明端口被占用；必须验证是 LearnFlow 后端（HTTP /api/system/access-info 返回 200），
-    // 防止端口被其他无关服务占住时把 WebView 指向错误目标。回环来源免令牌（_AccessGuard）。
+    // TCP 可连只说明端口被占用；必须验证是 LearnFlow 后端：HTTP /api/system/access-info 返回 200
+    // 且响应体是含 "port" 或 "lan_mode" 字段的 JSON——防止同端口的无关 SPA/静态服务
+    // 用 200 空页把壳骗进别人的页面。回环来源免令牌（_AccessGuard）。
     let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) else {
         return false;
     };
@@ -57,10 +58,33 @@ fn backend_ready(port: u16) -> bool {
     {
         return false;
     }
-    let mut buf = [0u8; 128];
-    let n = s.read(&mut buf).unwrap_or(0);
-    let head = String::from_utf8_lossy(&buf[..n]);
-    head.starts_with("HTTP/") && head.contains(" 200 ")
+    // HTTP/1.0 + Connection: close：读到对端关闭即完整响应；设上限防恶意服务灌数据
+    let mut raw = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match s.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => {
+                raw.extend_from_slice(&chunk[..n]);
+                if raw.len() > 64 * 1024 {
+                    return false;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    let text = String::from_utf8_lossy(&raw);
+    if !text.starts_with("HTTP/") || !text.contains(" 200 ") {
+        return false;
+    }
+    // 头与体以空行分隔；无体或解析不出 JSON 对象均视为未就绪
+    let Some(body) = text.split_once("\r\n\r\n").map(|(_, b)| b) else {
+        return false;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body.trim()) else {
+        return false;
+    };
+    v.get("port").is_some() || v.get("lan_mode").is_some()
 }
 
 fn packaged_backend_exe(app: &AppHandle) -> Option<PathBuf> {
@@ -76,6 +100,26 @@ fn packaged_backend_exe(app: &AppHandle) -> Option<PathBuf> {
         eprintln!("[learnflow] 未找到内置后端：{}", exe.display());
         None
     }
+}
+
+/// 打包版后端日志文件：`<app_data_dir>/logs/backend.log`（追加写）。
+/// 超过 5MB 先轮转为 backend.log.1（覆盖旧 .1，仅保留一份历史）。
+/// 目录/文件打开失败返回 None，调用方降级 Stdio::null()——日志不能影响后端启动。
+fn open_backend_log(app_data: &PathBuf) -> Option<std::fs::File> {
+    const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
+    let logs_dir = app_data.join("logs");
+    std::fs::create_dir_all(&logs_dir).ok()?;
+    let log = logs_dir.join("backend.log");
+    if let Ok(meta) = std::fs::metadata(&log) {
+        if meta.len() > MAX_LOG_BYTES {
+            let _ = std::fs::rename(&log, logs_dir.join("backend.log.1"));
+        }
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log)
+        .ok()
 }
 
 fn spawn_backend(app: &AppHandle, port: u16) -> Option<Child> {
@@ -98,6 +142,22 @@ fn spawn_backend(app: &AppHandle, port: u16) -> Option<Child> {
             if let Ok(data) = app.path().app_data_dir() {
                 let _ = std::fs::create_dir_all(&data);
                 c.env("APP_DATA_DIR", &data);
+                // 打包版无控制台可看：stdout/stderr 追加重定向到 logs/backend.log，
+                // 便于排查发布版后端崩溃；打不开日志则丢弃输出，照常启动
+                match open_backend_log(&data) {
+                    Some(f) => {
+                        let stderr_f = f.try_clone().ok();
+                        c.stdout(Stdio::from(f));
+                        c.stderr(match stderr_f {
+                            Some(sf) => Stdio::from(sf),
+                            None => Stdio::null(),
+                        });
+                    }
+                    None => {
+                        c.stdout(Stdio::null());
+                        c.stderr(Stdio::null());
+                    }
+                }
             }
             c
         }
@@ -293,7 +353,22 @@ fn main() {
                             let _ = child.kill();
                         }
                     }
-                    let _ = child.wait();
+                    // taskkill 是异步的：进程尚未退出时 wait() 会阻塞退出路径（AV 拦截时尤甚）。
+                    // 改为轮询 try_wait 最多等 3 秒；超时放弃等待继续退出，
+                    // 子进程句柄由 OS 在本进程结束后回收，进程树由 taskkill /T 结束。
+                    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                    loop {
+                        match child.try_wait() {
+                            Ok(Some(_)) => break,
+                            Ok(None) => {
+                                if std::time::Instant::now() >= deadline {
+                                    break;
+                                }
+                                std::thread::sleep(Duration::from_millis(50));
+                            }
+                            Err(_) => break,
+                        }
+                    }
                 }
             }
         });

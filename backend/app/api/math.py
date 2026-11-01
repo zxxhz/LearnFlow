@@ -158,7 +158,8 @@ async def render(body: PlotRequest):
         svg = await asyncio.to_thread(render_sync, body.expressions, body.x_min, body.x_max)
     except HTTPException:
         raise
-    except Exception as e:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
+        # 未预期的内部错误不外泄原始异常文本
         logger.exception("math render failed")
-        raise HTTPException(status_code=400, detail=f"绘图失败：{e}")
+        raise HTTPException(status_code=400, detail="绘图失败，请稍后重试")
     return {"svg": svg}

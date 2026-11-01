@@ -494,6 +494,24 @@ export interface ProgressSSEEvent {
   }[];
 }
 
+/** 题库 AI 错题深度解析 SSE（/banks/questions/:id/ai-explain） */
+export interface BankExplainSSEEvent {
+  type: "delta" | "done" | "error";
+  text?: string;
+  detail?: string;
+}
+
+/** 应用内更新安装 SSE（/update/in-app-install）：下载进度 → 就绪 → 静默安装 */
+export interface InAppInstallSSEEvent {
+  type: "start" | "progress" | "retry" | "ready" | "installing" | "error";
+  downloaded?: number;
+  total?: number;
+  percent?: number;
+  speed_mb?: number;
+  message?: string;
+  detail?: string;
+}
+
 // ===== 题库刷题（独立模块） =====
 
 export type BankQuestionType = "single" | "multi" | "judge";

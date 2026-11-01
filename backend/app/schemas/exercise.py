@@ -1,6 +1,7 @@
 import json
+from typing import Annotated
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, StringConstraints, field_validator
 
 from app.models.exercise import (
     EXERCISE_CHOICE,
@@ -14,6 +15,8 @@ from app.schemas.common import ORMModel
 from app.schemas.execution import LANG_ALIASES
 
 MAX_ATTEMPT_LENGTH = 64_000
+MAX_TASK_LENGTH = 20_000
+MAX_OPTION_LENGTH = 2_000
 CHOICE_LETTERS = "ABCDEFG"
 
 
@@ -157,7 +160,8 @@ class ExerciseDraftItem(BaseModel):
 
     kind: str
     title: str
-    task: str
+    # 题面/选项限长：防模型失控输出撑爆入库与渲染
+    task: Annotated[str, StringConstraints(max_length=MAX_TASK_LENGTH)]
     language: str = ""
     skeleton_code: str = ""
     expected_output: str = ""
@@ -165,7 +169,7 @@ class ExerciseDraftItem(BaseModel):
     reference_code: str = ""
     # 闯关代码关的渐进提示（按展开顺序）
     hints: list[str] = []
-    options: list[str] = []
+    options: list[Annotated[str, StringConstraints(max_length=MAX_OPTION_LENGTH)]] = []
     answer: str | list[str] = ""
     # 仅组卷出题用：题目归属的知识点序号（1-based，0/缺省 = 由服务端分配）
     kp_index: int = 0

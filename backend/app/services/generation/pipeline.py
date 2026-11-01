@@ -67,11 +67,14 @@ def any_running() -> bool:
     return any(t is not None and not t.done() for t in _tasks.values())
 
 
-def cancel(course_id: str) -> None:
+def cancel(course_id: str) -> list[asyncio.Task]:
+    """取消课程生成任务；返回仍需等待的任务（调用方 gather 后再清理数据，避免 purge 与在途写入竞态）。"""
     t = _tasks.pop(course_id, None)
     _course_options.pop(course_id, None)
     if t and not t.done():
         t.cancel()
+        return [t]
+    return []
 
 
 async def run_chapter(
@@ -154,8 +157,12 @@ async def run_chapter(
     old_kp_ids = [k.id for k in old_kps]
     if old_kp_ids:
         # 练习挂在知识点上，随知识点重建一并重置
-        await delete_kp_exercises(db, old_kp_ids)
+        affected_quiz_ids = await delete_kp_exercises(db, old_kp_ids)
         await db.execute(delete(KnowledgePoint).where(KnowledgePoint.document_id == doc.id))
+        # 被连带删空的小测壳行一并清理，避免章节重建后留下无题空壳
+        from app.services.quiz import cleanup_empty_quizzes
+
+        await cleanup_empty_quizzes(db, affected_quiz_ids)
 
     section_by_heading: dict[str, str] = {}
     for s in sections:
@@ -217,10 +224,29 @@ async def run_chapter(
     )
     await db.commit()
 
-    # 提交成功后才动 current.md：快照旧版本 → 原子替换，失败窗口只在毫秒级
-    if current.exists() and new_version >= 2:
-        shutil.copy2(current, doc_dir / "versions" / f"v{new_version - 1}.md")
-    os.replace(tmp_current, current)
+    # 提交成功后才动 current.md：快照旧版本 → 原子替换，失败窗口只在毫秒级。
+    # 此时数据库已提交，文件操作失败绝不能走 _mark_failed 把已成功的章节打成 failed——
+    # 降级为错误日志（current.md 未替换，下次 regenerate 会自愈）
+    try:
+        if current.exists() and new_version >= 2:
+            shutil.copy2(current, doc_dir / "versions" / f"v{new_version - 1}.md")
+        # Windows 杀软/索引器可能短暂锁住目标文件，os.replace 重试（退避 0.2/0.5/1s）
+        last_exc: Exception | None = None
+        for delay in (0.0, 0.2, 0.5, 1.0):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                os.replace(tmp_current, current)
+                last_exc = None
+                break
+            except OSError as e:
+                last_exc = e
+        if last_exc is not None:
+            raise last_exc
+    except Exception as e:  # noqa: BLE001
+        logger.error(
+            "chapter %s: current.md 替换失败（数据库已提交，章节保持 done）：%r", doc.id, e
+        )
 
     publish(
         course.id,
@@ -283,6 +309,19 @@ async def run_course(course_id: str) -> None:
             publish(course_id, {"type": "course_done", "status": course.status})
     except asyncio.CancelledError:
         logger.info("course generation cancelled: %s", course_id)
+    except Exception:
+        # 外层异常不能静默：否则课程永远卡在 generating（重启恢复也会立刻再崩）
+        logger.exception("course generation crashed: %s", course_id)
+        try:
+            async with async_session_factory() as db2:
+                await db2.execute(
+                    update(Course)
+                    .where(Course.id == course_id)
+                    .values(status="error", updated_at=utcnow_iso())
+                )
+                await db2.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception("course %s: 标记 error 状态失败", course_id)
     finally:
         _tasks.pop(course_id, None)
         _course_options.pop(course_id, None)

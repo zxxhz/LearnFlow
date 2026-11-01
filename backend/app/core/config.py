@@ -1,11 +1,12 @@
 """应用配置：全部项可用 APP_ 前缀环境变量 / .env 覆盖。"""
+import os
 import sys
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 应用版本（更新检查的唯一版本源；发布时与 tauri.conf.json / package.json 一同 bump，见 PRD 实现备注 15）
-APP_VERSION = "0.4.52"
+APP_VERSION = "0.4.53"
 
 
 
@@ -49,5 +50,18 @@ class AppConfig(BaseSettings):
 
 
 settings = AppConfig()
-settings.data_dir.mkdir(parents=True, exist_ok=True)
-settings.courses_dir.mkdir(parents=True, exist_ok=True)
+try:
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    settings.courses_dir.mkdir(parents=True, exist_ok=True)
+except OSError as exc:
+    # 目录建不出来时进程必然无法继续，但要可诊断（打包版常见：安装目录只读 / 磁盘满）
+    print(
+        "[LearnFlow] 创建数据目录失败，应用无法启动：\n"
+        f"  错误：{exc}\n"
+        f"  APP_DATA_DIR 环境变量：{os.environ.get('APP_DATA_DIR') or '（未设置，使用默认路径）'}\n"
+        f"  数据目录：{settings.data_dir}\n"
+        f"  课程目录：{settings.courses_dir}",
+        file=sys.stderr,
+        flush=True,
+    )
+    raise

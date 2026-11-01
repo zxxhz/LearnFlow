@@ -64,12 +64,25 @@ async def reindex_document(db: AsyncSession, document: Document) -> None:
 
 
 async def backfill_fts(db: AsyncSession) -> None:
-    """老库升级回填：FTS 为空但已有章节内容时，全量重建一次。"""
+    """老库升级回填 + 失配自愈：FTS 为空、或 FTS 行数与 sections 行数不一致时，全量重建一次。"""
     await ensure_fts(db)
-    row = (
-        await db.execute(text("SELECT count(*) FROM fts_sections"))
-    ).scalar()
-    if (row or 0) > 0:
+    try:
+        fts_count = (await db.execute(text("SELECT count(*) FROM fts_sections"))).scalar() or 0
+    except Exception:  # noqa: BLE001 虚表损坏等：按空索引处理，走全量重建
+        fts_count = 0
+    need_rebuild = fts_count == 0
+    if not need_rebuild:
+        try:
+            sections_count = (
+                await db.execute(text("SELECT count(*) FROM sections"))
+            ).scalar() or 0
+            if sections_count != fts_count:
+                # 失配自愈：章节被清理/文档删除时 FTS 行未同步（虚表无外键约束），按行数差检测
+                logger.warning("FTS 行数(%s)与 sections 行数(%s)不一致，触发全量重建", fts_count, sections_count)
+                need_rebuild = True
+        except Exception:  # noqa: BLE001 统计失败不阻塞启动
+            logger.warning("FTS 失配自检失败，跳过本次自愈检查")
+    if not need_rebuild:
         return
     docs = (await db.scalars(select(Document).where(Document.status == "done"))).all()
     for d in docs:
