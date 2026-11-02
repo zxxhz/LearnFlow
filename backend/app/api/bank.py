@@ -18,6 +18,8 @@ from app.schemas.bank import (
     BankAnalysisOut,
     BankAttemptRequest,
     BankAttemptResult,
+    BankAddQuestionsOut,
+    BankAddQuestionsRequest,
     BankOut,
     BankPromptPolishIn,
     BankPromptPolishOut,
@@ -28,6 +30,7 @@ from app.schemas.bank import (
     BankStatsOut,
     BankUpdateIn,
     BankWrongQuestionOut,
+    ParsedTextQuestionItem,
     PasteImportRequest,
     PasteParseRequest,
     PasteParseResponse,
@@ -163,20 +166,21 @@ async def paste_parse(body: PasteParseRequest, db: AsyncSession = Depends(get_db
     return parsed
 
 
-@router.post("/paste-import", response_model=BankOut)
-async def paste_import(body: PasteImportRequest, db: AsyncSession = Depends(get_db)):
-    """将剪贴板解析/编辑后的试题列表确认落库为新题库（§6）。"""
-    if not body.questions:
-        raise HTTPException(status_code=400, detail="导入题目列表不能为空")
+def _format_parsed_questions(questions: list[ParsedTextQuestionItem]) -> list[dict]:
+    formatted = []
+    for i, q in enumerate(questions, 1):
+        title = q.title.strip()
+        if not title:
+            raise HTTPException(status_code=400, detail=f"第 {i} 题题干不能为空")
 
-    formatted_questions = []
-    for i, q in enumerate(body.questions, 1):
         if q.qtype == "judge":
             opts: list[str] = []
             ans = "A" if q.answer.strip().upper() in ("A", "TRUE", "T", "对", "正确", "1", "YES") else "B"
             ans_raw = "正确" if ans == "A" else "错误"
         else:
             raw_opts = [opt.strip() for opt in q.options if opt.strip()]
+            if len(raw_opts) < 2:
+                raise HTTPException(status_code=400, detail=f"第 {i} 题「{title[:20]}」至少需要提供 2 个非空选项")
             opts = (raw_opts + [""] * 8)[:8]
             # 与文件导入同口径归一化：LLM 切题可能输出 "AC"、"A."、"B，C" 等非规范答案，
             # 不归一会导致 judge_answer 永远判错
@@ -186,17 +190,26 @@ async def paste_import(body: PasteImportRequest, db: AsyncSession = Depends(get_
                 raise HTTPException(status_code=400, detail=f"第 {i} 题：{e}") from e
             ans_raw = ans
 
-        formatted_questions.append({
+        formatted.append({
             "seq": i,
             "qtype": q.qtype if q.qtype in ("single", "multi", "judge") else "single",
-            "title": q.title.strip(),
+            "title": title,
             "options": opts,
             "answer": ans,
             "answer_raw": ans_raw,
             "difficulty": q.difficulty or "普通",
             "explanation": q.explanation or "",
         })
+    return formatted
 
+
+@router.post("/paste-import", response_model=BankOut)
+async def paste_import(body: PasteImportRequest, db: AsyncSession = Depends(get_db)):
+    """将剪贴板解析/编辑后的试题列表确认落库为新题库（§6）。"""
+    if not body.questions:
+        raise HTTPException(status_code=400, detail="导入题目列表不能为空")
+
+    formatted_questions = _format_parsed_questions(body.questions)
     report = {
         "name": body.name.strip() or "剪贴板切题题库",
         "source_file": "clipboard_paste.txt",
@@ -212,6 +225,50 @@ async def paste_import(body: PasteImportRequest, db: AsyncSession = Depends(get_
         ai_prompt=bank.ai_prompt or "",
         created_at=bank.created_at,
         stats=BankStatsOut(**stats),
+    )
+
+
+@router.post("/{bank_id}/questions", response_model=BankAddQuestionsOut)
+async def add_questions(
+    bank_id: str,
+    body: BankAddQuestionsRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """向指定已有题库追加一道或多道题目。"""
+    bank = await _bank_or_404(db, bank_id)
+    if not body.questions:
+        raise HTTPException(status_code=400, detail="添加题目列表不能为空")
+
+    formatted = _format_parsed_questions(body.questions)
+    added = await bank_service.append_questions(db, bank, formatted)
+    return BankAddQuestionsOut(
+        ok=True,
+        added=added,
+        question_count=bank.question_count,
+    )
+
+
+@router.post("/{bank_id}/import-file", response_model=BankAddQuestionsOut)
+async def import_file_to_bank(
+    bank_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """上传 .xls / .xlsx 表格向已有题库追加题目。"""
+    bank = await _bank_or_404(db, bank_id)
+    data, file_name = await _read_upload(file)
+    try:
+        questions, report = bank_service.parse_bank(data, file_name)
+    except BankParseError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not questions:
+        raise HTTPException(status_code=400, detail="文件中未解析出有效试题")
+
+    added = await bank_service.append_questions(db, bank, questions)
+    return BankAddQuestionsOut(
+        ok=True,
+        added=added,
+        question_count=bank.question_count,
     )
 
 

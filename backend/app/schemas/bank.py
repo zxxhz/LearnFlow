@@ -112,6 +112,16 @@ class PasteImportRequest(BaseModel):
     questions: list[ParsedTextQuestionItem]
 
 
+class BankAddQuestionsRequest(BaseModel):
+    questions: list[ParsedTextQuestionItem]
+
+
+class BankAddQuestionsOut(BaseModel):
+    ok: bool = True
+    added: int
+    question_count: int
+
+
 class BankPromptPolishIn(BaseModel):
     prompt: str = ""
     bank_name: str = ""

@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type { UpdateCheckResult } from "../lib/types";
 import { useTheme } from "../lib/theme";
-import { safeSessionStorage } from "../lib/safeStorage";
+import { safeSessionStorage, safeStorage } from "../lib/safeStorage";
 import { isTauri, openExternalUrl } from "../lib/updater";
 import UpdateDialog from "./UpdateDialog";
 
@@ -86,6 +86,39 @@ export default function Layout() {
   const isMindMapCanvas = pathname.startsWith("/mindmap/") && pathname !== "/mindmap";
   const isImmersive = isReader || isMindMapCanvas;
   const [navOpen, setNavOpen] = useState(false);
+  // 导航折叠状态（局域网平板/大屏设备自由折叠侧栏，最大化学习与刷题主界面宽度）
+  const [navCollapsed, setNavCollapsed] = useState(() => {
+    const saved = safeStorage.get("learnflow-nav-collapsed");
+    if (saved !== null) return saved === "true";
+    // 局域网平板/小屏设备智能默认：宽度小于 1024px（如 iPad 竖屏 768px）时默认折叠侧栏，避免挤占内容区；大屏默认展开
+    return typeof window !== "undefined" && window.innerWidth < 1024;
+  });
+
+  const toggleNavCollapsed = () => {
+    setNavCollapsed((prev) => {
+      const next = !prev;
+      safeStorage.set("learnflow-nav-collapsed", String(next));
+      return next;
+    });
+  };
+
+  // 全局快捷键 Ctrl+B / Cmd+B 切换左侧导航折叠（与阅读页快捷键心智统一）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isImmersive) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        const target = e.target as HTMLElement | null;
+        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+          return;
+        }
+        e.preventDefault();
+        toggleNavCollapsed();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isImmersive]);
+
   // 与阅读页共享同一主题订阅，阅读页内切换后侧栏按钮状态保持同步
   const { theme, toggle: toggleTheme } = useTheme();
   const [dialogUpdate, setDialogUpdate] = useState<UpdateCheckResult | null>(null);
@@ -137,23 +170,56 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-900">
-      {/* 桌面侧栏：进入课程阅读或思维导图画布后隐藏，释放全宽给沉浸式工作台 */}
+      {/* 桌面/平板侧栏：进入课程阅读或思维导图画布后隐藏，释放全宽给沉浸式工作台；支持自由折叠 */}
       {!isImmersive && (
-        <aside className="hidden w-56 shrink-0 flex-col border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 md:flex">
-          <div className="flex items-center gap-2 px-5 py-5">
-            <span className="text-xl font-bold text-brand-600">LearnFlow</span>
-          </div>
-          <NavLinks />
-          <NavActions />
-          <div className="border-t border-gray-100 dark:border-gray-800 p-3">
-            <button
-              onClick={toggleTheme}
-              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-              title="切换深色 / 浅色"
-            >
-              <span>{theme === "dark" ? "☀️" : "🌙"}</span>
-              {theme === "dark" ? "浅色模式" : "深色模式"}
-            </button>
+        <aside
+          className={`hidden shrink-0 flex-col border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 md:flex transition-all duration-300 ease-in-out overflow-hidden ${
+            navCollapsed ? "w-0 border-r-0 opacity-0 pointer-events-none" : "w-56 opacity-100"
+          }`}
+          aria-hidden={navCollapsed}
+        >
+          <div className="flex h-full w-56 flex-col shrink-0">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800/60">
+              <span className="text-xl font-bold text-brand-600">LearnFlow</span>
+              <button
+                type="button"
+                onClick={toggleNavCollapsed}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600 dark:hover:text-gray-200 transition"
+                title="折叠导航 (Ctrl+B)"
+                aria-label="折叠导航"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <line x1="9" y1="3" x2="9" y2="21" />
+                  <path d="M15 9l-3 3 3 3" />
+                </svg>
+              </button>
+            </div>
+            <NavLinks />
+            <NavActions />
+            <div className="flex items-center gap-1.5 border-t border-gray-100 dark:border-gray-800 p-3">
+              <button
+                onClick={toggleTheme}
+                className="flex flex-1 items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                title="切换深色 / 浅色"
+              >
+                <span>{theme === "dark" ? "☀️" : "🌙"}</span>
+                <span className="truncate">{theme === "dark" ? "浅色模式" : "深色模式"}</span>
+              </button>
+              <button
+                type="button"
+                onClick={toggleNavCollapsed}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600 dark:hover:text-gray-200 transition"
+                title="折叠导航 (Ctrl+B)"
+                aria-label="折叠导航"
+              >
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <line x1="9" y1="3" x2="9" y2="21" />
+                  <path d="M15 9l-3 3 3 3" />
+                </svg>
+              </button>
+            </div>
           </div>
         </aside>
       )}
@@ -179,21 +245,47 @@ export default function Layout() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* 移动端顶栏（沉浸界面由自身顶栏接管） */}
+        {/* 顶栏：移动端常驻；平板/桌面端在左侧导航折叠后出现展开按钮 */}
         {!isImmersive && (
-          <header className="flex items-center gap-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-2.5 md:hidden">
+          <header
+            className={`items-center gap-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-4 py-2.5 transition-all ${
+              navCollapsed ? "flex" : "flex md:hidden"
+            }`}
+          >
+            {/* 移动端汉堡按钮（< md 打开抽屉） */}
             <button
               onClick={() => setNavOpen(true)}
-              className="rounded-md p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+              className="rounded-md p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 md:hidden"
               aria-label="打开菜单"
             >
               ☰
             </button>
+
+            {/* 平板/桌面端折叠后提供的展开导航按钮（>= md 显示） */}
+            {navCollapsed && (
+              <button
+                type="button"
+                onClick={toggleNavCollapsed}
+                className="hidden md:inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-brand-600 dark:hover:text-brand-400 transition"
+                title="展开左侧导航 (Ctrl+B)"
+                aria-label="展开左侧导航"
+              >
+                <svg className="w-3.5 h-3.5 text-brand-600 dark:text-brand-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                  <line x1="9" y1="3" x2="9" y2="21" />
+                  <path d="M13 9l3 3-3 3" />
+                </svg>
+                <span>展开导航</span>
+              </button>
+            )}
+
             <span className="text-base font-bold text-brand-600">LearnFlow</span>
+
             <button
               onClick={toggleTheme}
               className="ml-auto rounded-md p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
               aria-label="切换深色 / 浅色"
+              title="切换深色 / 浅色"
             >
               {theme === "dark" ? "☀️" : "🌙"}
             </button>

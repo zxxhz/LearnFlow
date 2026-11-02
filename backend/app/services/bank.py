@@ -252,6 +252,44 @@ async def create_bank(
     return bank
 
 
+async def append_questions(
+    db: AsyncSession, bank: QuestionBank, formatted_questions: list[dict]
+) -> int:
+    """向已有题库追加题目：自动计算 seq 递增、批量落库并同步更新 question_count。"""
+    if not formatted_questions:
+        return 0
+
+    count_and_seq = (
+        await db.execute(
+            select(
+                func.count(BankQuestion.id).label("cnt"),
+                func.coalesce(func.max(BankQuestion.seq), 0).label("max_seq"),
+            ).where(BankQuestion.bank_id == bank.id)
+        )
+    ).one()
+    current_cnt = int(count_and_seq.cnt or 0)
+    max_seq = int(count_and_seq.max_seq or 0)
+
+    for i, q in enumerate(formatted_questions, 1):
+        db.add(
+            BankQuestion(
+                bank_id=bank.id,
+                seq=max_seq + i,
+                qtype=q["qtype"],
+                title=q["title"],
+                options=json.dumps(q["options"], ensure_ascii=False),
+                answer=q["answer"],
+                answer_raw=q["answer_raw"],
+                difficulty=q["difficulty"],
+                explanation=q["explanation"],
+            )
+        )
+
+    bank.question_count = current_cnt + len(formatted_questions)
+    await db.commit()
+    return len(formatted_questions)
+
+
 async def latest_attempts(db: AsyncSession, bank_id: str) -> dict[str, BankAttempt]:
     """每题最近一次作答（created_at 升序遍历，后者覆盖）。"""
     attempts = (

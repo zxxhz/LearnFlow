@@ -355,6 +355,19 @@ export const api = {
       request<PasteParseResponse>("/banks/paste-parse", { method: "POST", ...jsonBody({ text }) }),
     pasteImport: (name: string, questions: ParsedTextQuestionItem[]) =>
       request<Bank>("/banks/paste-import", { method: "POST", ...jsonBody({ name, questions }) }),
+    addQuestions: (bankId: string, questions: ParsedTextQuestionItem[]) =>
+      request<{ ok: boolean; added: number; question_count: number }>(
+        `/banks/${bankId}/questions`,
+        { method: "POST", ...jsonBody({ questions }) },
+      ),
+    importFileToBank: (bankId: string, file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return request<{ ok: boolean; added: number; question_count: number }>(
+        `/banks/${bankId}/import-file`,
+        { method: "POST", body: fd },
+      );
+    },
     list: () => request<Bank[]>("/banks"),
     stats: (id: string) => request<BankStats>(`/banks/${id}/stats`),
     round: (id: string, mode: "new" | "all" | "random" | "wrong", size: number) =>

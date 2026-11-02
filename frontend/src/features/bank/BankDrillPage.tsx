@@ -11,6 +11,7 @@ import { FontSizeControl } from "../../components/FontSizeControl";
 import { useFontSize } from "../../lib/fontSize";
 import BankQuestionCard, { visibleOptions } from "./BankQuestionCard";
 import BankPromptModal from "./BankPromptModal";
+import AddQuestionModal from "./AddQuestionModal";
 import MarkdownLite from "../../components/MarkdownLite";
 import { createStreamFlusher } from "../../lib/streamFlusher";
 import type { BankAttemptResult, BankQuestion, BankRound } from "../../lib/types";
@@ -89,6 +90,14 @@ export default function BankDrillPage() {
   const [size, setSize] = useState(20);
   const [startError, setStartError] = useState("");
   const [promptOpen, setPromptOpen] = useState(false);
+  const [addModalOpen, setAddModalOpen] = useState(false);
+  const [toastMsg, setToastMsg] = useState("");
+
+  const handleAddSuccess = (addedCount: number) => {
+    qc.invalidateQueries({ queryKey: ["banks"] });
+    setToastMsg(`已成功添加 ${addedCount} 道题目！`);
+    setTimeout(() => setToastMsg(""), 3500);
+  };
 
   // 轮中任何变化落盘；round 为空（无轮）时不写，round 归属不符（路由复用残留）也不写。
   // aiExplains 用防抖快照：AI 解析流式期间每个 token 都会更新它，直接进依赖
@@ -253,12 +262,29 @@ export default function BankDrillPage() {
           <Button variant="secondary" onClick={discardRound}>
             返回模式选择
           </Button>
+          <Button variant="secondary" onClick={() => setAddModalOpen(true)}>
+            ➕ 增加题目
+          </Button>
           <Link to="/bank" className="inline-flex items-center px-3 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
             ← 题库列表
           </Link>
           {/* 后端 400 的友好文案（新题刷完/错题池空）必须可见，否则按钮点了像没反应 */}
           {startError && <ErrorText>{startError}</ErrorText>}
         </div>
+
+        <AddQuestionModal
+          open={addModalOpen}
+          bankId={bank.id}
+          bankName={bank.name}
+          onClose={() => setAddModalOpen(false)}
+          onSuccess={handleAddSuccess}
+        />
+        {toastMsg && (
+          <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-4 py-2.5 text-xs font-semibold text-emerald-800 dark:text-emerald-200 shadow-lg animate-fadeIn">
+            <span>✅</span>
+            <span>{toastMsg}</span>
+          </div>
+        )}
       </div>
     );
   }
@@ -282,6 +308,15 @@ export default function BankDrillPage() {
               ? "🆕 做新题模式"
               : "🎯 做题模式"} · {bank.name}
           </h1>
+          <button
+            type="button"
+            onClick={() => setAddModalOpen(true)}
+            className="inline-flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-xs text-gray-700 dark:text-gray-300 hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-400 transition shrink-0"
+            title="向此题库增加题目（支持表格导入、手动添加与智能切题）"
+          >
+            <span>➕</span>
+            <span>增加题目</span>
+          </button>
           <FontSizeControl
             value={drillFontSize}
             onChange={setDrillFontSize}
@@ -321,6 +356,20 @@ export default function BankDrillPage() {
             </Button>
           )}
         </div>
+
+        <AddQuestionModal
+          open={addModalOpen}
+          bankId={bank.id}
+          bankName={bank.name}
+          onClose={() => setAddModalOpen(false)}
+          onSuccess={handleAddSuccess}
+        />
+        {toastMsg && (
+          <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-4 py-2.5 text-xs font-semibold text-emerald-800 dark:text-emerald-200 shadow-lg animate-fadeIn">
+            <span>✅</span>
+            <span>{toastMsg}</span>
+          </div>
+        )}
       </div>
     );
   }
@@ -334,6 +383,15 @@ export default function BankDrillPage() {
           ← 题库列表
         </Link>
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setAddModalOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-brand-200 dark:border-brand-800 bg-brand-50/70 dark:bg-brand-950/40 px-2.5 py-1 text-xs font-semibold text-brand-700 dark:text-brand-300 hover:bg-brand-100 dark:hover:bg-brand-900/60 transition"
+            title="向此题库增加题目（支持表格导入、手动添加与智能切题）"
+          >
+            <span>➕</span>
+            <span>增加题目</span>
+          </button>
           <FontSizeControl
             value={drillFontSize}
             onChange={setDrillFontSize}
@@ -506,6 +564,19 @@ export default function BankDrillPage() {
         bank={bank}
         onClose={() => setPromptOpen(false)}
       />
+      <AddQuestionModal
+        open={addModalOpen}
+        bankId={bank.id}
+        bankName={bank.name}
+        onClose={() => setAddModalOpen(false)}
+        onSuccess={handleAddSuccess}
+      />
+      {toastMsg && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-4 py-2.5 text-xs font-semibold text-emerald-800 dark:text-emerald-200 shadow-lg animate-fadeIn">
+          <span>✅</span>
+          <span>{toastMsg}</span>
+        </div>
+      )}
     </div>
   );
 }
