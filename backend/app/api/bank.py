@@ -26,6 +26,7 @@ from app.schemas.bank import (
     BankQuestionOut,
     BankQuestionUpdateIn,
     BankQuestionUpdateOut,
+    BankReplaceAnalyzeOut,
     BankRoundOut,
     BankRoundRequest,
     BankSkippedRow,
@@ -271,6 +272,59 @@ async def import_file_to_bank(
         ok=True,
         added=added,
         question_count=bank.question_count,
+    )
+
+
+@router.post("/{bank_id}/replace-analyze", response_model=BankReplaceAnalyzeOut)
+async def replace_bank_analyze(
+    bank_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """上传新表格对比分析：分析保留已答题目、移出题目与答案校准题，纯分析不写库。"""
+    bank = await _bank_or_404(db, bank_id)
+    data, file_name = await _read_upload(file)
+    try:
+        questions, report = bank_service.parse_bank(data, file_name)
+    except BankParseError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not questions:
+        raise HTTPException(status_code=400, detail="新表格中未解析出有效试题")
+
+    analysis = await bank_service.analyze_bank_replacement(
+        db, bank, questions, file_name, skipped_total=report.get("skipped_total", 0)
+    )
+    return BankReplaceAnalyzeOut(**analysis)
+
+
+@router.post("/{bank_id}/replace", response_model=BankOut)
+async def replace_bank_confirm(
+    bank_id: str,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """确认使用新表格全量替换当前题库：继承历史作答记录、重排seq、清理冗余题与作答。"""
+    bank = await _bank_or_404(db, bank_id)
+    data, file_name = await _read_upload(file)
+    try:
+        questions, report = bank_service.parse_bank(data, file_name)
+    except BankParseError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    if not questions:
+        raise HTTPException(status_code=400, detail="新表格中未解析出有效试题")
+
+    updated_bank = await bank_service.replace_bank_with_questions(
+        db, bank, questions, file_name, data
+    )
+    stats = await bank_service.bank_stats(db, updated_bank)
+    return BankOut(
+        id=updated_bank.id,
+        name=updated_bank.name,
+        source_file=updated_bank.source_file,
+        question_count=updated_bank.question_count,
+        ai_prompt=updated_bank.ai_prompt or "",
+        created_at=updated_bank.created_at,
+        stats=BankStatsOut(**stats),
     )
 
 

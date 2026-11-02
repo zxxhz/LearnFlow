@@ -74,6 +74,33 @@ class BankStatsOut(BaseModel):
 
 
 
+class BankReplaceSampleItem(BaseModel):
+    title: str
+    qtype: str
+    old_answer: str | None = None
+    new_answer: str | None = None
+    user_answer: str | None = None
+    recalibrated_passed: bool | None = None
+
+
+class BankReplaceAnalyzeOut(BaseModel):
+    bank_id: str
+    bank_name: str
+    new_source_file: str
+    current_total: int
+    new_total: int
+    matched_count: int
+    answered_retained: int
+    unanswered_retained: int
+    recalibrated_count: int
+    removed_count: int
+    added_count: int
+    skipped_total: int = 0
+    samples_recalibrated: list[BankReplaceSampleItem] = []
+    samples_removed: list[str] = []
+    samples_added: list[str] = []
+
+
 class BankQuestionUpdateIn(BaseModel):
     title: str | None = None
     options: list[str] | None = None

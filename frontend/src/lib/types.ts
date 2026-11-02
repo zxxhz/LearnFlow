@@ -608,6 +608,33 @@ export interface BankQuestionUpdateOut {
   recalibrated_result?: BankAttemptResult | null;
 }
 
+export interface BankReplaceSampleItem {
+  title: string;
+  qtype: string;
+  old_answer?: string | null;
+  new_answer?: string | null;
+  user_answer?: string | null;
+  recalibrated_passed?: boolean | null;
+}
+
+export interface BankReplaceAnalyzeOut {
+  bank_id: string;
+  bank_name: string;
+  new_source_file: string;
+  current_total: number;
+  new_total: number;
+  matched_count: number;
+  answered_retained: number;
+  unanswered_retained: number;
+  recalibrated_count: number;
+  removed_count: number;
+  added_count: number;
+  skipped_total: number;
+  samples_recalibrated: BankReplaceSampleItem[];
+  samples_removed: string[];
+  samples_added: string[];
+}
+
 export interface PasteParseResponse {
   bank_title: string;
   questions: ParsedTextQuestionItem[];

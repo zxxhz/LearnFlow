@@ -41,6 +41,7 @@ import type {
   BankExplainSSEEvent,
   BankQuestionUpdateIn,
   BankQuestionUpdateOut,
+  BankReplaceAnalyzeOut,
   BankRound,
   BankStats,
   BankWrongQuestion,
@@ -369,6 +370,22 @@ export const api = {
         `/banks/${bankId}/import-file`,
         { method: "POST", body: fd },
       );
+    },
+    replaceAnalyze: (bankId: string, file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return request<BankReplaceAnalyzeOut>(`/banks/${bankId}/replace-analyze`, {
+        method: "POST",
+        body: fd,
+      });
+    },
+    replace: (bankId: string, file: File) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return request<Bank>(`/banks/${bankId}/replace`, {
+        method: "POST",
+        body: fd,
+      });
     },
     list: () => request<Bank[]>("/banks"),
     stats: (id: string) => request<BankStats>(`/banks/${id}/stats`),

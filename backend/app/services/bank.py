@@ -6,10 +6,12 @@
 import json
 import logging
 import random
+import re
 import shutil
+import uuid
 from io import BytesIO
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -351,6 +353,233 @@ async def update_question(
 
     await db.commit()
     return q, recalibrated_attempt
+
+
+def _normalize_title_for_match(title: str) -> str:
+    t = re.sub(r"\s+", " ", (title or "").strip())
+    return t.replace("(", "（").replace(")", "）")
+
+
+def _normalize_options_for_match(options: list[str]) -> frozenset[str]:
+    return frozenset(re.sub(r"\s+", " ", opt.strip()) for opt in options if opt and opt.strip())
+
+
+def align_questions_for_replacement(
+    old_questions: list[BankQuestion], new_questions: list[dict]
+) -> tuple[list[tuple[BankQuestion, dict]], list[dict], list[BankQuestion]]:
+    """将新表格题目与已有题目按内容指纹对齐，区分出：匹配题对（继承旧ID）、新增题、淘汰题。"""
+    lvl1_pool: dict[tuple[str, str, frozenset[str]], list[BankQuestion]] = {}
+    lvl2_pool: dict[tuple[str, str], list[BankQuestion]] = {}
+
+    for q in old_questions:
+        norm_t = _normalize_title_for_match(q.title)
+        raw_opts = json.loads(q.options) if q.options else []
+        norm_o = _normalize_options_for_match(raw_opts) if q.qtype != QUESTION_JUDGE else frozenset()
+
+        k1 = (q.qtype, norm_t, norm_o)
+        lvl1_pool.setdefault(k1, []).append(q)
+
+        k2 = (q.qtype, norm_t)
+        lvl2_pool.setdefault(k2, []).append(q)
+
+    matched: list[tuple[BankQuestion, dict]] = []
+    unmatched_new: list[dict] = []
+    used_old_ids: set[str] = set()
+
+    # 第一轮：Level 1 严格匹配（题型 + 规范化题干 + 规范化选项集合完全一致）
+    for nq in new_questions:
+        norm_t = _normalize_title_for_match(nq["title"])
+        norm_o = _normalize_options_for_match(nq.get("options", [])) if nq["qtype"] != QUESTION_JUDGE else frozenset()
+        k1 = (nq["qtype"], norm_t, norm_o)
+
+        candidates = lvl1_pool.get(k1, [])
+        found_old = None
+        while candidates:
+            cand = candidates.pop(0)
+            if cand.id not in used_old_ids:
+                found_old = cand
+                break
+
+        if found_old:
+            used_old_ids.add(found_old.id)
+            matched.append((found_old, nq))
+        else:
+            unmatched_new.append(nq)
+
+    # 第二轮：Level 2 题干唯一回退匹配（针对选项文字修正或增减选项场景，题干长且双方均全局唯一）
+    added: list[dict] = []
+    for nq in unmatched_new:
+        norm_t = _normalize_title_for_match(nq["title"])
+        k2 = (nq["qtype"], norm_t)
+
+        candidates = [c for c in lvl2_pool.get(k2, []) if c.id not in used_old_ids]
+        if len(norm_t) >= 6 and len(candidates) == 1:
+            found_old = candidates[0]
+            used_old_ids.add(found_old.id)
+            matched.append((found_old, nq))
+        else:
+            added.append(nq)
+
+    removed = [q for q in old_questions if q.id not in used_old_ids]
+    return matched, added, removed
+
+
+async def analyze_bank_replacement(
+    db: AsyncSession,
+    bank: QuestionBank,
+    new_questions: list[dict],
+    new_file_name: str,
+    skipped_total: int = 0,
+) -> dict:
+    """对比当前题库与新表格题目，计算保留、新增、移出以及答案校准指标，纯分析不写库。"""
+    old_questions = (
+        await db.scalars(
+            select(BankQuestion).where(BankQuestion.bank_id == bank.id).order_by(BankQuestion.seq)
+        )
+    ).all()
+
+    latest_atts = await latest_attempts(db, bank.id)
+    matched, added, removed = align_questions_for_replacement(old_questions, new_questions)
+
+    answered_retained = 0
+    unanswered_retained = 0
+    recalibrated_count = 0
+    samples_recalibrated = []
+
+    for old_q, new_q in matched:
+        att = latest_atts.get(old_q.id)
+        if att:
+            answered_retained += 1
+        else:
+            unanswered_retained += 1
+
+        if new_q["answer"] != old_q.answer:
+            recalibrated_count += 1
+            if len(samples_recalibrated) < 5:
+                sample_item = {
+                    "title": new_q["title"],
+                    "qtype": new_q["qtype"],
+                    "old_answer": old_q.answer_raw or old_q.answer,
+                    "new_answer": new_q["answer_raw"] or new_q["answer"],
+                    "user_answer": None,
+                    "recalibrated_passed": None,
+                }
+                if att:
+                    submitted = [x.strip() for x in att.content.split(",") if x.strip()]
+                    new_passed = judge_answer(new_q["qtype"], new_q["answer"], submitted)
+                    sample_item["user_answer"] = att.content
+                    sample_item["recalibrated_passed"] = new_passed
+                samples_recalibrated.append(sample_item)
+
+    return {
+        "bank_id": bank.id,
+        "bank_name": bank.name,
+        "new_source_file": new_file_name,
+        "current_total": len(old_questions),
+        "new_total": len(new_questions),
+        "matched_count": len(matched),
+        "answered_retained": answered_retained,
+        "unanswered_retained": unanswered_retained,
+        "recalibrated_count": recalibrated_count,
+        "removed_count": len(removed),
+        "added_count": len(added),
+        "skipped_total": skipped_total,
+        "samples_recalibrated": samples_recalibrated,
+        "samples_removed": [q.title for q in removed[:5]],
+        "samples_added": [q["title"] for q in added[:5]],
+    }
+
+
+async def replace_bank_with_questions(
+    db: AsyncSession,
+    bank: QuestionBank,
+    new_questions: list[dict],
+    new_file_name: str,
+    file_bytes: bytes,
+) -> QuestionBank:
+    """全量替换题库题目并继承历史作答记录：对齐保留旧ID、重排seq、重判改对错题、清理移出题。"""
+    old_questions = (
+        await db.scalars(
+            select(BankQuestion).where(BankQuestion.bank_id == bank.id).order_by(BankQuestion.seq)
+        )
+    ).all()
+
+    latest_atts = await latest_attempts(db, bank.id)
+    matched, added, removed = align_questions_for_replacement(old_questions, new_questions)
+
+    matched_old_lookup: dict[int, BankQuestion] = {}
+    for old_q, nq in matched:
+        matched_old_lookup[id(nq)] = old_q
+
+    # 1. 清理被移除的题目（先清理关联作答流水，防外键错误与孤儿脏数据）
+    if removed:
+        removed_ids = [q.id for q in removed]
+        await db.execute(delete(BankAttempt).where(BankAttempt.question_id.in_(removed_ids)))
+        await db.execute(delete(BankQuestion).where(BankQuestion.id.in_(removed_ids)))
+
+    # 2. 按新表格顺序更新对齐题目并插入新题目
+    for seq_idx, nq in enumerate(new_questions, 1):
+        old_q = matched_old_lookup.get(id(nq))
+        if old_q:
+            old_q.seq = seq_idx
+            old_q.title = nq["title"]
+            old_q.options = json.dumps(nq["options"], ensure_ascii=False)
+            old_q.difficulty = nq["difficulty"]
+            old_q.explanation = nq["explanation"]
+
+            if old_q.answer != nq["answer"]:
+                old_q.answer = nq["answer"]
+                old_q.answer_raw = nq["answer_raw"]
+                old_q.ai_explanation = ""
+
+                att = latest_atts.get(old_q.id)
+                if att:
+                    submitted = [x.strip() for x in att.content.split(",") if x.strip()]
+                    new_passed = judge_answer(old_q.qtype, old_q.answer, submitted)
+                    if att.passed != new_passed:
+                        att.passed = new_passed
+        else:
+            db.add(
+                BankQuestion(
+                    bank_id=bank.id,
+                    seq=seq_idx,
+                    qtype=nq["qtype"],
+                    title=nq["title"],
+                    options=json.dumps(nq["options"], ensure_ascii=False),
+                    answer=nq["answer"],
+                    answer_raw=nq["answer_raw"],
+                    difficulty=nq["difficulty"],
+                    explanation=nq["explanation"],
+                )
+            )
+
+    # 3. 更新题库元信息
+    bank.question_count = len(new_questions)
+    if new_file_name:
+        bank.source_file = new_file_name
+
+    # 4. 安全两阶段替换原件归档文件
+    ext = "." + new_file_name.rsplit(".", 1)[-1].lower() if "." in new_file_name else ".xlsx"
+    bank_dir = settings.data_dir / "banks" / bank.id
+    bank_dir.mkdir(parents=True, exist_ok=True)
+    temp_archive = bank_dir / f".replace_tmp_{uuid.uuid4().hex[:8]}{ext}"
+    temp_archive.write_bytes(file_bytes)
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        temp_archive.unlink(missing_ok=True)
+        raise
+
+    try:
+        for old_orig in bank_dir.glob("original.*"):
+            old_orig.unlink(missing_ok=True)
+        temp_archive.replace(bank_dir / f"original{ext}")
+    except Exception as e:
+        logger.warning("归档文件重命名异常（不影响数据库正常使用）：%s", e)
+
+    return bank
 
 
 async def latest_attempts(db: AsyncSession, bank_id: str) -> dict[str, BankAttempt]:

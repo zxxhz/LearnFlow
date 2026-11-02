@@ -16,6 +16,7 @@ import {
 import type { Bank, BankAnalysis } from "../../lib/types";
 import BankPromptModal from "./BankPromptModal";
 import PasteImportModal from "./PasteImportModal";
+import ReplaceBankModal from "./ReplaceBankModal";
 
 const TYPE_LABEL: Record<string, string> = { single: "单选", multi: "多选", judge: "判断" };
 
@@ -28,6 +29,7 @@ export default function BankListPage() {
   const [renameTarget, setRenameTarget] = useState<Bank | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [promptTarget, setPromptTarget] = useState<Bank | null>(null);
+  const [replaceTarget, setReplaceTarget] = useState<Bank | null>(null);
 
   const rename = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => api.banks.rename(id, name),
@@ -121,6 +123,14 @@ export default function BankListPage() {
                 >
                   ✏️ 重命名
                 </Button>
+                <Button
+                  variant="ghost"
+                  className="shrink-0 text-xs text-brand-600 dark:text-brand-400"
+                  onClick={() => setReplaceTarget(b)}
+                  title="使用新表格替换当前题库（支持精简题目、保留已做题目状态）"
+                >
+                  🔄 替换表格
+                </Button>
                 <Button variant="ghost" className="shrink-0 text-xs" onClick={() => setDeleteTarget(b)}>
                   删除
                 </Button>
@@ -193,6 +203,20 @@ export default function BankListPage() {
           qc.invalidateQueries({ queryKey: ["banks"] });
         }}
       />
+
+      {replaceTarget && (
+        <ReplaceBankModal
+          open={!!replaceTarget}
+          bankId={replaceTarget.id}
+          bankName={replaceTarget.name}
+          currentCount={replaceTarget.question_count}
+          onClose={() => setReplaceTarget(null)}
+          onSuccess={() => {
+            qc.invalidateQueries({ queryKey: ["banks"] });
+            setReplaceTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }

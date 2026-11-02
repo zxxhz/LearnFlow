@@ -13,9 +13,10 @@ import BankQuestionCard, { visibleOptions } from "./BankQuestionCard";
 import BankPromptModal from "./BankPromptModal";
 import AddQuestionModal from "./AddQuestionModal";
 import EditQuestionModal from "./EditQuestionModal";
+import ReplaceBankModal from "./ReplaceBankModal";
 import MarkdownLite from "../../components/MarkdownLite";
 import { createStreamFlusher } from "../../lib/streamFlusher";
-import type { BankAttemptResult, BankQuestion, BankRound } from "../../lib/types";
+import type { Bank, BankAttemptResult, BankQuestion, BankRound } from "../../lib/types";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 const KATEX_DELIMITERS = [
@@ -119,6 +120,19 @@ export default function BankDrillPage() {
         : `题目内容与选项已成功更新！`
     );
     setTimeout(() => setToastMsg(""), 3500);
+  };
+
+  const [replaceModalOpen, setReplaceModalOpen] = useState(false);
+
+  const handleReplaceSuccess = (updatedBank: Bank) => {
+    setDraft(null);
+    setRound(null);
+    setIdx(0);
+    setResults({});
+    setAiExplains({});
+    qc.invalidateQueries({ queryKey: ["banks"] });
+    setToastMsg(`题库已成功替换更新为「${updatedBank.source_file}」，已做题作答状态完好继承！`);
+    setTimeout(() => setToastMsg(""), 4000);
   };
 
   // 轮中任何变化落盘；round 为空（无轮）时不写，round 归属不符（路由复用残留）也不写。
@@ -416,6 +430,15 @@ export default function BankDrillPage() {
             <span>➕</span>
             <span>增加题目</span>
           </button>
+          <button
+            type="button"
+            onClick={() => setReplaceModalOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2.5 py-1 text-xs font-semibold text-gray-700 dark:text-gray-300 hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-400 transition"
+            title="用新表格全量替换当前题库（支持精简题目、保留已有作答记录与错题池状态）"
+          >
+            <span>🔄</span>
+            <span>替换/精简表格</span>
+          </button>
           <FontSizeControl
             value={drillFontSize}
             onChange={setDrillFontSize}
@@ -594,6 +617,14 @@ export default function BankDrillPage() {
         bankName={bank.name}
         onClose={() => setAddModalOpen(false)}
         onSuccess={handleAddSuccess}
+      />
+      <ReplaceBankModal
+        open={replaceModalOpen}
+        bankId={bank.id}
+        bankName={bank.name}
+        currentCount={bank.question_count}
+        onClose={() => setReplaceModalOpen(false)}
+        onSuccess={handleReplaceSuccess}
       />
       {toastMsg && (
         <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-4 py-2.5 text-xs font-semibold text-emerald-800 dark:text-emerald-200 shadow-lg animate-fadeIn">
