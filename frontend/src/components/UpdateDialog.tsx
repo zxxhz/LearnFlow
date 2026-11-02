@@ -52,7 +52,17 @@ function AutoUpdateButton({ update }: { update: UpdateCheckResult }) {
       console.warn("镜像一键更新失败，尝试回退到官方 updater 直连通道:", mirrorErr);
       // 2. 备用回退机制：若镜像源出现网络异常，尝试回退到 Tauri 原生直连通道
       try {
+        let lastBytes = 0;
+        let lastTime = Date.now();
         await tauriSelfUpdate((done, total) => {
+          const now = Date.now();
+          const dt = (now - lastTime) / 1000;
+          if (dt >= 0.3) {
+            const spd = Math.round(((done - lastBytes) / dt / (1024 * 1024)) * 100) / 100;
+            if (spd > 0) setSpeed(spd);
+            lastBytes = done;
+            lastTime = now;
+          }
           setPct(total ? Math.min(100, Math.round((done / total) * 100)) : null);
         });
         setPhase("installing");

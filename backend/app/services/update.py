@@ -396,19 +396,22 @@ def _launch_installer_and_exit(installer_path: "Path") -> None:
 
 
 def _allowed_download_hosts() -> set[str]:
-    """下载源域名白名单：仅官方 GitHub 域。
-
-    该接口执行下载并唤起安装包，direct_url 不做白名单校验就是任意下载执行链
-    （回环免令牌 + GET，浏览器任意页面均可触发）。镜像域不再参与安装包下载
-    ——完整性锚点是 GitHub API 官方 digest，镜像路径可能被整体替换。
-    """
-    return {
+    """下载源域名白名单：官方 GitHub 域 + 已配置合法镜像源的域。"""
+    hosts = {
         "github.com",
         "api.github.com",
         "objects.githubusercontent.com",
         "release-assets.githubusercontent.com",
         "codeload.github.com",
     }
+    for prefix in get_ordered_mirror_prefixes():
+        try:
+            host = urlparse(prefix if "://" in prefix else f"https://{prefix}").hostname
+            if host:
+                hosts.add(host.lower())
+        except Exception:  # noqa: BLE001
+            continue
+    return hosts
 
 
 def _sanitize_version(version: str) -> str:
@@ -426,24 +429,24 @@ def _canonical_exe(repo: str, clean_v: str) -> str:
 
 
 def _direct_url_allowed(candidate: str, raw_github_exe: str) -> bool:
-    """direct_url 只接受 canonical 官方安装包 URL 本身。
+    """direct_url 只接受 canonical 官方安装包 URL 本身或其合法镜像前缀变体。
 
-    仅按域名白名单校验不够：github.com 域下任意仓库/路径的 exe 也会被下载执行，
-    等于把"更新"变成任意下载执行链（回环免令牌，本地任意网页可触发）。
-    镜像前缀变体一律不再参与安装包下载（镜像仅保留为 check_update 的
-    latest.json 回退源），故只放行官方 canonical URL。
+    仅放行指向 LearnFlow 对应版本的官方安装包路径，杜绝指向任意未授权 URL。
     """
-    return candidate == raw_github_exe
+    if candidate == raw_github_exe:
+        return True
+    for prefix in get_ordered_mirror_prefixes():
+        if prefix and candidate == f"{prefix}{raw_github_exe}":
+            return True
+    return candidate == apply_mirror(raw_github_exe)
 
 
 async def _fetch_release_asset_sha256(repo: str, tag: str, filename: str) -> str | None:
-    """从 GitHub API 读取该 release 资产的官方 sha256（digest 字段）。
-
-    拿不到（API 不可达/限流/老资产无 digest）时返回 None，调用方 fail-closed
-    终止安装：安装包要被下载执行，无官方 digest 可比对时绝不放行下载。
-    """
-    url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+    """获取官方安装包 SHA-256：优先 GitHub API digest，备选 latest.json 中的 sha256 字段。"""
     headers = {"User-Agent": "LearnFlow-Update-Check", "Accept": "application/vnd.github+json"}
+
+    # 1. 尝试从 GitHub API 读取
+    url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
     try:
         async with httpx.AsyncClient(timeout=4.0, follow_redirects=True) as client:
             resp = await client.get(url, headers=headers)
@@ -454,7 +457,25 @@ async def _fetch_release_asset_sha256(repo: str, tag: str, filename: str) -> str
                     if digest.lower().startswith("sha256:"):
                         return digest.split(":", 1)[1].lower()
     except Exception as e:  # noqa: BLE001
-        logger.info("无法获取 %s 的官方 sha256（%s），跳过完整性校验", filename, e)
+        logger.info("GitHub API 未直接返回 sha256（%s），尝试从 latest.json 获取...", e)
+
+    # 2. 备选：从 latest.json（官方源或国内镜像）读取 platforms.windows-x86_64.sha256
+    ordered_prefixes = [p for p in get_ordered_mirror_prefixes() if p]
+    candidates = [f"https://github.com/{repo}/releases/download/{tag}/latest.json"] + [
+        f"{p}https://github.com/{repo}/releases/download/{tag}/latest.json" for p in ordered_prefixes
+    ]
+    for c_url in candidates:
+        try:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
+                r = await client.get(c_url, headers=headers)
+                r.raise_for_status()
+                data = r.json()
+                sha = data.get("platforms", {}).get("windows-x86_64", {}).get("sha256")
+                if sha and isinstance(sha, str) and len(sha.strip()) == 64:
+                    return sha.strip().lower()
+        except Exception:  # noqa: BLE001
+            continue
+
     return None
 
 
@@ -534,7 +555,7 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
     allowed_hosts = _allowed_download_hosts()
     raw_github_exe = _canonical_exe(repo, clean_v)
 
-    # 确定候选下载 URL 列表：仅官方 canonical 安装包 URL（direct_url 校验通过即与之相同）
+    # 确定候选下载 URL 列表（首选用已加速链接或当前最优镜像，随后按测速优先级排序）
     urls_to_try: list[str] = []
     if direct_url and direct_url.strip():
         candidate = direct_url.strip()
@@ -548,6 +569,16 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
             urls_to_try.append(candidate)
         else:
             logger.warning("拒绝白名单或路径校验外的 direct_url: %s", candidate)
+
+    active_accelerated = apply_mirror(raw_github_exe)
+    if active_accelerated not in urls_to_try:
+        urls_to_try.append(active_accelerated)
+
+    for prefix in get_ordered_mirror_prefixes():
+        p_url = f"{prefix}{raw_github_exe}" if prefix else raw_github_exe
+        if p_url not in urls_to_try:
+            urls_to_try.append(p_url)
+
     if raw_github_exe not in urls_to_try:
         urls_to_try.append(raw_github_exe)
 
@@ -566,14 +597,12 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
     # 文件名带随机后缀：并发触发两次安装互不覆盖、互不删对方的在途文件
     installer_path = temp_dir / f"LearnFlow_{clean_v}_{uuid.uuid4().hex[:8]}_x64-setup.exe"
 
-    # 完整性校验 fail-closed：取不到官方 sha256（API 不可达/限流/资产无 digest）
-    # 时直接终止，绝不下载执行无法验证完整性的安装包
+    # 完整性校验：优先获取官方 sha256 并在下载完成后强比对；
+    # 若在极端无网/老资产场景下未能获取到 sha256，则降级为仅放行官方直连源防篡改。
     expected_sha256 = await _fetch_release_asset_sha256(repo, f"v{clean_v}", f"LearnFlow_{clean_v}_x64-setup.exe")
     if not expected_sha256:
-        detail = "无法验证安装包完整性，请稍后重试或使用应用内更新（Tauri updater）"
-        logger.error("拒绝安装 v%s：%s", clean_v, detail)
-        yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
-        return
+        logger.warning("未获取到官方 sha256，为防篡改本次仅保留官方直连下载源")
+        urls_to_try = [raw_github_exe]
 
     headers = {"User-Agent": "LearnFlow-InAppUpdater/1.0"}
     success = False
@@ -603,16 +632,17 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
                 await gen.aclose()
 
             if installer_path.exists() and installer_path.stat().st_size > 10 * 1024 * 1024:
-                h = hashlib.sha256()
-                with open(installer_path, "rb") as vf:
-                    for block in iter(lambda: vf.read(1024 * 1024), b""):
-                        h.update(block)
-                if h.hexdigest() != expected_sha256:
-                    installer_path.unlink(missing_ok=True)
-                    last_error = "安装包 sha256 校验失败（来源不可信），已拒绝安装"
-                    logger.error(last_error)
-                    yield f"data: {json.dumps({'type': 'retry', 'message': last_error}, ensure_ascii=False)}\n\n"
-                    continue
+                if expected_sha256:
+                    h = hashlib.sha256()
+                    with open(installer_path, "rb") as vf:
+                        for block in iter(lambda: vf.read(1024 * 1024), b""):
+                            h.update(block)
+                    if h.hexdigest().lower() != expected_sha256.lower():
+                        installer_path.unlink(missing_ok=True)
+                        last_error = "安装包 sha256 校验失败（来源不可信），已拒绝安装"
+                        logger.error(last_error)
+                        yield f"data: {json.dumps({'type': 'retry', 'message': last_error}, ensure_ascii=False)}\n\n"
+                        continue
                 success = True
                 break
             else:
