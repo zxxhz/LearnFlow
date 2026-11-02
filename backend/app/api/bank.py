@@ -178,7 +178,7 @@ def _format_parsed_questions(questions: list[ParsedTextQuestionItem]) -> list[di
 
         if q.qtype == "judge":
             opts: list[str] = []
-            ans = "A" if q.answer.strip().upper() in ("A", "TRUE", "T", "对", "正确", "1", "YES") else "B"
+            ans = "A" if q.answer.strip().upper() in ("A", "TRUE", "T", "对", "正确", "1", "YES", "√", "是") else "B"
             ans_raw = "正确" if ans == "A" else "错误"
         else:
             raw_opts = [opt.strip() for opt in q.options if opt.strip()]

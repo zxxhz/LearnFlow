@@ -3,6 +3,7 @@
 表格布局对齐《浙江省大学生网络与信息安全竞赛题库》（原刷题应用 bank.py 实测验证）：
 0 题型 | 1 题干 | 2-9 选项A-H | 10 正确答案 | 11 备用 | 12 解析 | 13 难度
 """
+import asyncio
 import json
 import logging
 import random
@@ -254,6 +255,19 @@ async def create_bank(
     return bank
 
 
+# 按题库 id 的进程内写锁：append/replace 的「读 max_seq/count → 写 → commit」全程串行，
+# 防局域网多端并发追加时 seq 撞号与 question_count 丢更新
+_bank_locks: dict[str, asyncio.Lock] = {}
+
+
+def _bank_lock(bank_id: str) -> asyncio.Lock:
+    lock = _bank_locks.get(bank_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _bank_locks[bank_id] = lock
+    return lock
+
+
 async def append_questions(
     db: AsyncSession, bank: QuestionBank, formatted_questions: list[dict]
 ) -> int:
@@ -261,34 +275,41 @@ async def append_questions(
     if not formatted_questions:
         return 0
 
-    count_and_seq = (
-        await db.execute(
-            select(
-                func.count(BankQuestion.id).label("cnt"),
-                func.coalesce(func.max(BankQuestion.seq), 0).label("max_seq"),
-            ).where(BankQuestion.bank_id == bank.id)
-        )
-    ).one()
-    current_cnt = int(count_and_seq.cnt or 0)
-    max_seq = int(count_and_seq.max_seq or 0)
-
-    for i, q in enumerate(formatted_questions, 1):
-        db.add(
-            BankQuestion(
-                bank_id=bank.id,
-                seq=max_seq + i,
-                qtype=q["qtype"],
-                title=q["title"],
-                options=json.dumps(q["options"], ensure_ascii=False),
-                answer=q["answer"],
-                answer_raw=q["answer_raw"],
-                difficulty=q["difficulty"],
-                explanation=q["explanation"],
+    async with _bank_lock(bank.id):
+        count_and_seq = (
+            await db.execute(
+                select(
+                    func.count(BankQuestion.id).label("cnt"),
+                    func.coalesce(func.max(BankQuestion.seq), 0).label("max_seq"),
+                ).where(BankQuestion.bank_id == bank.id)
             )
-        )
+        ).one()
+        max_seq = int(count_and_seq.max_seq or 0)
 
-    bank.question_count = current_cnt + len(formatted_questions)
-    await db.commit()
+        for i, q in enumerate(formatted_questions, 1):
+            db.add(
+                BankQuestion(
+                    bank_id=bank.id,
+                    seq=max_seq + i,
+                    qtype=q["qtype"],
+                    title=q["title"],
+                    options=json.dumps(q["options"], ensure_ascii=False),
+                    answer=q["answer"],
+                    answer_raw=q["answer_raw"],
+                    difficulty=q["difficulty"],
+                    explanation=q["explanation"],
+                )
+            )
+        # flush 后按真实行数回填 count（消除读改写竞态的丢失更新）
+        await db.flush()
+        bank.question_count = int(
+            (
+                await db.execute(
+                    select(func.count(BankQuestion.id)).where(BankQuestion.bank_id == bank.id)
+                )
+            ).scalar_one()
+        )
+        await db.commit()
     return len(formatted_questions)
 
 
@@ -302,14 +323,20 @@ async def update_question(
     difficulty: str | None = None,
     recalibrate_attempts: bool = True,
 ) -> tuple[BankQuestion, BankAttempt | None]:
-    """更新题目内容/选项/答案，并可选按新答案自动重判最新作答记录（若改错为对则自动移出错题池）。"""
+    """更新题目内容/选项/答案，并可选按新答案自动重判最新作答记录（若改错为对则自动移出错题池）。
+
+    选项内容/顺序变更也触发重判：旧作答字母按新选项位置解释，语义可能漂移。
+    """
     if title is not None and title.strip():
         q.title = title.strip()
 
+    content_changed = False
     if q.qtype == QUESTION_JUDGE:
         q.options = "[]"
         if answer is not None and answer.strip():
-            ans_clean = "A" if answer.strip().upper() in ("A", "TRUE", "T", "对", "正确", "1", "YES") else "B"
+            ans_clean = "A" if answer.strip().upper() in ("A", "TRUE", "T", "对", "正确", "1", "YES", "√", "是") else "B"
+            if ans_clean != q.answer:
+                content_changed = True
             q.answer = ans_clean
             q.answer_raw = "正确" if ans_clean == "A" else "错误"
     else:
@@ -318,9 +345,14 @@ async def update_question(
             if len(raw_opts) < 2:
                 raise ValueError("选择题至少需要保留 2 个有效选项")
             opts = (raw_opts + [""] * 8)[:8]
-            q.options = json.dumps(opts, ensure_ascii=False)
+            new_options_json = json.dumps(opts, ensure_ascii=False)
+            if new_options_json != q.options:
+                content_changed = True
+            q.options = new_options_json
         if answer is not None and answer.strip():
             ans_norm = normalize_answer(q.qtype, answer.strip(), q.seq)
+            if ans_norm != q.answer:
+                content_changed = True
             q.answer = ans_norm
             q.answer_raw = ans_norm.replace(",", "、")
 
@@ -330,11 +362,12 @@ async def update_question(
     if difficulty is not None and difficulty.strip():
         q.difficulty = difficulty.strip()
 
-    # 题目内容或参考答案变更后，清空旧 AI 解析，避免保留基于旧错误答案的解释
-    q.ai_explanation = ""
+    # 仅在题目内容/参考答案实际变化时清空旧 AI 解析（只改难度/解析不清，省一次重新生成）
+    if content_changed:
+        q.ai_explanation = ""
 
     recalibrated_attempt = None
-    if recalibrate_attempts:
+    if recalibrate_attempts and content_changed:
         latest_att = (
             await db.scalars(
                 select(BankAttempt)
@@ -406,7 +439,8 @@ def align_questions_for_replacement(
         else:
             unmatched_new.append(nq)
 
-    # 第二轮：Level 2 题干唯一回退匹配（针对选项文字修正或增减选项场景，题干长且双方均全局唯一）
+    # 第二轮：Level 2 题干唯一回退匹配（针对选项文字修正或增减选项场景，题干长且双方均全局唯一）。
+    # 追加选项集合 Jaccard 相似度 ≥0.5 护栏：「下列说法正确的是」这类同题干不同题不会被误继承。
     added: list[dict] = []
     for nq in unmatched_new:
         norm_t = _normalize_title_for_match(nq["title"])
@@ -415,10 +449,25 @@ def align_questions_for_replacement(
         candidates = [c for c in lvl2_pool.get(k2, []) if c.id not in used_old_ids]
         if len(norm_t) >= 6 and len(candidates) == 1:
             found_old = candidates[0]
-            used_old_ids.add(found_old.id)
-            matched.append((found_old, nq))
-        else:
-            added.append(nq)
+            old_opts = json.loads(found_old.options) if found_old.options else []
+            old_set = (
+                _normalize_options_for_match(old_opts)
+                if found_old.qtype != QUESTION_JUDGE
+                else frozenset()
+            )
+            new_set = (
+                _normalize_options_for_match(nq.get("options", []))
+                if nq["qtype"] != QUESTION_JUDGE
+                else frozenset()
+            )
+            union = old_set | new_set
+            # 双侧均无选项（判断题）视为完全一致；否则要求交并比 ≥0.5
+            similar = not union or len(old_set & new_set) / len(union) >= 0.5
+            if similar:
+                used_old_ids.add(found_old.id)
+                matched.append((found_old, nq))
+                continue
+        added.append(nq)
 
     removed = [q for q in old_questions if q.id not in used_old_ids]
     return matched, added, removed
@@ -498,6 +547,17 @@ async def replace_bank_with_questions(
     file_bytes: bytes,
 ) -> QuestionBank:
     """全量替换题库题目并继承历史作答记录：对齐保留旧ID、重排seq、重判改对错题、清理移出题。"""
+    async with _bank_lock(bank.id):
+        return await _replace_bank_locked(db, bank, new_questions, new_file_name, file_bytes)
+
+
+async def _replace_bank_locked(
+    db: AsyncSession,
+    bank: QuestionBank,
+    new_questions: list[dict],
+    new_file_name: str,
+    file_bytes: bytes,
+) -> QuestionBank:
     old_questions = (
         await db.scalars(
             select(BankQuestion).where(BankQuestion.bank_id == bank.id).order_by(BankQuestion.seq)
@@ -511,23 +571,29 @@ async def replace_bank_with_questions(
     for old_q, nq in matched:
         matched_old_lookup[id(nq)] = old_q
 
-    # 1. 清理被移除的题目（先清理关联作答流水，防外键错误与孤儿脏数据）
+    # 1. 清理被移除的题目（先清理关联作答流水，防外键错误与孤儿脏数据）；
+    #    分批 in_（SQLite 绑定变量上限 32766，超大题库一次绑定会 500）
     if removed:
         removed_ids = [q.id for q in removed]
-        await db.execute(delete(BankAttempt).where(BankAttempt.question_id.in_(removed_ids)))
-        await db.execute(delete(BankQuestion).where(BankQuestion.id.in_(removed_ids)))
+        for i in range(0, len(removed_ids), 500):
+            chunk = removed_ids[i : i + 500]
+            await db.execute(delete(BankAttempt).where(BankAttempt.question_id.in_(chunk)))
+            await db.execute(delete(BankQuestion).where(BankQuestion.id.in_(chunk)))
 
-    # 2. 按新表格顺序更新对齐题目并插入新题目
+    # 2. 按新表格顺序更新对齐题目并插入新题目。
+    #    选项内容/顺序变化同样触发重判：旧作答字母按新选项位置解释，语义可能漂移
     for seq_idx, nq in enumerate(new_questions, 1):
         old_q = matched_old_lookup.get(id(nq))
         if old_q:
+            old_options_json = json.dumps(nq["options"], ensure_ascii=False)
+            content_changed = old_q.answer != nq["answer"] or old_options_json != old_q.options
             old_q.seq = seq_idx
             old_q.title = nq["title"]
-            old_q.options = json.dumps(nq["options"], ensure_ascii=False)
+            old_q.options = old_options_json
             old_q.difficulty = nq["difficulty"]
             old_q.explanation = nq["explanation"]
 
-            if old_q.answer != nq["answer"]:
+            if content_changed:
                 old_q.answer = nq["answer"]
                 old_q.answer_raw = nq["answer_raw"]
                 old_q.ai_explanation = ""
@@ -558,10 +624,19 @@ async def replace_bank_with_questions(
     if new_file_name:
         bank.source_file = new_file_name
 
-    # 4. 安全两阶段替换原件归档文件
+    # 4. 安全两阶段替换原件归档文件；顺手清理历史遗留的孤儿临时归档（>1h）
     ext = "." + new_file_name.rsplit(".", 1)[-1].lower() if "." in new_file_name else ".xlsx"
     bank_dir = settings.data_dir / "banks" / bank.id
     bank_dir.mkdir(parents=True, exist_ok=True)
+    import time as _time
+
+    now_ts = _time.time()
+    for stale_tmp in bank_dir.glob(".replace_tmp_*"):
+        try:
+            if now_ts - stale_tmp.stat().st_mtime > 3600:
+                stale_tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
     temp_archive = bank_dir / f".replace_tmp_{uuid.uuid4().hex[:8]}{ext}"
     temp_archive.write_bytes(file_bytes)
 

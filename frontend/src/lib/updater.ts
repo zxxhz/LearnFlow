@@ -2,6 +2,7 @@
 // 桌面壳内（__TAURI_INTERNALS__ 存在）走插件检查/下载/静默安装；浏览器与局域网模式返回 null，
 // 调用方回退「查看发布页」链接。latest.json 随 GitHub Release 发布（见 README 发布流程）。
 import { api } from "./api";
+import { notify } from "./notify";
 
 export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -118,6 +119,13 @@ export async function inAppMirrorUpdate(
             onProgress({ phase: "installing", percent: 100, message: ev.message });
             settle();
           } else if (ev.type === "error") {
+            if (settled) {
+              // 迟到的 error（Promise 已因 installing/流结束定格）：不能静默吞掉——
+              // 否则唤起安装包失败时 UI 永久卡在"正在打开安装包"且用户毫不知情
+              console.warn("更新流在完成后报告错误:", ev.detail);
+              notify("应用内更新未完成", ev.detail || "启动安装程序失败，请到发布页手动下载安装包。");
+              return;
+            }
             settle(new Error(ev.detail || "下载安装更新失败"));
           }
         },

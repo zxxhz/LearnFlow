@@ -38,7 +38,7 @@ function MindMapGenModal({
 
   const gen = useMutation({
     mutationFn: () =>
-      api.mindmaps.generate({ course_id: courseId, depth, prompt: "" }),
+      api.mindmaps.generate({ course_id: courseId, depth, prompt: "", include_details: includeDetails }),
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
       onClose();
@@ -47,8 +47,14 @@ function MindMapGenModal({
     onError: (e) => setError((e as Error).message),
   });
 
+  // 生成中禁止关闭 Modal（取消按钮不显示、Esc/遮罩无效）：
+  // 请求无 AbortSignal，关闭后成功仍会强制跳转、错误无人可见
+  const handleClose = () => {
+    if (!gen.isPending) onClose();
+  };
+
   return (
-    <Modal open={open} onClose={onClose} title={`🧠 为「${courseTitle}」生成思维导图`}>
+    <Modal open={open} onClose={handleClose} title={`🧠 为「${courseTitle}」生成思维导图`}>
       <div className="space-y-4 text-xs">
         <div className="rounded-lg bg-brand-50/60 dark:bg-brand-950/30 p-3 border border-brand-200/80 dark:border-brand-900/60 text-brand-800 dark:text-brand-300 leading-relaxed">
           基于课程大纲{includeDetails && doneCount > 0 ? "、各章内容摘要与核心知识点" : ""}自动构建知识导图：
@@ -96,9 +102,11 @@ function MindMapGenModal({
         {error && <ErrorText>{error}</ErrorText>}
 
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
-          <Button variant="ghost" onClick={onClose} className="text-xs">
-            取消
-          </Button>
+          {!gen.isPending && (
+            <Button variant="ghost" onClick={handleClose} className="text-xs">
+              取消
+            </Button>
+          )}
           <Button
             variant="primary"
             disabled={gen.isPending}

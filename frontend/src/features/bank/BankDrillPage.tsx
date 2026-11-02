@@ -16,7 +16,7 @@ import EditQuestionModal from "./EditQuestionModal";
 import ReplaceBankModal from "./ReplaceBankModal";
 import MarkdownLite from "../../components/MarkdownLite";
 import { createStreamFlusher } from "../../lib/streamFlusher";
-import type { Bank, BankAttemptResult, BankQuestion, BankRound } from "../../lib/types";
+import type { Bank, BankAttemptResult, BankQuestion, BankRound, BankWrongQuestion } from "../../lib/types";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 const KATEX_DELIMITERS = [
@@ -102,14 +102,36 @@ export default function BankDrillPage() {
   };
 
   const handleQuestionUpdated = (updatedQ: BankQuestion, updatedRes?: BankAttemptResult | null) => {
+    // 后端返回的是含答案/解析的完整题目（BankWrongQuestion 形态），仅类型上以 BankQuestion 传递
+    const q = updatedQ as BankQuestion & Partial<BankWrongQuestion>;
     // 1. 更新当前轮次中的题目对象
     if (round) {
-      const nextQuestions = round.questions.map((q) => (q.id === updatedQ.id ? updatedQ : q));
+      const nextQuestions = round.questions.map((item) => (item.id === updatedQ.id ? updatedQ : item));
       setRound({ ...round, questions: nextQuestions });
     }
-    // 2. 如果重判结果返回，更新当前 results
+    // 2. 重判结果优先；无重判时同步 result 答案字段（保证高亮/回填用新答案）
     if (updatedRes) {
       setResults((prev) => ({ ...prev, [updatedQ.id]: updatedRes }));
+    } else {
+      setResults((prev) => {
+        const old = prev[updatedQ.id];
+        if (!old) return prev;
+        return {
+          ...prev,
+          [updatedQ.id]: {
+            ...old,
+            answer: q.answer ?? old.answer,
+            correct_answer:
+              q.qtype === "judge"
+                ? q.answer === "A"
+                  ? "正确"
+                  : "错误"
+                : (q.answer ?? old.answer).replace(",", "、"),
+            answer_raw: q.answer_raw ?? old.answer_raw,
+            explanation: q.explanation ?? old.explanation,
+          },
+        };
+      });
     }
     // 3. 刷新题库统计缓存
     qc.invalidateQueries({ queryKey: ["banks"] });
@@ -718,13 +740,14 @@ function WrongQuestionItem({
     }
   }, [aiText]);
 
-  // AI 纠错建议检测
+  // AI 纠错建议检测（与 BankQuestionCard 同口径：结构化标记优先，回退分支收紧距离）
   const aiCorrectionMatch = useMemo(() => {
     if (!aiText) return null;
-    const tagMatch = aiText.match(/\[AI纠错建议[:：]\s*正确答案应为\s*([A-Za-z0-9,、正确错误对错]+)\]/i);
+    const tagMatch = aiText.match(/\[AI纠错建议[:：]\s*正确答案应为\s*([A-Ha-h0-9,、正确错误对错]+)\]/i);
     if (tagMatch) return tagMatch[1].trim();
-    if (/原题答案.*?(有误|错误|不准确|应为)/.test(aiText) || /参考答案.*?(有误|错误|不准确|应为)/.test(aiText)) {
-      const shouldBe = aiText.match(/(?:实际|正确答案|应为)\s*([A-D]|正确|错误)/);
+    const sentence = aiText.match(/[^。\n]*(?:原题|参考)答案[^。\n]{0,16}(?:有误|不准确|应为)[^。\n]*/);
+    if (sentence) {
+      const shouldBe = sentence[0].match(/(?:实际[是为]|应为|正确答案(?:应?为)?)\s*[:：]?\s*([A-H]|正确|错误)/);
       return shouldBe ? shouldBe[1] : "";
     }
     return null;
@@ -1004,6 +1027,7 @@ function WrongQuestionItem({
         onClose={() => setEditModalOpen(false)}
         onSuccess={(res) => {
           setCurQuestion(res.question);
+          // 无重判结果时由父级 handleQuestionUpdated 统一同步 result 答案字段
           onQuestionUpdated?.(res.question, res.recalibrated_result);
         }}
       />

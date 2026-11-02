@@ -762,6 +762,7 @@ export interface MindMapGenerateInput {
   depth?: number;
   import_content?: string;
   course_id?: string;
+  include_details?: boolean;
 }
 
 export interface MindMapImportInput {

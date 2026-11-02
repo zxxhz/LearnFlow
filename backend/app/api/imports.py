@@ -4,6 +4,7 @@ POST /api/courses/import/analyze  上传 md → 章节切分预览（+LLM 修饰
 POST /api/courses/import          按确认的切片创建课程（原文归档 + 知识点提取 + 自动出卡）
 POST /api/courses/import/photo-transcribe  拍照/上传图片 → 视觉 LLM 转写为 Markdown 学习材料
 """
+import asyncio
 import json
 import shutil
 import logging
@@ -161,7 +162,9 @@ async def import_photo_transcribe(
 
     返回 {content}；前端将其合成 File 复用现有 analyze/confirm 建课链路。
     """
-    data_urls = compress_to_data_urls(images, max_count=MAX_PHOTO_IMAGES)
+    # Pillow 解码/缩放是秒级 CPU 活：放线程池跑，避免冻结事件循环（SSE/心跳全停）
+    data_urls = await asyncio.to_thread(compress_to_data_urls, images, MAX_PHOTO_IMAGES)
+    hint = (hint or "").strip()[:2_000]
     try:
         adapter = await create_adapter_from_settings(db, scene="generation")
     except Exception as e:  # noqa: BLE001

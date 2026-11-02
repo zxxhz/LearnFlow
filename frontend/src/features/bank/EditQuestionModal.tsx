@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Modal, Button, Textarea, Input, Select, Spinner, ErrorText, Badge } from "../../components/ui";
 import { api } from "../../lib/api";
-import { visibleOptions } from "./BankQuestionCard";
 import type { BankQuestion, BankQuestionUpdateIn, BankQuestionUpdateOut, BankWrongQuestion } from "../../lib/types";
 
 interface Props {
@@ -46,12 +45,15 @@ export default function EditQuestionModal({
     setTitle(question.title);
     setDifficulty(question.difficulty || "普通");
 
-    // 解析当前选项
+    // 解析当前选项：选择题直接用原始 8 槽位数组并裁掉尾部空槽——
+    // 保留内部空槽的占位，保证字母位置与原题一致（用 visibleOptions 压缩回填会使含空槽题错位）
     if (question.qtype === "judge") {
       setOptions([]);
     } else {
-      const vis = visibleOptions(question);
-      setOptions(vis.length > 0 ? vis.map((v) => v.text) : ["", "", "", ""]);
+      const raw = (question as BankWrongQuestion).options || question.options || [];
+      const arr = [...raw];
+      while (arr.length > 2 && !String(arr[arr.length - 1] ?? "").trim()) arr.pop();
+      setOptions(arr.length > 0 ? arr.map((v) => String(v ?? "")) : ["", "", "", ""]);
     }
 
     // 正确答案：优先使用传入的标准答案或题目对象自身的答案
@@ -80,10 +82,18 @@ export default function EditQuestionModal({
 
   const handleRemoveOption = (idx: number) => {
     if (options.length <= 2) return;
-    const removedLetter = String.fromCharCode(65 + idx);
+    // 删除选项后，其后所有选项字母前移一位，答案字母同步重映射（否则答案指向错位内容）
     setOptions((prev) => prev.filter((_, i) => i !== idx));
-    const ansList = answer.split(",").filter((a) => a !== removedLetter);
-    setAnswer(ansList.length > 0 ? ansList.join(",") : "A");
+    const remap = (letterIdx: number) => (letterIdx > idx ? letterIdx - 1 : letterIdx);
+    const kept = answer
+      .split(",")
+      .map((a) => a.charCodeAt(0) - 65)
+      .filter((i) => i !== idx)
+      .map(remap)
+      .filter((i) => i >= 0)
+      .sort((a, b) => a - b)
+      .map((i) => String.fromCharCode(65 + i));
+    setAnswer(kept.length > 0 ? kept.join(",") : "A");
   };
 
   const handleToggleAnswer = (letter: string) => {
@@ -345,7 +355,7 @@ export default function EditQuestionModal({
           <label htmlFor="recalibrate-checkbox" className="text-[11px] text-gray-600 dark:text-gray-300 cursor-pointer">
             <strong className="font-semibold text-gray-800 dark:text-gray-200">自动根据新答案重新判定作答</strong>
             <p className="mt-0.5 text-gray-500 dark:text-gray-400">
-              勾选后，若您此前的作答符合修正后的新答案，系统将即时纠偏为「回答正确」，并自动将本题移出活跃错题池。
+              勾选后，若您此前的作答符合修正后的新答案，系统将即时纠偏为「回答正确」并移出错题池（存疑作答仍保留待重答）。
             </p>
           </label>
         </div>

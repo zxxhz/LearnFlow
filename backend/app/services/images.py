@@ -11,25 +11,32 @@ from PIL import Image
 
 # 单张原图上限（手机直出 JPEG 通常 2~8MB）
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+# 自设像素帽（5000 万像素 ≈ 8000×6000）：Pillow 默认炸弹阈值 89M~179M px 区间仅
+# warning 仍全量解码（约 0.5GB RGB 位图），这里收紧到安全区间
+_MAX_PIXELS = 50_000_000
 # 压缩后最长边与 JPEG 质量：1600px 在文档/题目拍摄场景下 OCR 细节与体积的最佳平衡
 _MAX_SIDE = 1600
 _JPEG_QUALITY = 82
 
 
 def _check_image(upload: UploadFile, index: int) -> bytes:
+    """校验并读取单张图片：先 seek 到尾部取真实大小再读，杜绝先整读进内存的 RAM 尖峰。"""
     name = upload.filename or f"image_{index + 1}"
     ctype = (upload.content_type or "").lower()
     if not ctype.startswith("image/"):
         raise HTTPException(status_code=400, detail=f"第 {index + 1} 个文件不是图片（收到：{name}），仅支持拍照或图片上传")
-    data = upload.file.read()
-    if not data:
+    f = upload.file
+    f.seek(0, 2)  # 文件部分是 SpooledTemporaryFile：先取大小再有界读取
+    size = f.tell()
+    f.seek(0)
+    if size == 0:
         raise HTTPException(status_code=400, detail=f"第 {index + 1} 个文件为空（{name}）")
-    if len(data) > MAX_IMAGE_BYTES:
+    if size > MAX_IMAGE_BYTES:
         raise HTTPException(
             status_code=400,
             detail=f"第 {index + 1} 张图片超过 10MB 上限（{name}），请拍摄后适当裁剪再上传",
         )
-    return data
+    return f.read(size)
 
 
 def compress_to_data_urls(uploads: list[UploadFile], max_count: int) -> list[str]:
@@ -47,6 +54,11 @@ def compress_to_data_urls(uploads: list[UploadFile], max_count: int) -> list[str
         raw = _check_image(upload, i)
         try:
             img = Image.open(io.BytesIO(raw))
+            if img.width * img.height > _MAX_PIXELS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"第 {i + 1} 张图片尺寸过大（{img.width}×{img.height}），请缩小后再上传",
+                )
             # 手机竖拍带 EXIF Orientation：不经 transpose 会横倒
             from PIL import ImageOps
 

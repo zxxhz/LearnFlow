@@ -123,7 +123,7 @@ async def generate_mindmap(data: MindMapGenerateRequest, db: AsyncSession = Depe
                 db,
                 course_id=data.course_id,
                 depth=data.depth,
-                include_details=True,
+                include_details=data.include_details,
             )
             course = res["course"]
             create_data = MindMapCreate(

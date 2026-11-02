@@ -142,10 +142,19 @@ export default function AddQuestionModal({ open, bankId, bankName, onClose, onSu
 
   const handleRemoveOption = (idx: number) => {
     if (options.length <= 2) return;
+    // 删除选项后，其后所有选项字母前移一位，答案字母同步重映射（否则答案指向错位内容）
     const removedLetter = String.fromCharCode(65 + idx);
     setOptions((prev) => prev.filter((_, i) => i !== idx));
-    const ansList = answer.split(",").filter((a) => a !== removedLetter);
-    setAnswer(ansList.length > 0 ? ansList.join(",") : "A");
+    const remap = (letterIdx: number) => (letterIdx > idx ? letterIdx - 1 : letterIdx);
+    const kept = answer
+      .split(",")
+      .map((a) => a.charCodeAt(0) - 65)
+      .filter((i) => i !== removedLetter.charCodeAt(0) - 65)
+      .map(remap)
+      .filter((i) => i >= 0)
+      .sort((a, b) => a - b)
+      .map((i) => String.fromCharCode(65 + i));
+    setAnswer(kept.length > 0 ? kept.join(",") : "A");
   };
 
   const handleToggleAnswer = (letter: string) => {
@@ -738,7 +747,14 @@ B. 选项2
                         <span>
                           <strong>答案：</strong>
                           <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                            {q.qtype === "judge" ? (q.answer === "A" ? "正确" : "错误") : q.answer}
+                            {q.qtype === "judge"
+                              ? // 与后端 judge 映射同口径：A/正确/对/√/是/TRUE/1/YES → 正确，其余 → 错误
+                                ["A", "正确", "对", "√", "是", "TRUE", "T", "1", "YES"].includes(
+                                  q.answer.trim().toUpperCase()
+                                )
+                                ? "正确"
+                                : "错误"
+                              : q.answer}
                           </span>
                         </span>
                         {q.explanation && (

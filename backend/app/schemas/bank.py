@@ -102,11 +102,13 @@ class BankReplaceAnalyzeOut(BaseModel):
 
 
 class BankQuestionUpdateIn(BaseModel):
-    title: str | None = None
-    options: list[str] | None = None
-    answer: str | None = None
-    explanation: str | None = None
-    difficulty: str | None = None
+    title: Annotated[str, StringConstraints(max_length=MAX_TITLE_LENGTH)] | None = None
+    options: (
+        list[Annotated[str, StringConstraints(max_length=MAX_OPTION_LENGTH)]] | None
+    ) = Field(default=None, max_length=8)
+    answer: Annotated[str, StringConstraints(max_length=120)] | None = None
+    explanation: Annotated[str, StringConstraints(max_length=MAX_TITLE_LENGTH)] | None = None
+    difficulty: Annotated[str, StringConstraints(max_length=20)] | None = None
     recalibrate_attempts: bool = True
 
 

@@ -169,6 +169,41 @@ class _AccessGuard:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
+            # 变更类 /api 请求的同源校验（对回环与局域网一视同仁）：
+            # multipart/form-data 与 form 编码属 CORS simple request，无 preflight，
+            # 回环免令牌端口上本机浏览器恶意页面可 drive-by 提交（如视觉调用烧额度）。
+            # 浏览器对 POST 必带 Origin；合法客户端（桌面壳/手机 PWA）Origin 与 Host 同源，
+            # 非浏览器客户端（curl）不带 Origin → 放行，不影响任何正常用法。
+            if scope.get("method") not in ("GET", "HEAD", "OPTIONS") and scope.get("path", "").startswith("/api/"):
+                headers = {k.lower(): v for k, v in scope.get("headers", [])}
+                origin = headers.get(b"origin", b"").decode("latin-1").strip()
+                sec_fetch_site = headers.get(b"sec-fetch-site", b"").decode("latin-1").strip().lower()
+                host_header = headers.get(b"host", b"").decode("latin-1").strip().lower()
+
+                def _reject() -> JSONResponse:
+                    return JSONResponse(status_code=403, content={"detail": "跨站请求已被拒绝"})
+
+                # Sec-Fetch-Site 由现代浏览器强制携带，非同源直接拒
+                if sec_fetch_site and sec_fetch_site not in ("same-origin", "none"):
+                    await _reject()(scope, receive, send)
+                    return
+                if origin:
+                    try:
+                        from urllib.parse import urlsplit
+
+                        o = urlsplit(origin)
+                        origin_host = (o.hostname or "").lower()
+                        origin_port = o.port or (443 if o.scheme == "https" else 80)
+                        # 服务端是纯 HTTP：Host 无端口即 80
+                        h_host, _, h_port = host_header.partition(":")
+                        host_port = int(h_port) if h_port else 80
+                        if origin_host != h_host or origin_port != host_port:
+                            await _reject()(scope, receive, send)
+                            return
+                    except Exception:  # noqa: BLE001  Origin 畸形按拒绝处理
+                        await _reject()(scope, receive, send)
+                        return
+
             client = scope.get("client")
             host = client[0] if client else ""
             if host.startswith("::ffff:"):  # IPv4-mapped IPv6 归一化（双栈绑定下的本机回环）

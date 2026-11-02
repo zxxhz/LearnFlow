@@ -7,7 +7,9 @@
 """
 import asyncio
 import logging
+import re
 import time
+from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -288,9 +290,10 @@ def _launch_installer_and_exit(installer_path: "Path") -> None:
 
         if sys.platform == "win32":
             try:
-                # 仅针对旧版桌面壳与后端映像名做非递归清理（严禁带 /T，防止误伤刚启动的安装包向导）
-                subprocess.run("taskkill /F /IM LearnFlow.exe >nul 2>&1", shell=True)
-                subprocess.run("taskkill /F /IM learnflow-backend.exe >nul 2>&1", shell=True)
+                # 仅针对旧版桌面壳与后端映像名做非递归清理（严禁带 /T，防止误伤刚启动的安装包向导）；
+                # 带 timeout：退出路径绝不能被外部命令挂起卡死
+                subprocess.run("taskkill /F /IM LearnFlow.exe >nul 2>&1", shell=True, timeout=10)
+                subprocess.run("taskkill /F /IM learnflow-backend.exe >nul 2>&1", shell=True, timeout=10)
             except Exception:  # noqa: BLE001
                 logger.exception("旧版本退出清理异常")
 
@@ -299,7 +302,6 @@ def _launch_installer_and_exit(installer_path: "Path") -> None:
 
     t = threading.Thread(target=_delayed_exit, daemon=True)
     t.start()
-    logger.info("已启动安装向导并安排旧进程退出: %s", installer_str)
     logger.info("已启动安装向导并安排旧进程退出: %s", installer_str)
 
 
@@ -350,7 +352,12 @@ def _direct_url_allowed(candidate: str, raw_github_exe: str) -> bool:
 
 
 async def _fetch_release_asset_sha256(repo: str, tag: str, filename: str) -> str | None:
-    """获取官方安装包 SHA-256：优先 GitHub API digest，备选 latest.json 中的 sha256 字段。"""
+    """获取官方安装包 SHA-256：优先 GitHub API digest，备选官方 latest.json 中的 sha256 字段。
+
+    安全红线：sha256 只从官方域（api.github.com / github.com）获取，**绝不从镜像取**——
+    镜像同时供给锚点与安装包即自洽通过，等价于无校验（完整性锚点必须与被校验对象无共同信任源）。
+    拿不到官方 sha256 时由调用方降级为仅官方直连下载源（镜像不参与该次更新）。
+    """
     headers = {"User-Agent": "LearnFlow-Update-Check", "Accept": "application/vnd.github+json"}
 
     # 1. 尝试从 GitHub API 读取
@@ -365,12 +372,12 @@ async def _fetch_release_asset_sha256(repo: str, tag: str, filename: str) -> str
                     if digest.lower().startswith("sha256:"):
                         return digest.split(":", 1)[1].lower()
     except Exception as e:  # noqa: BLE001
-        logger.info("GitHub API 未直接返回 sha256（%s），尝试从 latest.json 获取...", e)
+        logger.info("GitHub API 未直接返回 sha256（%s），尝试从官方 latest.json 获取...", e)
 
-    # 2. 备选：从 latest.json（官方源或国内镜像）读取 platforms.windows-x86_64.sha256
-    ordered_prefixes = [p for p in get_ordered_mirror_prefixes() if p]
-    candidates = [f"https://github.com/{repo}/releases/download/{tag}/latest.json"] + [
-        f"{p}https://github.com/{repo}/releases/download/{tag}/latest.json" for p in ordered_prefixes
+    # 2. 备选：仅官方 latest.json（镜像路径一律不信——镜像可能整体替换内容）
+    candidates = [
+        f"https://github.com/{repo}/releases/download/{tag}/latest.json",
+        f"https://raw.githubusercontent.com/{repo}/{tag}/latest.json",
     ]
     for c_url in candidates:
         try:
@@ -379,7 +386,7 @@ async def _fetch_release_asset_sha256(repo: str, tag: str, filename: str) -> str
                 r.raise_for_status()
                 data = r.json()
                 sha = data.get("platforms", {}).get("windows-x86_64", {}).get("sha256")
-                if sha and isinstance(sha, str) and len(sha.strip()) == 64:
+                if sha and isinstance(sha, str) and re.fullmatch(r"[0-9a-fA-F]{64}", sha.strip()):
                     return sha.strip().lower()
         except Exception:  # noqa: BLE001
             continue
@@ -443,7 +450,6 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
     import json
     import tempfile
     from pathlib import Path
-    from urllib.parse import urlparse
 
     repo = _effective_repo() or "zxxhz/LearnFlow"
     try:
@@ -569,11 +575,12 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
     # 下载成功：推送准备安装事件
     yield f"data: {json.dumps({'type': 'ready', 'percent': 100, 'message': '下载完成，正在打开新安装包…'}, ensure_ascii=False)}\n\n"
 
-    # 唤起安装包并安排安全退出
+    # 唤起安装包并安排安全退出。
+    # installing 事件必须在唤起**成功之后**发：若先发再唤起，唤起失败的 error 事件
+    # 会被前端 settled 标志吞掉（Promise 已定格），弹窗永久卡死且旧进程也不退出
     try:
-        yield f"data: {json.dumps({'type': 'installing', 'message': '新安装包已启动，请按向导完成安装…'}, ensure_ascii=False)}\n\n"
-        await asyncio.sleep(0.3)
         _launch_installer_and_exit(installer_path)
+        yield f"data: {json.dumps({'type': 'installing', 'message': '新安装包已启动，请按向导完成安装…'}, ensure_ascii=False)}\n\n"
     except Exception as e:
         logger.exception("启动安装程序异常: %s", e)
         yield f"data: {json.dumps({'type': 'error', 'detail': f'启动安装程序失败：{e}'}, ensure_ascii=False)}\n\n"

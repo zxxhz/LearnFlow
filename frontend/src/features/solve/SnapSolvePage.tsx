@@ -23,12 +23,19 @@ export default function SnapSolvePage() {
   const [error, setError] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const answerBoxRef = useRef<HTMLDivElement>(null);
+  // 预览 URL 单一路径管理：每个 File 只 create 一次，revoke 只走 revokeAllPreviews
+  const previewsRef = useRef<string[]>([]);
 
-  // 卸载时中断进行中的流，防止后台空烧 Token
+  const revokeAllPreviews = () => {
+    previewsRef.current.forEach((u) => URL.revokeObjectURL(u));
+    previewsRef.current = [];
+  };
+
+  // 卸载时中断进行中的流并释放预览（经 ref 取最新值，避免 stale closure 漏 revoke）
   useEffect(() => {
     return () => {
       abortRef.current?.abort();
-      previews.forEach((u) => URL.revokeObjectURL(u));
+      revokeAllPreviews();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -47,6 +54,7 @@ export default function SnapSolvePage() {
 
   const addPhotos = (list: FileList | null) => {
     if (!list || list.length === 0) return;
+    setError("");
     const incoming: File[] = [];
     for (const f of Array.from(list)) {
       if (!f.type.startsWith("image/")) {
@@ -59,26 +67,31 @@ export default function SnapSolvePage() {
       }
       incoming.push(f);
     }
+    const overflow = photos.length + incoming.length > MAX_PHOTOS;
     const merged = [...photos, ...incoming].slice(0, MAX_PHOTOS);
-    if ([...photos, ...incoming].length > MAX_PHOTOS) {
-      setError(`一次最多 ${MAX_PHOTOS} 张图片`);
-    }
-    previews.forEach((u) => URL.revokeObjectURL(u));
+    // 每个 File 只创建一次预览 URL；被 slice 丢弃的文件也要回收
+    const incomingUrls = incoming.map((f) => URL.createObjectURL(f));
+    const keptUrls = incomingUrls.slice(0, Math.max(0, merged.length - photos.length));
+    incomingUrls.slice(keptUrls.length).forEach((u) => URL.revokeObjectURL(u));
     setPhotos(merged);
-    setPreviews(merged.map((f) => URL.createObjectURL(f)));
-    setError("");
+    setPreviews([...previews, ...keptUrls]);
+    previewsRef.current = [...previewsRef.current, ...keptUrls];
+    if (overflow) {
+      setError(`一次最多 ${MAX_PHOTOS} 张图片，多余的已忽略`);
+    }
   };
 
   const removePhoto = (i: number) => {
+    // 只 revoke 被删项，其余 URL 保持不变（避免重建造成引用丢失）
     URL.revokeObjectURL(previews[i]);
-    const merged = photos.filter((_, k) => k !== i);
-    setPhotos(merged);
-    setPreviews(merged.map((f) => URL.createObjectURL(f)));
+    previewsRef.current = previewsRef.current.filter((_, k) => k !== i);
+    setPhotos(photos.filter((_, k) => k !== i));
+    setPreviews(previews.filter((_, k) => k !== i));
   };
 
   const clearAll = () => {
     abortRef.current?.abort();
-    previews.forEach((u) => URL.revokeObjectURL(u));
+    revokeAllPreviews();
     setPhotos([]);
     setPreviews([]);
     setAnswer("");
@@ -134,8 +147,9 @@ export default function SnapSolvePage() {
         }
       })
       .finally(() => {
-        // 服务端干净关流但没发 done/error 事件时不能永久卡在思考态
+        // 服务端干净关流但没发 done/error 事件时不能永久卡在思考/流式态
         setThinking(false);
+        setStreaming(false);
       });
   };
 

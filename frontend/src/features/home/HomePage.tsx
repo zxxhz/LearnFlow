@@ -27,12 +27,12 @@ export default function HomePage() {
 
   return (
     <div className="mx-auto max-w-5xl p-8">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">我的课程</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">学 · 问 · 练 · 错题重刷，一个闭环</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           <Button variant="ghost" className="text-xs" onClick={() => navigate("/import")} title="上传 Markdown 或拍照导入教材内容">
             📥 导入课程
           </Button>

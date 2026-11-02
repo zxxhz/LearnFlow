@@ -81,7 +81,9 @@ export default function ImportPage() {
     setAnalysis(null);
     setChapters([]);
     setAnalyzeErr("");
+    revokeAllPreviews();
     setPhotos([]);
+    setPreviews([]);
     setTranscribed("");
     setTranscribeErr("");
     if (fileRef.current) fileRef.current.value = "";
@@ -109,15 +111,23 @@ export default function ImportPage() {
   const [hint, setHint] = useState("");
   const [transcribed, setTranscribed] = useState("");
   const [transcribeErr, setTranscribeErr] = useState("");
+  // 预览 URL 单一路径管理：每个 File 只 create 一次，revoke 只走 revokeAllPreviews
+  const previewsRef = useRef<string[]>([]);
 
-  // 预览 URL 释放：组件卸载或图片更换时 revoke，避免内存泄漏
+  const revokeAllPreviews = () => {
+    previewsRef.current.forEach((u) => URL.revokeObjectURL(u));
+    previewsRef.current = [];
+  };
+
+  // 组件卸载时释放全部预览 URL（经 ref 取最新值，避免 stale closure 漏 revoke）
   useEffect(() => {
-    return () => previews.forEach((u) => URL.revokeObjectURL(u));
+    return () => revokeAllPreviews();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const addPhotos = (list: FileList | null) => {
     if (!list || list.length === 0) return;
+    setTranscribeErr("");
     const incoming: File[] = [];
     for (const f of Array.from(list)) {
       if (!f.type.startsWith("image/")) {
@@ -130,21 +140,33 @@ export default function ImportPage() {
       }
       incoming.push(f);
     }
+    const overflow = photos.length + incoming.length > MAX_PHOTOS;
     const merged = [...photos, ...incoming].slice(0, MAX_PHOTOS);
-    if ([...photos, ...incoming].length > MAX_PHOTOS) {
-      setTranscribeErr(`最多上传 ${MAX_PHOTOS} 张图片`);
-    }
-    previews.forEach((u) => URL.revokeObjectURL(u));
+    // 每个 File 只创建一次预览 URL；被 slice 丢弃的文件也要回收
+    const incomingUrls = incoming.map((f) => URL.createObjectURL(f));
+    const keptUrls = incomingUrls.slice(0, Math.max(0, merged.length - photos.length));
+    incomingUrls.slice(keptUrls.length).forEach((u) => URL.revokeObjectURL(u));
     setPhotos(merged);
-    setPreviews(merged.map((f) => URL.createObjectURL(f)));
-    setTranscribeErr("");
+    setPreviews([...previews, ...keptUrls]);
+    previewsRef.current = [...previewsRef.current, ...keptUrls];
+    if (overflow) {
+      setTranscribeErr(`最多上传 ${MAX_PHOTOS} 张图片，多余的已忽略`);
+    }
   };
 
   const removePhoto = (i: number) => {
+    // 只 revoke 被删项，其余 URL 保持不变（避免重建造成引用丢失）
     URL.revokeObjectURL(previews[i]);
-    const merged = photos.filter((_, k) => k !== i);
-    setPhotos(merged);
-    setPreviews(merged.map((f) => URL.createObjectURL(f)));
+    previewsRef.current = previewsRef.current.filter((_, k) => k !== i);
+    setPhotos(photos.filter((_, k) => k !== i));
+    setPreviews(previews.filter((_, k) => k !== i));
+  };
+
+  const clearPhotos = () => {
+    revokeAllPreviews();
+    setPhotos([]);
+    setPreviews([]);
+    setTranscribed("");
   };
 
   const transcribe = useMutation({
@@ -311,12 +333,7 @@ export default function ImportPage() {
                 <button
                   type="button"
                   className="text-brand-600 dark:text-brand-400 hover:underline"
-                  onClick={() => {
-                    previews.forEach((u) => URL.revokeObjectURL(u));
-                    setPhotos([]);
-                    setPreviews([]);
-                    setTranscribed("");
-                  }}
+                  onClick={clearPhotos}
                 >
                   清空重拍
                 </button>

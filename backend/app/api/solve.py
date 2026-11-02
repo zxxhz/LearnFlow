@@ -3,6 +3,7 @@
 POST /api/solve/photo   multipart images×N + hint → text/event-stream
 事件契约：{"type": "delta", "text"} / {"type": "done"} / {"type": "error", "detail"}
 """
+import asyncio
 import json
 import logging
 
@@ -29,7 +30,9 @@ async def solve_photo(
     db: AsyncSession = Depends(get_db),
 ):
     """拍照解题：题目照片 → AI 流式输出答案与分步解析（第一行直接给答案）。"""
-    data_urls = compress_to_data_urls(images, max_count=MAX_SOLVE_IMAGES)
+    # Pillow 解码/缩放是秒级 CPU 活：放线程池跑，避免冻结事件循环（SSE/心跳全停）
+    data_urls = await asyncio.to_thread(compress_to_data_urls, images, MAX_SOLVE_IMAGES)
+    hint = (hint or "").strip()[:2_000]
     try:
         adapter = await create_adapter_from_settings(db, scene="chat")
     except LLMError:
@@ -72,6 +75,9 @@ async def solve_photo(
             logger.exception("solve photo stream error")
             yield f"data: {json.dumps({'type': 'error', 'detail': f'解答中断：{e}'}, ensure_ascii=False)}\n\n"
             return
+        finally:
+            # 客户端断连/生成器提前关闭时确定性关闭上游 LLM 流，不依赖 GC 终结器
+            await deltas.aclose()
         yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

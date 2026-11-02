@@ -95,20 +95,28 @@ export default function Layout() {
   });
 
   const toggleNavCollapsed = () => {
-    setNavCollapsed((prev) => {
-      const next = !prev;
-      safeStorage.set("learnflow-nav-collapsed", String(next));
-      return next;
-    });
+    setNavCollapsed((prev) => !prev);
   };
+
+  // 折叠状态持久化（updater 保持纯函数，副作用统一放 effect）
+  useEffect(() => {
+    safeStorage.set("learnflow-nav-collapsed", String(navCollapsed));
+  }, [navCollapsed]);
 
   // 全局快捷键 Ctrl+B / Cmd+B 切换左侧导航折叠（与阅读页快捷键心智统一）
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isImmersive) return;
+      if (e.repeat) return; // 长按连发会高频抖动侧栏与 localStorage
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
         const target = e.target as HTMLElement | null;
-        if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        if (
+          target &&
+          (target.tagName === "INPUT" ||
+            target.tagName === "TEXTAREA" ||
+            target.tagName === "SELECT" ||
+            target.isContentEditable)
+        ) {
           return;
         }
         e.preventDefault();
@@ -174,7 +182,9 @@ export default function Layout() {
       {!isImmersive && (
         <aside
           className={`hidden shrink-0 flex-col border-r border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 md:flex transition-all duration-300 ease-in-out overflow-hidden ${
-            navCollapsed ? "w-0 border-r-0 opacity-0 pointer-events-none" : "w-56 opacity-100"
+            // invisible（visibility:hidden）使子树同时退出 Tab 序与无障碍树：
+            // 仅 opacity+pointer-events 会让 11 个隐形按钮仍可被键盘聚焦，与 aria-hidden 矛盾
+            navCollapsed ? "invisible w-0 border-r-0 opacity-0 pointer-events-none" : "visible w-56 opacity-100"
           }`}
           aria-hidden={navCollapsed}
         >

@@ -4,11 +4,11 @@ import json
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.models import Course, Document
+from app.models import Course, Document, MindMap
 from app.models.base import utcnow_iso
 from app.schemas.common import OutlineItem
 from app.schemas.course import (
@@ -232,6 +232,12 @@ async def delete_course(course_id: str, db: AsyncSession = Depends(get_db)):
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
     await pipeline.purge_course_data(db, course)
+    # 课程删除后解除导图的课程关联（避免列表页残留「🎓 来自课程」的悬空标记）
+    await db.execute(
+        update(MindMap)
+        .where(MindMap.course_id == course_id)
+        .values(source="manual", course_id=None)
+    )
     await db.delete(course)
     await db.commit()
     return {"ok": True}

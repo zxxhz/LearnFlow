@@ -91,13 +91,15 @@ export default function BankQuestionCard({
   const [aiError, setAiError] = useState("");
   const aiStreamRef = useRef<HTMLDivElement>(null);
 
-  // AI 纠错建议检测：正则匹配 [AI纠错建议: 正确答案应为X] 或常见纠错文本
+  // AI 纠错建议检测：优先结构化标记 [AI纠错建议: 正确答案应为X]；回退分支收紧匹配距离
+  // 与捕获范围（[A-H]），降低「原题答案C正确…D错误」这类跨距离误报
   const aiCorrectionMatch = useMemo(() => {
     if (!aiText) return null;
-    const tagMatch = aiText.match(/\[AI纠错建议[:：]\s*正确答案应为\s*([A-Za-z0-9,、正确错误对错]+)\]/i);
+    const tagMatch = aiText.match(/\[AI纠错建议[:：]\s*正确答案应为\s*([A-Ha-h0-9,、正确错误对错]+)\]/i);
     if (tagMatch) return tagMatch[1].trim();
-    if (/原题答案.*?(有误|错误|不准确|应为)/.test(aiText) || /参考答案.*?(有误|错误|不准确|应为)/.test(aiText)) {
-      const shouldBe = aiText.match(/(?:实际|正确答案|应为)\s*([A-D]|正确|错误)/);
+    const sentence = aiText.match(/[^。\n]*(?:原题|参考)答案[^。\n]{0,16}(?:有误|不准确|应为)[^。\n]*/);
+    if (sentence) {
+      const shouldBe = sentence[0].match(/(?:实际[是为]|应为|正确答案(?:应?为)?)\s*[:：]?\s*([A-H]|正确|错误)/);
       return shouldBe ? shouldBe[1] : "";
     }
     return null;
@@ -107,8 +109,23 @@ export default function BankQuestionCard({
     setCurQuestion(res.question);
     if (res.recalibrated_result) {
       setResult(res.recalibrated_result);
+    } else if (result) {
+      // 未触发重判（如仅改难度）或用户取消自动重判：同步 result 的答案字段，
+      // 保证选项高亮与再次打开纠错弹窗回填的是新答案而非旧值
+      setResult({
+        ...result,
+        answer: res.question.answer,
+        correct_answer:
+          res.question.qtype === "judge"
+            ? res.question.answer === "A"
+              ? "正确"
+              : "错误"
+            : res.question.answer.replace(",", "、"),
+        answer_raw: res.question.answer_raw,
+        explanation: res.question.explanation,
+      });
     }
-    onQuestionUpdated?.(res.question, res.recalibrated_result);
+    onQuestionUpdated?.(res.question, res.recalibrated_result ?? null);
   };
 
   // 数学公式渲染

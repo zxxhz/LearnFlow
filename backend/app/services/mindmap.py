@@ -623,8 +623,13 @@ async def generate_mindmap_from_course(
     outline: list[dict[str, Any]] = []
     if course.outline:
         try:
-            outline = json.loads(course.outline)
+            parsed_outline = json.loads(course.outline)
+            if isinstance(parsed_outline, list):
+                outline = [o for o in parsed_outline if isinstance(o, dict)]
+            else:
+                logger.warning("课程 %s outline 非数组，按空大纲处理", course.id)
         except Exception:  # noqa: BLE001
+            logger.warning("课程 %s outline 解析失败，按空大纲处理", course.id)
             outline = []
 
     docs = (
@@ -645,13 +650,15 @@ async def generate_mindmap_from_course(
         for d in docs
     ]
 
+    # 知识点仅取已生成完成章节的：failed/generating 章节的上一版 KP 是陈旧数据，
+    # 与摘要的 done 过滤口径保持一致
+    done_doc_ids = [d.id for d in docs if d.status == "done"]
     kps_by_chapter: dict[int, list[dict[str, str]]] = {}
-    if include_details and docs:
-        doc_ids = [d.id for d in docs]
+    if include_details and done_doc_ids:
         doc_idx = {d.id: d.chapter_index for d in docs}
         kps = (
             await db.scalars(
-                select(KnowledgePoint).where(KnowledgePoint.document_id.in_(doc_ids))
+                select(KnowledgePoint).where(KnowledgePoint.document_id.in_(done_doc_ids))
             )
         ).all()
         for kp in kps:
@@ -660,6 +667,8 @@ async def generate_mindmap_from_course(
             )
 
     material = _assemble_course_material(outline, chapters, kps_by_chapter, include_details)
+    if not outline and not any(ch["done"] for ch in chapters):
+        raise ValueError("课程大纲为空且暂无已生成章节，暂无可用于生成导图的内容")
 
     prompt = f"{course.title}" + (f"（{course.topic[:80]}）" if (course.topic or "").strip() else "")
     res = await generate_mindmap_tree(

@@ -68,6 +68,9 @@ class MindMapGenerateRequest(BaseModel):
     course_id: str | None = Field(
         default=None, max_length=32, description="课程 ID：提供时基于课程大纲/摘要/知识点生成导图"
     )
+    include_details: bool = Field(
+        default=True, description="course 模式下是否包含各章摘要与知识点（False 仅按大纲生成）"
+    )
 
 
 class MindMapImportRequest(BaseModel):
