@@ -12,6 +12,7 @@ import { useFontSize } from "../../lib/fontSize";
 import BankQuestionCard, { visibleOptions } from "./BankQuestionCard";
 import BankPromptModal from "./BankPromptModal";
 import AddQuestionModal from "./AddQuestionModal";
+import EditQuestionModal from "./EditQuestionModal";
 import MarkdownLite from "../../components/MarkdownLite";
 import { createStreamFlusher } from "../../lib/streamFlusher";
 import type { BankAttemptResult, BankQuestion, BankRound } from "../../lib/types";
@@ -96,6 +97,27 @@ export default function BankDrillPage() {
   const handleAddSuccess = (addedCount: number) => {
     qc.invalidateQueries({ queryKey: ["banks"] });
     setToastMsg(`已成功添加 ${addedCount} 道题目！`);
+    setTimeout(() => setToastMsg(""), 3500);
+  };
+
+  const handleQuestionUpdated = (updatedQ: BankQuestion, updatedRes?: BankAttemptResult | null) => {
+    // 1. 更新当前轮次中的题目对象
+    if (round) {
+      const nextQuestions = round.questions.map((q) => (q.id === updatedQ.id ? updatedQ : q));
+      setRound({ ...round, questions: nextQuestions });
+    }
+    // 2. 如果重判结果返回，更新当前 results
+    if (updatedRes) {
+      setResults((prev) => ({ ...prev, [updatedQ.id]: updatedRes }));
+    }
+    // 3. 刷新题库统计缓存
+    qc.invalidateQueries({ queryKey: ["banks"] });
+    // 4. Toast 提示
+    setToastMsg(
+      updatedRes?.passed
+        ? `题目已修正！作答已重新校准为「回答正确」，自动移出错题池`
+        : `题目内容与选项已成功更新！`
+    );
     setTimeout(() => setToastMsg(""), 3500);
   };
 
@@ -242,6 +264,7 @@ export default function BankDrillPage() {
                 result={results[q.id]}
                 initialAiExplain={aiExplains[q.id] || q.ai_explanation}
                 onAiExplained={(text) => handleAiExplained(q.id, text)}
+                onQuestionUpdated={handleQuestionUpdated}
               />
             ))}
           </div>
@@ -343,6 +366,7 @@ export default function BankDrillPage() {
             initialAiExplain={aiExplains[current.id] || current.ai_explanation}
             onAiExplained={(text) => handleAiExplained(current.id, text)}
             onAnswered={(r) => onAnswered(current.id, r)}
+            onQuestionUpdated={handleQuestionUpdated}
           />
         </div>
         <div className="mt-4 flex justify-end">
@@ -603,13 +627,21 @@ function WrongQuestionItem({
   result,
   initialAiExplain,
   onAiExplained,
+  onQuestionUpdated,
 }: {
   question: BankQuestion;
   result?: BankAttemptResult;
   initialAiExplain?: string;
   onAiExplained?: (text: string) => void;
+  onQuestionUpdated?: (updatedQ: BankQuestion, updatedRes?: BankAttemptResult | null) => void;
 }) {
-  const existingExplain = initialAiExplain || question.ai_explanation || "";
+  const [curQuestion, setCurQuestion] = useState(question);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  useEffect(() => {
+    setCurQuestion(question);
+  }, [question]);
+
+  const existingExplain = initialAiExplain || curQuestion.ai_explanation || "";
   const [aiOpen, setAiOpen] = useState(!!existingExplain);
   const [aiThinking, setAiThinking] = useState(false);
   const [aiStreaming, setAiStreaming] = useState(false);
@@ -617,7 +649,7 @@ function WrongQuestionItem({
   const [aiError, setAiError] = useState("");
   const aiStreamRef = useRef<HTMLDivElement>(null);
   const explainAbortRef = useRef<AbortController | null>(null);
-  const opts = visibleOptions(question);
+  const opts = visibleOptions(curQuestion);
 
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -626,7 +658,7 @@ function WrongQuestionItem({
     return () => {
       explainAbortRef.current?.abort();
     };
-  }, [question.id]);
+  }, [curQuestion.id]);
 
   // 错题卡片题干与选项公式渲染
   useEffect(() => {
@@ -640,7 +672,7 @@ function WrongQuestionItem({
         console.warn("KaTeX render error on wrong item card:", err);
       }
     }
-  }, [question.id, question.title, question.options]);
+  }, [curQuestion.id, curQuestion.title, curQuestion.options]);
 
   useEffect(() => {
     if (aiStreamRef.current && aiText) {
@@ -653,6 +685,18 @@ function WrongQuestionItem({
         console.warn("KaTeX render error:", err);
       }
     }
+  }, [aiText]);
+
+  // AI 纠错建议检测
+  const aiCorrectionMatch = useMemo(() => {
+    if (!aiText) return null;
+    const tagMatch = aiText.match(/\[AI纠错建议[:：]\s*正确答案应为\s*([A-Za-z0-9,、正确错误对错]+)\]/i);
+    if (tagMatch) return tagMatch[1].trim();
+    if (/原题答案.*?(有误|错误|不准确|应为)/.test(aiText) || /参考答案.*?(有误|错误|不准确|应为)/.test(aiText)) {
+      const shouldBe = aiText.match(/(?:实际|正确答案|应为)\s*([A-D]|正确|错误)/);
+      return shouldBe ? shouldBe[1] : "";
+    }
+    return null;
   }, [aiText]);
 
   const userPicked = useMemo(() => {
@@ -721,14 +765,23 @@ function WrongQuestionItem({
   return (
     <div ref={cardRef} className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
       <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
-        <Badge color={question.qtype === "multi" ? "amber" : question.qtype === "judge" ? "blue" : "gray"}>
-          {TYPE_LABEL[question.qtype] ?? question.qtype}
+        <Badge color={curQuestion.qtype === "multi" ? "amber" : curQuestion.qtype === "judge" ? "blue" : "gray"}>
+          {TYPE_LABEL[curQuestion.qtype] ?? curQuestion.qtype}
         </Badge>
-        {question.difficulty && <span>难度：{question.difficulty}</span>}
-        <span className="ml-auto">第 {question.seq} 题</span>
+        {curQuestion.difficulty && <span>难度：{curQuestion.difficulty}</span>}
+        <button
+          type="button"
+          onClick={() => setEditModalOpen(true)}
+          className="text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition text-[11px] flex items-center gap-0.5 ml-1"
+          title="题目/答案有误？点击修改"
+        >
+          <span>✏️</span>
+          <span>纠错</span>
+        </button>
+        <span className="ml-auto">第 {curQuestion.seq} 题</span>
       </div>
       <p className="drill-question-title mt-2 leading-relaxed text-gray-900 dark:text-gray-100 font-medium">
-        {question.title}
+        {curQuestion.title}
       </p>
 
       {/* 选项 */}
@@ -766,19 +819,30 @@ function WrongQuestionItem({
 
       {result && (
         <div className="drill-result-banner mt-3 rounded-lg bg-gray-50 dark:bg-gray-800/60 p-2.5">
-          <div className="text-red-700 dark:text-red-400 font-semibold">
-            ✗ 你的作答：
-            {question.qtype === "judge"
-              ? // 判断题与 correct_answer 同口径显示文案（否则一边 B 一边「正确」）
-                result.user_answer === "A"
-                ? "正确"
-                : result.user_answer === "B"
-                ? "错误"
-                : "未选"
-              : result.user_answer
-              ? result.user_answer.replace(/,/g, "、")
-              : "未选"}{" "}
-            · 正确答案：{result.correct_answer}
+          <div className="flex items-center justify-between flex-wrap gap-2 text-red-700 dark:text-red-400 font-semibold">
+            <span>
+              ✗ 你的作答：
+              {curQuestion.qtype === "judge"
+                ? // 判断题与 correct_answer 同口径显示文案（否则一边 B 一边「正确」）
+                  result.user_answer === "A"
+                  ? "正确"
+                  : result.user_answer === "B"
+                  ? "错误"
+                  : "未选"
+                : result.user_answer
+                ? result.user_answer.replace(/,/g, "、")
+                : "未选"}{" "}
+              · 正确答案：{result.correct_answer}
+            </span>
+            <button
+              type="button"
+              onClick={() => setEditModalOpen(true)}
+              className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition font-normal"
+              title="如果发现题目参考答案或选项有误，可点击手动修改纠错"
+            >
+              <span>✏️</span>
+              <span>改答案/选项</span>
+            </button>
           </div>
           {result.explanation && (
             <p className="drill-explanation-text mt-1 whitespace-pre-wrap leading-relaxed text-gray-600 dark:text-gray-400">
@@ -850,7 +914,26 @@ function WrongQuestionItem({
                   </div>
                 )}
 
-                {aiText && (
+                  {aiCorrectionMatch && (
+                    <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 p-2 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs animate-fadeIn">
+                      <span className="flex items-center gap-1.5 truncate">
+                        <span>⚠️</span>
+                        <span>
+                          AI 助教提示本题答案可能有误
+                          {aiCorrectionMatch ? `（建议答案：${aiCorrectionMatch}）` : ""}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setEditModalOpen(true)}
+                        className="px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-700 text-white font-medium text-[11px] shrink-0 shadow-xs transition"
+                      >
+                        手动改答案/选项
+                      </button>
+                    </div>
+                  )}
+
+                  {aiText && (
                   <div className="mt-2 text-gray-800 dark:text-gray-200 leading-relaxed overflow-x-auto">
                     <MarkdownLite
                       text={aiText}
@@ -880,6 +963,19 @@ function WrongQuestionItem({
           </div>
         </div>
       )}
+
+      <EditQuestionModal
+        open={editModalOpen}
+        question={curQuestion}
+        initialCorrectAnswer={result?.answer}
+        initialExplanation={result?.explanation}
+        suggestedAnswer={aiCorrectionMatch || undefined}
+        onClose={() => setEditModalOpen(false)}
+        onSuccess={(res) => {
+          setCurQuestion(res.question);
+          onQuestionUpdated?.(res.question, res.recalibrated_result);
+        }}
+      />
     </div>
   );
 }

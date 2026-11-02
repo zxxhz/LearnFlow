@@ -39,6 +39,8 @@ import type {
   BankAnalysis,
   BankAttemptResult,
   BankExplainSSEEvent,
+  BankQuestionUpdateIn,
+  BankQuestionUpdateOut,
   BankRound,
   BankStats,
   BankWrongQuestion,
@@ -388,6 +390,11 @@ export const api = {
       }),
     update: (id: string, body: { name?: string; ai_prompt?: string }) =>
       request<Bank>(`/banks/${id}`, {
+        method: "PATCH",
+        ...jsonBody(body),
+      }),
+    updateQuestion: (questionId: string, body: BankQuestionUpdateIn) =>
+      request<BankQuestionUpdateOut>(`/banks/questions/${questionId}`, {
         method: "PATCH",
         ...jsonBody(body),
       }),

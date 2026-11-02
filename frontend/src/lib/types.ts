@@ -593,6 +593,21 @@ export interface ParsedTextQuestionItem {
   explanation: string;
 }
 
+export interface BankQuestionUpdateIn {
+  title?: string;
+  options?: string[];
+  answer?: string;
+  explanation?: string;
+  difficulty?: string;
+  recalibrate_attempts?: boolean;
+}
+
+export interface BankQuestionUpdateOut {
+  ok: boolean;
+  question: BankWrongQuestion;
+  recalibrated_result?: BankAttemptResult | null;
+}
+
 export interface PasteParseResponse {
   bank_title: string;
   questions: ParsedTextQuestionItem[];

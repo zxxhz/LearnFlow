@@ -24,6 +24,8 @@ from app.schemas.bank import (
     BankPromptPolishIn,
     BankPromptPolishOut,
     BankQuestionOut,
+    BankQuestionUpdateIn,
+    BankQuestionUpdateOut,
     BankRoundOut,
     BankRoundRequest,
     BankSkippedRow,
@@ -485,6 +487,65 @@ async def ai_explain_question(
             "X-Accel-Buffering": "no",
             "Content-Type": "text/event-stream; charset=utf-8",
         },
+    )
+
+
+@router.patch("/questions/{question_id}", response_model=BankQuestionUpdateOut)
+async def update_bank_question(
+    question_id: str,
+    body: BankQuestionUpdateIn,
+    db: AsyncSession = Depends(get_db),
+):
+    """修改/纠错指定题目（答案、选项、题干、解析），并自动对最新作答记录执行重新判定。"""
+    q = await db.get(BankQuestion, question_id)
+    if q is None:
+        raise HTTPException(status_code=404, detail="题目不存在")
+
+    try:
+        updated_q, recalibrated_att = await bank_service.update_question(
+            db,
+            q,
+            title=body.title,
+            options=body.options,
+            answer=body.answer,
+            explanation=body.explanation,
+            difficulty=body.difficulty,
+            recalibrate_attempts=body.recalibrate_attempts,
+        )
+    except (ValueError, BankParseError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    question_out = BankWrongQuestionOut(
+        id=updated_q.id,
+        seq=updated_q.seq,
+        qtype=updated_q.qtype,
+        title=updated_q.title,
+        options=json.loads(updated_q.options) if updated_q.options else [],
+        difficulty=updated_q.difficulty,
+        answer=updated_q.answer,
+        answer_raw=updated_q.answer_raw,
+        explanation=updated_q.explanation,
+        ai_explanation=updated_q.ai_explanation or "",
+    )
+
+    recalibrated_result = None
+    if recalibrated_att:
+        recalibrated_result = BankAttemptResult(
+            attempt_id=recalibrated_att.id,
+            passed=recalibrated_att.passed,
+            is_doubtful=recalibrated_att.is_doubtful,
+            user_answer=recalibrated_att.content,
+            answer=updated_q.answer,
+            correct_answer=bank_service.format_correct_answer(updated_q),
+            answer_raw=updated_q.answer_raw,
+            explanation=updated_q.explanation,
+            ai_explanation=updated_q.ai_explanation or "",
+        )
+
+    return BankQuestionUpdateOut(
+        ok=True,
+        question=question_out,
+        recalibrated_result=recalibrated_result,
     )
 
 

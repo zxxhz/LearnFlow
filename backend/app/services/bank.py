@@ -290,6 +290,69 @@ async def append_questions(
     return len(formatted_questions)
 
 
+async def update_question(
+    db: AsyncSession,
+    q: BankQuestion,
+    title: str | None = None,
+    options: list[str] | None = None,
+    answer: str | None = None,
+    explanation: str | None = None,
+    difficulty: str | None = None,
+    recalibrate_attempts: bool = True,
+) -> tuple[BankQuestion, BankAttempt | None]:
+    """更新题目内容/选项/答案，并可选按新答案自动重判最新作答记录（若改错为对则自动移出错题池）。"""
+    if title is not None and title.strip():
+        q.title = title.strip()
+
+    if q.qtype == QUESTION_JUDGE:
+        q.options = "[]"
+        if answer is not None and answer.strip():
+            ans_clean = "A" if answer.strip().upper() in ("A", "TRUE", "T", "对", "正确", "1", "YES") else "B"
+            q.answer = ans_clean
+            q.answer_raw = "正确" if ans_clean == "A" else "错误"
+    else:
+        if options is not None:
+            raw_opts = [opt.strip() for opt in options if opt.strip()]
+            if len(raw_opts) < 2:
+                raise ValueError("选择题至少需要保留 2 个有效选项")
+            opts = (raw_opts + [""] * 8)[:8]
+            q.options = json.dumps(opts, ensure_ascii=False)
+        if answer is not None and answer.strip():
+            ans_norm = normalize_answer(q.qtype, answer.strip(), q.seq)
+            q.answer = ans_norm
+            q.answer_raw = ans_norm.replace(",", "、")
+
+    if explanation is not None:
+        q.explanation = explanation.strip()
+
+    if difficulty is not None and difficulty.strip():
+        q.difficulty = difficulty.strip()
+
+    # 题目内容或参考答案变更后，清空旧 AI 解析，避免保留基于旧错误答案的解释
+    q.ai_explanation = ""
+
+    recalibrated_attempt = None
+    if recalibrate_attempts:
+        latest_att = (
+            await db.scalars(
+                select(BankAttempt)
+                .where(BankAttempt.question_id == q.id)
+                .order_by(BankAttempt.created_at.desc())
+                .limit(1)
+            )
+        ).first()
+
+        if latest_att:
+            submitted = [x.strip() for x in latest_att.content.split(",") if x.strip()]
+            new_passed = judge_answer(q.qtype, q.answer, submitted)
+            if latest_att.passed != new_passed:
+                latest_att.passed = new_passed
+            recalibrated_attempt = latest_att
+
+    await db.commit()
+    return q, recalibrated_attempt
+
+
 async def latest_attempts(db: AsyncSession, bank_id: str) -> dict[str, BankAttempt]:
     """每题最近一次作答（created_at 升序遍历，后者覆盖）。"""
     attempts = (

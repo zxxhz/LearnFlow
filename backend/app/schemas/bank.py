@@ -74,6 +74,21 @@ class BankStatsOut(BaseModel):
 
 
 
+class BankQuestionUpdateIn(BaseModel):
+    title: str | None = None
+    options: list[str] | None = None
+    answer: str | None = None
+    explanation: str | None = None
+    difficulty: str | None = None
+    recalibrate_attempts: bool = True
+
+
+class BankQuestionUpdateOut(BaseModel):
+    ok: bool = True
+    question: BankWrongQuestionOut
+    recalibrated_result: BankAttemptResult | None = None
+
+
 class BankUpdateIn(BaseModel):
     name: str | None = None
     ai_prompt: str | None = None

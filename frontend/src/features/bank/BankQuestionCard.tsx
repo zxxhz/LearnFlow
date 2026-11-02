@@ -1,12 +1,13 @@
 // 题库题目作答卡片：单选/多选/判断三种作答形态，提交后即时出判分与解析；回答错误时支持 AI 流式深度解答
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import MarkdownIt from "markdown-it";
 import renderMathInElement from "katex/contrib/auto-render";
 import { Badge, Button, ErrorText, Spinner } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
+import EditQuestionModal from "./EditQuestionModal";
 import { api } from "../../lib/api";
 import { createStreamFlusher } from "../../lib/streamFlusher";
-import type { BankAttemptResult, BankQuestion } from "../../lib/types";
+import type { BankAttemptResult, BankQuestion, BankQuestionUpdateOut } from "../../lib/types";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 const KATEX_DELIMITERS = [
@@ -35,19 +36,27 @@ export default function BankQuestionCard({
   onAnswered,
   initialAiExplain,
   onAiExplained,
+  onQuestionUpdated,
 }: {
   question: BankQuestion;
   onAnswered: (result: BankAttemptResult, picked: string[]) => void;
   initialAiExplain?: string;
   onAiExplained?: (text: string) => void;
+  onQuestionUpdated?: (updatedQ: BankQuestion, updatedRes?: BankAttemptResult | null) => void;
 }) {
-  const multi = question.qtype === "multi";
+  const [curQuestion, setCurQuestion] = useState(question);
+  useEffect(() => {
+    setCurQuestion(question);
+  }, [question]);
+
+  const multi = curQuestion.qtype === "multi";
   const [picked, setPicked] = useState<string[]>([]);
   const [isDoubtful, setIsDoubtful] = useState(false);
   const [result, setResult] = useState<BankAttemptResult | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const opts = visibleOptions(question);
+  const [editModalOpen, setEditModalOpen] = useState(false);
+  const opts = visibleOptions(curQuestion);
   const explainAbortRef = useRef<AbortController | null>(null);
 
   // 切换题目或卸载时中断进行中的 AI 解析流，防止后台空烧 Token
@@ -55,7 +64,7 @@ export default function BankQuestionCard({
     return () => {
       explainAbortRef.current?.abort();
     };
-  }, [question.id]);
+  }, [curQuestion.id]);
 
   const cardRef = useRef<HTMLDivElement>(null);
 
@@ -71,16 +80,36 @@ export default function BankQuestionCard({
         console.warn("KaTeX card render error:", err);
       }
     }
-  }, [question.id, question.title, question.options]);
+  }, [curQuestion.id, curQuestion.title, curQuestion.options]);
 
   // AI 错题解答流式状态（优先复用已生成的解析）
-  const existingAi = initialAiExplain || question.ai_explanation || "";
+  const existingAi = initialAiExplain || curQuestion.ai_explanation || "";
   const [aiOpen, setAiOpen] = useState(false);
   const [aiThinking, setAiThinking] = useState(false);
   const [aiStreaming, setAiStreaming] = useState(false);
   const [aiText, setAiText] = useState(existingAi);
   const [aiError, setAiError] = useState("");
   const aiStreamRef = useRef<HTMLDivElement>(null);
+
+  // AI 纠错建议检测：正则匹配 [AI纠错建议: 正确答案应为X] 或常见纠错文本
+  const aiCorrectionMatch = useMemo(() => {
+    if (!aiText) return null;
+    const tagMatch = aiText.match(/\[AI纠错建议[:：]\s*正确答案应为\s*([A-Za-z0-9,、正确错误对错]+)\]/i);
+    if (tagMatch) return tagMatch[1].trim();
+    if (/原题答案.*?(有误|错误|不准确|应为)/.test(aiText) || /参考答案.*?(有误|错误|不准确|应为)/.test(aiText)) {
+      const shouldBe = aiText.match(/(?:实际|正确答案|应为)\s*([A-D]|正确|错误)/);
+      return shouldBe ? shouldBe[1] : "";
+    }
+    return null;
+  }, [aiText]);
+
+  const handleEditSuccess = (res: BankQuestionUpdateOut) => {
+    setCurQuestion(res.question);
+    if (res.recalibrated_result) {
+      setResult(res.recalibrated_result);
+    }
+    onQuestionUpdated?.(res.question, res.recalibrated_result);
+  };
 
   // 数学公式渲染
   useEffect(() => {
@@ -174,14 +203,23 @@ export default function BankQuestionCard({
   return (
     <div ref={cardRef} className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4 transition-all">
       <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
-        <Badge color={multi ? "amber" : question.qtype === "judge" ? "blue" : "gray"}>
-          {TYPE_LABEL[question.qtype] ?? question.qtype}
+        <Badge color={multi ? "amber" : curQuestion.qtype === "judge" ? "blue" : "gray"}>
+          {TYPE_LABEL[curQuestion.qtype] ?? curQuestion.qtype}
         </Badge>
-        {question.difficulty && <span>难度：{question.difficulty}</span>}
-        <span className="ml-auto">第 {question.seq} 题</span>
+        {curQuestion.difficulty && <span>难度：{curQuestion.difficulty}</span>}
+        <button
+          type="button"
+          onClick={() => setEditModalOpen(true)}
+          className="text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition text-[11px] flex items-center gap-0.5 ml-1"
+          title="题目/答案有误？点击修改"
+        >
+          <span>✏️</span>
+          <span>纠错</span>
+        </button>
+        <span className="ml-auto">第 {curQuestion.seq} 题</span>
       </div>
       <p className="drill-question-title mt-2 whitespace-pre-wrap font-medium leading-relaxed text-gray-900 dark:text-gray-100">
-        {question.title}
+        {curQuestion.title}
       </p>
 
       <div className="mt-3 space-y-1.5">
@@ -228,6 +266,15 @@ export default function BankQuestionCard({
                 🤔 存疑作答（已留存强化）
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => setEditModalOpen(true)}
+              className="ml-auto inline-flex items-center gap-1 text-xs text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition"
+              title="如果发现题目参考答案或选项有误，可点击手动修改纠错"
+            >
+              <span>✏️</span>
+              <span>题目有误？修改答案与选项</span>
+            </button>
           </div>
           {result.explanation && (
             <p className="drill-explanation-text mt-1.5 whitespace-pre-wrap leading-relaxed text-gray-600 dark:text-gray-400">
@@ -300,6 +347,25 @@ export default function BankQuestionCard({
                     </div>
                   )}
 
+                  {aiCorrectionMatch && (
+                    <div className="mt-2 flex items-center justify-between gap-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 p-2 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-xs animate-fadeIn">
+                      <span className="flex items-center gap-1.5 truncate">
+                        <span>⚠️</span>
+                        <span>
+                          AI 助教提示本题答案可能有误
+                          {aiCorrectionMatch ? `（建议答案：${aiCorrectionMatch}）` : ""}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setEditModalOpen(true)}
+                        className="px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-700 text-white font-medium text-[11px] shrink-0 shadow-xs transition"
+                      >
+                        手动改答案/选项
+                      </button>
+                    </div>
+                  )}
+
                   {aiText && (
                     <div className="mt-2 text-gray-800 dark:text-gray-200 leading-relaxed overflow-x-auto">
                       <MarkdownLite
@@ -362,6 +428,16 @@ export default function BankQuestionCard({
         </div>
       )}
       <ErrorText>{error}</ErrorText>
+
+      <EditQuestionModal
+        open={editModalOpen}
+        question={curQuestion}
+        initialCorrectAnswer={result?.answer}
+        initialExplanation={result?.explanation}
+        suggestedAnswer={aiCorrectionMatch || undefined}
+        onClose={() => setEditModalOpen(false)}
+        onSuccess={handleEditSuccess}
+      />
     </div>
   );
 }
