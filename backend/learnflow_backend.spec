@@ -15,6 +15,9 @@ hiddenimports = [
     # 题库导入（services/bank.py 函数内 import）：显式声明防漏收
     "xlrd",
     "openpyxl",
+    # 拍照导入/拍照解题（services/images.py）：图片缩放压缩
+    "PIL",
+    "PIL.ImageOps",
     "anyio._backends._asyncio",
     # matplotlib 后端运行时才选定（math.py 里 matplotlib.use("Agg")），钩子收集不到：
     # 渲染走 Agg，savefig(format="svg") 走 backend_svg

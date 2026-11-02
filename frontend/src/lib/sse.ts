@@ -29,7 +29,8 @@ function dispatchFrame<T>(frame: string, onEvent: (payload: T) => void) {
   }
 }
 
-/** POST + SSE：服务端流式返回（对话、评价等）。使用原生 fetch + ReadableStream 逐块实时解析，杜绝自动重试与缓冲挂起。 */
+/** POST + SSE：服务端流式返回（对话、评价等）。使用原生 fetch + ReadableStream 逐块实时解析，杜绝自动重试与缓冲挂起。
+ *  body 传 FormData 时按 multipart 原样发送（拍照解题/图片转写等文件上传流式端点）。 */
 export async function streamSSE<T = unknown>(
   url: string,
   body: unknown,
@@ -37,16 +38,17 @@ export async function streamSSE<T = unknown>(
   signal?: AbortSignal
 ): Promise<void> {
   const token = getAccessToken();
+  const isForm = typeof FormData !== "undefined" && body instanceof FormData;
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
     Accept: "text/event-stream",
   };
+  if (!isForm) headers["Content-Type"] = "application/json";
   if (token) headers["x-access-token"] = token;
 
   const res = await fetch("/api" + url, {
     method: "POST",
     headers,
-    body: JSON.stringify(body),
+    body: isForm ? (body as FormData) : JSON.stringify(body),
     signal,
   });
 

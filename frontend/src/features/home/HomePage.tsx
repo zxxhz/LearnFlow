@@ -33,6 +33,12 @@ export default function HomePage() {
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">学 · 问 · 练 · 错题重刷，一个闭环</p>
         </div>
         <div className="flex items-center gap-3">
+          <Button variant="ghost" className="text-xs" onClick={() => navigate("/import")} title="上传 Markdown 或拍照导入教材内容">
+            📥 导入课程
+          </Button>
+          <Button variant="secondary" onClick={() => navigate("/solve")} title="拍一道题，AI 直接给出答案与分步解析">
+            📸 拍照解题
+          </Button>
           <Button onClick={() => navigate("/courses/new")}>＋ 新建课程</Button>
         </div>
       </div>

@@ -2,6 +2,7 @@
 
 POST /api/courses/import/analyze  上传 md → 章节切分预览（+LLM 修饰课程标题）
 POST /api/courses/import          按确认的切片创建课程（原文归档 + 知识点提取 + 自动出卡）
+POST /api/courses/import/photo-transcribe  拍照/上传图片 → 视觉 LLM 转写为 Markdown 学习材料
 """
 import json
 import shutil
@@ -21,6 +22,7 @@ from app.schemas.course import CourseOut
 from app.services.docparser import parse_blocks
 from app.services.generation.indexing import rebuild_sections
 from app.services.generation.knowledge import ChapterMeta
+from app.services.images import build_vision_messages, compress_to_data_urls
 from app.services.imports import (
     MAX_FILES,
     MAX_FILE_BYTES,
@@ -39,6 +41,9 @@ from app.services.prefs import get_preferences
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["imports"])
+
+# 拍照转写的图片数量上限：书籍页面级转写 8 张足够覆盖一个完整章节
+MAX_PHOTO_IMAGES = 8
 
 
 class ImportChapterSpec(BaseModel):
@@ -144,6 +149,50 @@ async def _extract_kp(
     except Exception as e:
         logger.warning("import kp extraction skipped: %r", e)
         return None
+
+
+@router.post("/courses/import/photo-transcribe")
+async def import_photo_transcribe(
+    images: list[UploadFile] = File(...),
+    hint: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """拍照/上传书籍页面图片 → 视觉 LLM 转写为 Markdown 学习材料（解释扩充 + 例题补解答）。
+
+    返回 {content}；前端将其合成 File 复用现有 analyze/confirm 建课链路。
+    """
+    data_urls = compress_to_data_urls(images, max_count=MAX_PHOTO_IMAGES)
+    try:
+        adapter = await create_adapter_from_settings(db, scene="generation")
+    except Exception as e:  # noqa: BLE001
+        logger.info("photo transcribe adapter unavailable: %r", e)
+        raise HTTPException(
+            status_code=400,
+            detail="尚未配置 LLM 服务，请先到「设置」页填写 base_url、API Key 和模型名",
+        ) from e
+
+    system_prompt = render_prompt("import_transcribe", HINT=hint.strip() or "（未填写）")
+    instruction = (
+        f"请将以下 {len(data_urls)} 张书籍页面照片转写为 Markdown 学习材料，"
+        "按系统规则处理（忠实转写 + 概念通俗解释扩充 + 例题补全解题过程）。"
+    )
+    messages = build_vision_messages(system_prompt, instruction, data_urls)
+    try:
+        content = await adapter.chat(messages, stream=False)
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.exception("photo transcribe failed")
+        # 常见根因：当前模型不支持 image content part（纯文本模型）
+        raise HTTPException(
+            status_code=502,
+            detail=f"图片转写失败：{e}。若反复出现，请确认「设置」页配置的模型支持视觉（多模态）",
+        ) from e
+
+    content = (content or "").strip()
+    if not content:
+        raise HTTPException(status_code=502, detail="AI 未能从图片中转写出内容，请尝试更清晰的照片")
+    return {"content": content}
 
 
 @router.post("/courses/import/analyze")

@@ -1,6 +1,6 @@
 [project]
 name = "learnflow-backend"
-version = "0.4.59"
+version = "0.4.60"
 description = "LearnFlow: 本地运行的 Agentic AI 伴学与练习系统后端（FastAPI + SQLite）"
 requires-python = ">=3.11"
 dependencies = [
@@ -19,6 +19,7 @@ dependencies = [
     "py7zr>=0.22",
     "xlrd>=2.0",
     "openpyxl>=3.1",
+    "pillow>=10.0",
 ]
 
 [tool.uv]

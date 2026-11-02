@@ -60,6 +60,7 @@ import type {
   MindMapAgentSSEEvent,
   MindMapNodeDetailSSEEvent,
   MindMapNodeQASSEEvent,
+  SolveSSEEvent,
   TutorSSEEvent,
   TodayStudyHubOut,
 } from "./types";
@@ -284,6 +285,15 @@ export const api = {
         body: fd,
       });
     },
+    photoTranscribe: (images: File[], hint: string) => {
+      const fd = new FormData();
+      images.forEach((f) => fd.append("images", f));
+      if (hint.trim()) fd.append("hint", hint.trim());
+      return request<{ content: string }>("/courses/import/photo-transcribe", {
+        method: "POST",
+        body: fd,
+      });
+    },
     importConfirm: (files: File[], spec: ImportSpec) => {
       const fd = new FormData();
       files.forEach((f) => fd.append("files", f));
@@ -489,6 +499,19 @@ export const api = {
       onEvent: (ev: TutorSSEEvent) => void,
       signal?: AbortSignal
     ) => streamSSE<TutorSSEEvent>("/tutor/diagnose", body, onEvent, signal),
+  },
+  solve: {
+    photoSSE: (
+      images: File[],
+      hint: string,
+      onEvent: (ev: SolveSSEEvent) => void,
+      signal?: AbortSignal
+    ) => {
+      const fd = new FormData();
+      images.forEach((f) => fd.append("images", f));
+      if (hint.trim()) fd.append("hint", hint.trim());
+      return streamSSE<SolveSSEEvent>("/solve/photo", fd, onEvent, signal);
+    },
   },
   profile: {
     get: () => request<LearnerProfile>("/study/profile"),

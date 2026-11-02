@@ -15,6 +15,7 @@ import BankListPage from "./features/bank/BankListPage";
 import BankDrillPage from "./features/bank/BankDrillPage";
 import MindMapListPage from "./features/mindmap/MindMapListPage";
 import MindMapCanvasPage from "./features/mindmap/MindMapCanvasPage";
+import SnapSolvePage from "./features/solve/SnapSolvePage";
 import { useParams } from "react-router-dom";
 
 /** 读路由参数并以 key 重挂载做题页：bankId 切换时整套做题状态正确重置 */
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/mindmap/:mapId" element={<MindMapCanvasPage />} />
           <Route path="/courses/new" element={<NewCoursePage />} />
           <Route path="/import" element={<ImportPage />} />
+          <Route path="/solve" element={<SnapSolvePage />} />
           <Route path="/courses/:courseId" element={<CourseDetailPage />} />
           <Route path="/read/:documentId" element={<ReaderPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />

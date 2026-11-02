@@ -16,6 +16,7 @@ from app.api import (
     runtime,
     search,
     settings,
+    solve,
     study,
     system,
     tutor,
@@ -40,4 +41,5 @@ api_router.include_router(study.router)
 api_router.include_router(search.router)
 api_router.include_router(system.router)
 api_router.include_router(tutor.router)
+api_router.include_router(solve.router)
 

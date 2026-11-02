@@ -1,19 +1,25 @@
-// 导入自有 Markdown：上传 → 智能识别章节结构 → 预览确认 → 原文入库（PRD 实现备注 12）
-import { useRef, useState } from "react";
+// 导入课程：两种方式——📄 上传 Markdown 原文导入 / 📸 拍照导入（视觉 AI 转写+解释扩充）
+// 共用后续链路：章节切分确认 → 原文/转写稿入库 → 知识点提取（PRD 实现备注 12）
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import type { ImportAnalysis, ImportChapter } from "../../lib/types";
-import { Badge, Button, Input, Spinner } from "../../components/ui";
+import { Badge, Button, Input, Spinner, Textarea } from "../../components/ui";
 
 interface EditableChapter extends ImportChapter {
   include: boolean;
 }
 
+const MAX_PHOTOS = 8;
+const MAX_PHOTO_MB = 10;
+
 export default function ImportPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const fileRef = useRef<HTMLInputElement>(null);
+
+  // ===== 共用：分析/确认状态（文件与拍照两条路径汇合到这里） =====
+  const [tab, setTab] = useState<"file" | "photo">("file");
   const [files, setFiles] = useState<File[] | null>(null);
   const [analysis, setAnalysis] = useState<ImportAnalysis | null>(null);
   const [title, setTitle] = useState("");
@@ -60,12 +66,8 @@ export default function ImportPage() {
     },
   });
 
-  const pick = (list: FileList | null) => {
-    if (!list || list.length === 0) return;
-    const fs = Array.from(list).sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
-    // 请求序号前移使进行中的旧分析作废；清空 input.value 让"重选同一个文件"也能触发 change
+  const startAnalyze = (fs: File[]) => {
     const reqId = ++analyzeReqRef.current;
-    if (fileRef.current) fileRef.current.value = "";
     setFiles(fs);
     setAnalysis(null);
     setChapters([]);
@@ -73,58 +75,337 @@ export default function ImportPage() {
     analyze.mutate({ fs, reqId });
   };
 
+  const resetAll = () => {
+    analyzeReqRef.current++;
+    setFiles(null);
+    setAnalysis(null);
+    setChapters([]);
+    setAnalyzeErr("");
+    setPhotos([]);
+    setTranscribed("");
+    setTranscribeErr("");
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
   const updateChapter = (i: number, patch: Partial<EditableChapter>) =>
     setChapters((prev) => prev.map((c, k) => (k === i ? { ...c, ...patch } : c)));
 
   const included = chapters.filter((c) => c.include).length;
+
+  // ===== 文件导入（原有流程） =====
+  const fileRef = useRef<HTMLInputElement>(null);
+  const pickFiles = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    const fs = Array.from(list).sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+    if (fileRef.current) fileRef.current.value = "";
+    startAnalyze(fs);
+  };
+
+  // ===== 拍照导入 =====
+  const cameraRef = useRef<HTMLInputElement>(null);
+  const albumRef = useRef<HTMLInputElement>(null);
+  const [photos, setPhotos] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
+  const [hint, setHint] = useState("");
+  const [transcribed, setTranscribed] = useState("");
+  const [transcribeErr, setTranscribeErr] = useState("");
+
+  // 预览 URL 释放：组件卸载或图片更换时 revoke，避免内存泄漏
+  useEffect(() => {
+    return () => previews.forEach((u) => URL.revokeObjectURL(u));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const addPhotos = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    const incoming: File[] = [];
+    for (const f of Array.from(list)) {
+      if (!f.type.startsWith("image/")) {
+        setTranscribeErr(`「${f.name}」不是图片文件`);
+        return;
+      }
+      if (f.size > MAX_PHOTO_MB * 1024 * 1024) {
+        setTranscribeErr(`「${f.name}」超过 ${MAX_PHOTO_MB}MB 上限`);
+        return;
+      }
+      incoming.push(f);
+    }
+    const merged = [...photos, ...incoming].slice(0, MAX_PHOTOS);
+    if ([...photos, ...incoming].length > MAX_PHOTOS) {
+      setTranscribeErr(`最多上传 ${MAX_PHOTOS} 张图片`);
+    }
+    previews.forEach((u) => URL.revokeObjectURL(u));
+    setPhotos(merged);
+    setPreviews(merged.map((f) => URL.createObjectURL(f)));
+    setTranscribeErr("");
+  };
+
+  const removePhoto = (i: number) => {
+    URL.revokeObjectURL(previews[i]);
+    const merged = photos.filter((_, k) => k !== i);
+    setPhotos(merged);
+    setPreviews(merged.map((f) => URL.createObjectURL(f)));
+  };
+
+  const transcribe = useMutation({
+    mutationFn: () => api.courses.photoTranscribe(photos, hint),
+    onSuccess: (res) => {
+      setTranscribed(res.content);
+      setTranscribeErr("");
+    },
+    onError: (e) => setTranscribeErr((e as Error).message),
+  });
+
+  // 把转写稿合成虚拟 Markdown 文件，走与文件导入完全相同的切章/确认/入库链路
+  const proceedToChapters = () => {
+    const text = transcribed.trim();
+    if (!text) return;
+    const virtualFile = new File([text], "拍照导入.md", { type: "text/markdown" });
+    startAnalyze([virtualFile]);
+  };
+
+  const pickPhotoInput = (list: FileList | null) => {
+    addPhotos(list);
+    if (cameraRef.current) cameraRef.current.value = "";
+    if (albumRef.current) albumRef.current.value = "";
+  };
 
   return (
     <div className="mx-auto max-w-5xl p-8">
       <Link to="/" className="text-sm text-gray-500 dark:text-gray-400 hover:text-brand-600">
         ← 返回首页
       </Link>
-      <h1 className="mt-4 text-2xl font-bold text-gray-900 dark:text-gray-100">导入 Markdown 课程</h1>
-      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-        选择你自己的 .md 文件，系统按标题结构自动识别章节；原文保留、不做改写，并提取知识点。
-      </p>
+      <h1 className="mt-4 text-2xl font-bold text-gray-900 dark:text-gray-100">导入课程</h1>
 
-      {/* 文件选择 */}
-      <div
-        className="mt-6 cursor-pointer rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 p-8 text-center transition hover:border-brand-500"
-        onClick={() => fileRef.current?.click()}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          pick(e.dataTransfer.files);
-        }}
-      >
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          accept=".md,.markdown,.mdown,.mkd"
-          className="hidden"
-          onChange={(e) => pick(e.target.files)}
-        />
-        <div className="text-3xl">📄</div>
-        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-          点击选择或拖入 Markdown 文件（可多选，单文件 ≤ 5MB，最多 20 个）
-        </p>
-        {files && (
-          <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
-            已选择 {files.length} 个：{files.map((f) => f.name).join("、")}
-          </p>
-        )}
-      </div>
-
-      {analyze.isPending && (
-        <div className="mt-4 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-          <Spinner /> 正在识别章节结构…
+      {/* 方式切换 */}
+      {!analysis && (
+        <div className="mt-4 flex border-b border-gray-200 dark:border-gray-700">
+          <button
+            type="button"
+            onClick={() => setTab("file")}
+            className={`pb-2 px-4 text-sm font-semibold transition border-b-2 -mb-px ${
+              tab === "file"
+                ? "border-brand-600 text-brand-600 dark:border-brand-400 dark:text-brand-400"
+                : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            }`}
+          >
+            📄 上传 Markdown
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("photo")}
+            className={`pb-2 px-4 text-sm font-semibold transition border-b-2 -mb-px ${
+              tab === "photo"
+                ? "border-brand-600 text-brand-600 dark:border-brand-400 dark:text-brand-400"
+                : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            }`}
+          >
+            📸 拍照导入
+          </button>
         </div>
       )}
-      {analyzeErr && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{analyzeErr}</p>}
 
-      {/* 识别结果预览 */}
+      {/* ===== 文件导入 ===== */}
+      {tab === "file" && !analysis && (
+        <>
+          <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+            选择你自己的 .md 文件，系统按标题结构自动识别章节；原文保留、不做改写，并提取知识点。
+          </p>
+          <div
+            className="mt-6 cursor-pointer rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 p-8 text-center transition hover:border-brand-500"
+            onClick={() => fileRef.current?.click()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              pickFiles(e.dataTransfer.files);
+            }}
+          >
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              accept=".md,.markdown,.mdown,.mkd"
+              className="hidden"
+              onChange={(e) => pickFiles(e.target.files)}
+            />
+            <div className="text-3xl">📄</div>
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+              点击选择或拖入 Markdown 文件（可多选，单文件 ≤ 5MB，最多 20 个）
+            </p>
+            {files && !analysis && (
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                已选择 {files.length} 个：{files.map((f) => f.name).join("、")}
+              </p>
+            )}
+          </div>
+
+          {analyze.isPending && (
+            <div className="mt-4 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+              <Spinner /> 正在识别章节结构…
+            </div>
+          )}
+          {analyzeErr && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{analyzeErr}</p>}
+        </>
+      )}
+
+      {/* ===== 拍照导入 ===== */}
+      {tab === "photo" && !analysis && (
+        <div
+          className="mt-3"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (e.dataTransfer.files.length > 0) pickPhotoInput(e.dataTransfer.files);
+          }}
+        >
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            拍摄书上的内容或例题（手机点「拍照」直接拉起相机），AI 转写为结构化教材并解释扩充——例题自动补全解题过程，建课后即可针对章节出练习题。
+          </p>
+
+          {/* 拍照 / 相册入口：capture 属性在局域网 HTTP 下也能拉起手机相机（getUserMedia 需 HTTPS 不可用） */}
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => cameraRef.current?.click()}
+              className="flex flex-col items-center gap-1.5 rounded-xl border-2 border-dashed border-brand-300 dark:border-brand-800 bg-brand-50/50 dark:bg-brand-950/20 py-6 text-brand-700 dark:text-brand-300 hover:border-brand-500 hover:bg-brand-50 dark:hover:bg-brand-900/30 transition"
+            >
+              <input
+                ref={cameraRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                multiple
+                className="hidden"
+                onChange={(e) => pickPhotoInput(e.target.files)}
+              />
+              <span className="text-2xl">📸</span>
+              <span className="text-sm font-semibold">拍照</span>
+              <span className="text-[11px] text-gray-400">手机直接拉起相机</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => albumRef.current?.click()}
+              className="flex flex-col items-center gap-1.5 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 py-6 text-gray-600 dark:text-gray-300 hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-400 transition"
+            >
+              <input
+                ref={albumRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => pickPhotoInput(e.target.files)}
+              />
+              <span className="text-2xl">🖼️</span>
+              <span className="text-sm font-semibold">从相册选择</span>
+              <span className="text-[11px] text-gray-400">或把图片拖到本页任意位置</span>
+            </button>
+          </div>
+
+          {/* 缩略图预览 */}
+          {photos.length > 0 && (
+            <div className="mt-4">
+              <div className="mb-2 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                <span>
+                  已选 {photos.length}/{MAX_PHOTOS} 张
+                </span>
+                <button
+                  type="button"
+                  className="text-brand-600 dark:text-brand-400 hover:underline"
+                  onClick={() => {
+                    previews.forEach((u) => URL.revokeObjectURL(u));
+                    setPhotos([]);
+                    setPreviews([]);
+                    setTranscribed("");
+                  }}
+                >
+                  清空重拍
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                {photos.map((p, i) => (
+                  <div key={i} className="group relative">
+                    <img
+                      src={previews[i]}
+                      alt={`图片 ${i + 1}`}
+                      className="h-24 w-full rounded-lg border border-gray-200 dark:border-gray-700 object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removePhoto(i)}
+                      className="absolute right-1 top-1 rounded-full bg-black/60 px-1.5 text-xs text-white opacity-0 transition group-hover:opacity-100"
+                      title="移除"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 意图提示（可选） */}
+          <div className="mt-4">
+            <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+              处理方式说明（可选）
+            </label>
+            <Input
+              value={hint}
+              onChange={(e) => setHint(e.target.value)}
+              placeholder="如：解释扩充概念 / 忠实复刻原文 / 这是高数例题，重点补全解题过程"
+              className="text-xs"
+            />
+          </div>
+
+          {transcribeErr && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{transcribeErr}</p>}
+
+          {/* AI 转写 */}
+          {!transcribed && (
+            <Button
+              className="mt-4 w-full"
+              disabled={photos.length === 0 || transcribe.isPending}
+              onClick={() => transcribe.mutate()}
+            >
+              {transcribe.isPending ? (
+                <>
+                  <Spinner className="border-white/40" /> AI 正在识别与转写（约 20~60 秒，取决于张数）…
+                </>
+              ) : (
+                `🤖 AI 转写${photos.length ? `（${photos.length} 张图片）` : ""}`
+              )}
+            </Button>
+          )}
+
+          {/* 转写结果编辑 */}
+          {transcribed && (
+            <div className="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  ✅ 转写完成（可手动修正识别误差）
+                </span>
+                <Button
+                  variant="ghost"
+                  className="text-xs"
+                  disabled={transcribe.isPending || photos.length === 0}
+                  onClick={() => transcribe.mutate()}
+                >
+                  ↻ 重新转写
+                </Button>
+              </div>
+              <Textarea
+                rows={14}
+                value={transcribed}
+                onChange={(e) => setTranscribed(e.target.value)}
+                className="font-mono text-xs"
+              />
+              <Button className="mt-3 w-full" disabled={!transcribed.trim()} onClick={proceedToChapters}>
+                下一步：切章确认 →
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ===== 共用：章节切分确认（文件与拍照两条路径汇合） ===== */}
       {analysis && (
         <div className="mt-6 space-y-4">
           <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
@@ -145,8 +426,8 @@ export default function ImportPage() {
               <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                 识别到 {chapters.length} 个章节（勾选要导入的部分，标题可改）
               </span>
-              <Button variant="ghost" className="text-xs" onClick={() => fileRef.current?.click()}>
-                重选文件
+              <Button variant="ghost" className="text-xs" onClick={resetAll}>
+                {tab === "photo" ? "重新拍照/选图" : "重选文件"}
               </Button>
             </div>
             <div className="space-y-2">

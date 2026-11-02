@@ -471,6 +471,13 @@ export interface TutorSSEEvent {
   detail?: string;
 }
 
+/** 拍照解题 SSE 事件（/solve/photo） */
+export interface SolveSSEEvent {
+  type: "delta" | "done" | "error";
+  text?: string;
+  detail?: string;
+}
+
 export interface ProgressSSEEvent {
   type:
     | "snapshot"
