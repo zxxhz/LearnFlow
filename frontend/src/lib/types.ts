@@ -706,6 +706,8 @@ export interface MindMapSummary {
   title: string;
   topic: string;
   node_count: number;
+  source?: "manual" | "import" | "generate" | "course";
+  course_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -728,6 +730,8 @@ export interface MindMapDetail {
     cross_links?: MindMapCrossLink[];
     [key: string]: any;
   };
+  source?: "manual" | "import" | "generate" | "course";
+  course_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -747,9 +751,10 @@ export interface MindMapUpdateInput {
 }
 
 export interface MindMapGenerateInput {
-  prompt: string;
+  prompt?: string;
   depth?: number;
   import_content?: string;
+  course_id?: string;
 }
 
 export interface MindMapImportInput {

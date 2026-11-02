@@ -1,8 +1,11 @@
 """思维导图 Pydantic 模式定义。"""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, Field
+
+# 导图来源白名单：manual（手动新建）/ import（文件导入）/ generate（主题生成）/ course（课程生成）
+MINDMAP_SOURCES = ("manual", "import", "generate", "course")
 
 
 class MindMapNode(BaseModel):
@@ -20,6 +23,10 @@ class MindMapCreate(BaseModel):
     topic: str = Field(default="", description="导图核心领域或主题")
     root: MindMapNode | dict[str, Any] | None = Field(default=None, description="初始根节点")
     settings: dict[str, Any] = Field(default_factory=dict, description="画布视图配置")
+    source: Literal["manual", "import", "generate", "course"] = Field(
+        default="manual", description="导图来源标记"
+    )
+    course_id: str | None = Field(default=None, max_length=32, description="来源课程 ID（source=course 时）")
 
 
 class MindMapUpdate(BaseModel):
@@ -34,6 +41,8 @@ class MindMapSummary(BaseModel):
     title: str
     topic: str
     node_count: int
+    source: str = "manual"
+    course_id: str | None = None
     created_at: str
     updated_at: str
 
@@ -44,15 +53,20 @@ class MindMapDetail(BaseModel):
     topic: str
     root: dict[str, Any]
     settings: dict[str, Any]
+    source: str = "manual"
+    course_id: str | None = None
     created_at: str
     updated_at: str
 
 
 class MindMapGenerateRequest(BaseModel):
-    prompt: str = Field(description="主题或生成提示，如「计算机网络传输层与TCP协议」")
+    prompt: str = Field(default="", description="主题或生成提示；course_id 模式下可留空")
     depth: int = Field(default=3, ge=2, le=5, description="思维导图层级深度")
     import_content: str = Field(
         default="", max_length=2_000_000, description="可选参考材料或粘贴的文章长文本（上限 200 万字符）"
+    )
+    course_id: str | None = Field(
+        default=None, max_length=32, description="课程 ID：提供时基于课程大纲/摘要/知识点生成导图"
     )
 
 

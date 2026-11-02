@@ -312,6 +312,13 @@ export default function MindMapListPage() {
                     领域：{m.topic}
                   </p>
                 )}
+                {m.source === "course" && (
+                  <p className="mt-1 flex items-center gap-1">
+                    <span className="rounded bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                      🎓 来自课程
+                    </span>
+                  </p>
+                )}
               </div>
 
               <div className="mt-4 flex items-center justify-between border-t border-gray-100 dark:border-gray-700/60 pt-3 text-[11px] text-gray-400 dark:text-gray-500">

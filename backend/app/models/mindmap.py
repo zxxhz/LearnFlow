@@ -16,3 +16,7 @@ class MindMap(Base, UUIDPk, UserIdMixin, Timestamps):
     root: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     # 画布设置与视图偏好（布局模式、默认缩放等）
     settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # 来源：manual（手动新建）/ import（文件导入）/ generate（主题生成）/ course（课程生成）
+    source: Mapped[str] = mapped_column(String(20), default="manual")
+    # 课程来源关联（source=course 时指向生成它的课程）
+    course_id: Mapped[str | None] = mapped_column(String(32), nullable=True)

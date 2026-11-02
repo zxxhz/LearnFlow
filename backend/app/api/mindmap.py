@@ -33,6 +33,8 @@ def _to_detail(m: Any) -> MindMapDetail:
         topic=m.topic,
         root=m.root,
         settings=m.settings,
+        source=getattr(m, "source", None) or "manual",
+        course_id=getattr(m, "course_id", None),
         created_at=m.created_at,
         updated_at=m.updated_at,
     )
@@ -98,6 +100,7 @@ async def import_mindmap(data: MindMapImportRequest, db: AsyncSession = Depends(
         title=final_title,
         topic="导入知识体系",
         root=tree,
+        source="import",
     )
     try:
         mm = await mindmap_service.create_mindmap(db, create_data)
@@ -108,11 +111,34 @@ async def import_mindmap(data: MindMapImportRequest, db: AsyncSession = Depends(
 
 @router.post("/generate", response_model=MindMapDetail)
 async def generate_mindmap(data: MindMapGenerateRequest, db: AsyncSession = Depends(get_db)):
-    """通过 AI Agent 根据主题与长文材料生成结构化思维导图。"""
-    if not data.prompt.strip():
-        raise HTTPException(status_code=400, detail="生成主题提示不可为空")
+    """通过 AI Agent 根据主题/长文材料/课程内容生成结构化思维导图。
 
+    提供 course_id 时走课程链路（大纲+章节摘要+知识点，材料上限 16000 字符），
+    否则要求 prompt 非空走通用主题链路。
+    """
     try:
+        if data.course_id:
+            # 课程生成链路：prompt 可留空，标题/材料均取自课程
+            res = await mindmap_service.generate_mindmap_from_course(
+                db,
+                course_id=data.course_id,
+                depth=data.depth,
+                include_details=True,
+            )
+            course = res["course"]
+            create_data = MindMapCreate(
+                title=res["title"],
+                topic=course.title[:40],
+                root=res["root"],
+                source="course",
+                course_id=course.id,
+            )
+            mm = await mindmap_service.create_mindmap(db, create_data)
+            return _to_detail(mm)
+
+        if not data.prompt.strip():
+            raise HTTPException(status_code=400, detail="生成主题提示不可为空")
+
         res = await mindmap_service.generate_mindmap_tree(
             prompt=data.prompt,
             depth=data.depth,
@@ -123,9 +149,15 @@ async def generate_mindmap(data: MindMapGenerateRequest, db: AsyncSession = Depe
             title=res["title"],
             topic=data.prompt.strip()[:40],
             root=res["root"],
+            source="generate",
         )
         mm = await mindmap_service.create_mindmap(db, create_data)
         return _to_detail(mm)
+    except HTTPException:
+        # 直接上抛（如空 prompt 的 400），避免被下方兜底转成 500
+        raise
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except LLMError:
         # 交给全局 llm_error_handler（400 + 中文提示），不得吞掉转 500
         raise

@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { subscribeSSE } from "../../lib/sse";
 import type { ChapterProgress, ProgressSSEEvent } from "../../lib/types";
-import { Badge, Button, ConfirmDialog, EmptyState, Input, Spinner } from "../../components/ui";
+import { Badge, Button, ConfirmDialog, EmptyState, ErrorText, Input, Modal, Spinner } from "../../components/ui";
 import OutlineEditor from "./OutlineEditor";
 import CourseAskPanel from "./CourseAskPanel";
 
@@ -15,6 +15,113 @@ const DOC_STATUS: Record<string, { label: string; color: "gray" | "green" | "blu
   done: { label: "完成", color: "green" },
   failed: { label: "失败", color: "red" },
 };
+
+/** 生成思维导图弹窗：深度选择 + 是否包含章节摘要与知识点 */
+function MindMapGenModal({
+  open,
+  courseId,
+  courseTitle,
+  doneCount,
+  onClose,
+}: {
+  open: boolean;
+  courseId: string;
+  courseTitle: string;
+  doneCount: number;
+  onClose: () => void;
+}) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [depth, setDepth] = useState(3);
+  const [includeDetails, setIncludeDetails] = useState(true);
+  const [error, setError] = useState("");
+
+  const gen = useMutation({
+    mutationFn: () =>
+      api.mindmaps.generate({ course_id: courseId, depth, prompt: "" }),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
+      onClose();
+      navigate(`/mindmap/${res.id}`);
+    },
+    onError: (e) => setError((e as Error).message),
+  });
+
+  return (
+    <Modal open={open} onClose={onClose} title={`🧠 为「${courseTitle}」生成思维导图`}>
+      <div className="space-y-4 text-xs">
+        <div className="rounded-lg bg-brand-50/60 dark:bg-brand-950/30 p-3 border border-brand-200/80 dark:border-brand-900/60 text-brand-800 dark:text-brand-300 leading-relaxed">
+          基于课程大纲{includeDetails && doneCount > 0 ? "、各章内容摘要与核心知识点" : ""}自动构建知识导图：
+          一级分支对应章节，逐层展开要点与概念，生成后可继续用导图 Agent 对话式增删改。
+        </div>
+
+        <div>
+          <div className="mb-1.5 font-medium text-gray-700 dark:text-gray-300">导图层级深度</div>
+          <div className="flex items-center gap-2">
+            {[2, 3, 4].map((d) => (
+              <button
+                key={d}
+                type="button"
+                onClick={() => setDepth(d)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                  depth === d
+                    ? "bg-brand-600 text-white shadow-sm"
+                    : "bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-brand-500"
+                }`}
+              >
+                {d} 层{d === 2 ? "（章节→要点）" : d === 3 ? "（推荐）" : "（更细）"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <label className="flex items-start gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={includeDetails}
+            onChange={(e) => setIncludeDetails(e.target.checked)}
+            disabled={doneCount === 0}
+            className="mt-0.5 rounded text-brand-600 focus:ring-brand-500"
+          />
+          <span className="text-gray-600 dark:text-gray-300">
+            包含各章内容摘要与核心知识点
+            {doneCount === 0 ? (
+              <span className="ml-1 text-gray-400">（暂无已生成章节，仅按大纲生成）</span>
+            ) : (
+              <span className="ml-1 text-gray-400">（{doneCount} 个已生成章节）</span>
+            )}
+          </span>
+        </label>
+
+        {error && <ErrorText>{error}</ErrorText>}
+
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
+          <Button variant="ghost" onClick={onClose} className="text-xs">
+            取消
+          </Button>
+          <Button
+            variant="primary"
+            disabled={gen.isPending}
+            onClick={() => {
+              setError("");
+              gen.mutate();
+            }}
+            className="text-xs font-medium"
+          >
+            {gen.isPending ? (
+              <>
+                <Spinner className="h-3 w-3 inline mr-1.5" />
+                AI 正在构建导图（约 10~40 秒）…
+              </>
+            ) : (
+              "开始生成"
+            )}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
 
 export default function CourseDetailPage() {
   const { courseId } = useParams<{ courseId: string }>();
@@ -33,6 +140,7 @@ export default function CourseDetailPage() {
   const [confirmDel, setConfirmDel] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [mindmapOpen, setMindmapOpen] = useState(false);
 
   const rename = useMutation({
     mutationFn: (title: string) => api.courses.rename(courseId!, title),
@@ -233,6 +341,14 @@ export default function CourseDetailPage() {
         <div className="flex items-center gap-2">
           {course.status !== "draft" && (
             <>
+              <Button
+                variant="ghost"
+                className="text-xs text-brand-600 dark:text-brand-400"
+                onClick={() => setMindmapOpen(true)}
+                title="基于课程大纲与已生成章节的知识点，一键生成思维导图"
+              >
+                🧠 生成思维导图
+              </Button>
               <Button variant="ghost" className="text-xs" onClick={() => api.courses.exportNotesMd(course.id).catch((e) => alert(e.message))} title="汇集全课程所有章节摘要、个人划线与手写随笔批注，导出为 Markdown">
                 📝 导出笔记汇编
               </Button>
@@ -348,6 +464,13 @@ export default function CourseDetailPage() {
             alert((err as Error).message);
           }
         }}
+      />
+      <MindMapGenModal
+        open={mindmapOpen}
+        courseId={course.id}
+        courseTitle={course.title}
+        doneCount={doneCount}
+        onClose={() => setMindmapOpen(false)}
       />
     </div>
   );

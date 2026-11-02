@@ -79,6 +79,9 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_bank_attempts_question_created ON bank_attempts(question_id, created_at)",
             "CREATE INDEX IF NOT EXISTS ix_exercise_attempts_exercise_created ON exercise_attempts(exercise_id, created_at)",
             "CREATE INDEX IF NOT EXISTS ix_messages_created_at ON messages(created_at)",
+            # v0.4.59 思维导图来源标记与课程关联（课程一键生成导图）
+            "ALTER TABLE mind_maps ADD COLUMN source VARCHAR(20) DEFAULT 'manual'",
+            "ALTER TABLE mind_maps ADD COLUMN course_id VARCHAR(32)",
         ]
         for ddl in migrations:
             try:

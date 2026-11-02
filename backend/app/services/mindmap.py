@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.mindmap import MindMap
 from app.schemas.mindmap import (
+    MINDMAP_SOURCES,
     MindMapCreate,
     MindMapDetail,
     MindMapSummary,
@@ -332,6 +333,7 @@ async def list_mindmaps(db: AsyncSession) -> list[MindMapSummary]:
     """
     sql = text(
         "SELECT id, title, topic, created_at, updated_at, "
+        "COALESCE(source, 'manual') AS source, course_id, "
         "(SELECT COUNT(*) FROM json_tree(mind_maps.root, '$') jt "
         " WHERE jt.key = 'title' AND jt.type = 'text') AS node_count "
         "FROM mind_maps ORDER BY updated_at DESC"
@@ -349,6 +351,8 @@ async def list_mindmaps(db: AsyncSession) -> list[MindMapSummary]:
                 title=m.title,
                 topic=m.topic,
                 node_count=count_nodes(m.root),
+                source=getattr(m, "source", None) or "manual",
+                course_id=getattr(m, "course_id", None),
                 created_at=m.created_at,
                 updated_at=m.updated_at,
             )
@@ -360,6 +364,8 @@ async def list_mindmaps(db: AsyncSession) -> list[MindMapSummary]:
             title=r.title,
             topic=r.topic,
             node_count=int(r.node_count or 0),
+            source=r.source or "manual",
+            course_id=r.course_id,
             created_at=r.created_at,
             updated_at=r.updated_at,
         )
@@ -380,6 +386,8 @@ async def create_mindmap(db: AsyncSession, data: MindMapCreate) -> MindMap:
         settings=sanitize_settings(
             data.settings or {"layout": "lr", "zoom": 1}, initial_root
         ),
+        source=data.source if data.source in MINDMAP_SOURCES else "manual",
+        course_id=(data.course_id or "").strip() or None,
     )
     db.add(mm)
     await db.commit()
@@ -490,15 +498,19 @@ async def generate_mindmap_tree(
     depth: int,
     import_content: str,
     db: AsyncSession,
+    content_max_chars: int = 4000,
 ) -> dict[str, Any]:
-    """结合用户画像与深度要求，生成多层级纯净思维导图。"""
+    """结合用户画像与深度要求，生成多层级纯净思维导图。
+
+    content_max_chars：参考材料截断上限（通用主题 4000；课程链路传更大值）。
+    """
     adapter = await create_adapter_from_settings(db, scene="generation")
     profile_snippet = await format_profile_for_prompt(db)
     system_prompt = render_prompt("mindmap_gen", LEARNER_PROFILE=profile_snippet)
 
     user_content = f"请围绕以下主题与材料，构建层级深度为 {depth} 层的思维导图：\n\n【核心主题】\n{prompt.strip()}"
     if import_content.strip():
-        user_content += f"\n\n【参考材料与长文背景】\n{import_content.strip()[:4000]}"
+        user_content += f"\n\n【参考材料与长文背景】\n{import_content.strip()[:content_max_chars]}"
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -523,6 +535,142 @@ async def generate_mindmap_tree(
         root = create_default_tree(title)
 
     return {"title": title, "root": root}
+
+
+# 课程材料组装上限：远超通用 import 的 4000 字符，同时防止超长课程撑爆上下文
+_COURSE_MATERIAL_MAX_CHARS = 16_000
+_CHAPTER_SUMMARY_MAX = 300
+_KP_SUMMARY_MAX = 120
+
+
+def _assemble_course_material(
+    outline: list[dict[str, Any]],
+    chapters: list[dict[str, str]],
+    kps_by_chapter: dict[int, list[dict[str, str]]],
+    include_details: bool,
+) -> str:
+    """把课程大纲、章节摘要与知识点组装为结构化文本材料。
+
+    outline: [{index, title, points}]; chapters: [{index, title, summary, done}]
+    kps_by_chapter: {chapter_index: [{title, summary}]}
+    """
+    lines: list[str] = ["【课程大纲】"]
+
+    for item in outline:
+        idx = item.get("index")
+        title = str(item.get("title") or "").strip()
+        lines.append(f"第{idx}章 {title}" if idx is not None else title)
+        for p in item.get("points") or []:
+            p = str(p).strip()
+            if p:
+                lines.append(f"  - {p}")
+
+    if include_details:
+        summary_lines: list[str] = []
+        for ch in chapters:
+            if not ch.get("done"):
+                continue
+            summary = (ch.get("summary") or "").strip()
+            if summary:
+                summary_lines.append(
+                    f"第{ch['index']}章 {ch['title']}：{summary[:_CHAPTER_SUMMARY_MAX]}"
+                )
+        if summary_lines:
+            lines.append("")
+            lines.append("【各章内容摘要】")
+            lines.extend(summary_lines)
+
+        kp_lines: list[str] = []
+        for idx in sorted(kps_by_chapter):
+            items = kps_by_chapter[idx]
+            if not items:
+                continue
+            kp_lines.append(f"第{idx}章知识点：")
+            for kp in items:
+                line = f"  • {kp['title']}"
+                if kp.get("summary"):
+                    line += f" —— {kp['summary'][:_KP_SUMMARY_MAX]}"
+                kp_lines.append(line)
+        if kp_lines:
+            lines.append("")
+            lines.append("【核心知识点】")
+            lines.extend(kp_lines)
+
+    material = "\n".join(lines)
+    if len(material) > _COURSE_MATERIAL_MAX_CHARS:
+        material = material[:_COURSE_MATERIAL_MAX_CHARS] + "\n…（材料过长已截断）"
+    return material
+
+
+async def generate_mindmap_from_course(
+    db: AsyncSession,
+    course_id: str,
+    depth: int,
+    include_details: bool = True,
+) -> dict[str, Any]:
+    """根据课程大纲 + 已生成章节摘要与知识点，一键生成关联该课程的结构化思维导图。
+
+    返回 {"title", "root", "course"}；课程不存在时抛 LookupError。
+    """
+    from app.models.course import Course
+    from app.models.document import Document
+    from app.models.knowledge_point import KnowledgePoint
+
+    course = await db.get(Course, course_id)
+    if course is None:
+        raise LookupError("课程不存在")
+
+    outline: list[dict[str, Any]] = []
+    if course.outline:
+        try:
+            outline = json.loads(course.outline)
+        except Exception:  # noqa: BLE001
+            outline = []
+
+    docs = (
+        await db.scalars(
+            select(Document)
+            .where(Document.course_id == course.id)
+            .order_by(Document.chapter_index)
+        )
+    ).all()
+
+    chapters = [
+        {
+            "index": d.chapter_index,
+            "title": d.title,
+            "summary": d.summary or "",
+            "done": d.status == "done",
+        }
+        for d in docs
+    ]
+
+    kps_by_chapter: dict[int, list[dict[str, str]]] = {}
+    if include_details and docs:
+        doc_ids = [d.id for d in docs]
+        doc_idx = {d.id: d.chapter_index for d in docs}
+        kps = (
+            await db.scalars(
+                select(KnowledgePoint).where(KnowledgePoint.document_id.in_(doc_ids))
+            )
+        ).all()
+        for kp in kps:
+            kps_by_chapter.setdefault(doc_idx.get(kp.document_id, 0), []).append(
+                {"title": kp.title, "summary": kp.summary or ""}
+            )
+
+    material = _assemble_course_material(outline, chapters, kps_by_chapter, include_details)
+
+    prompt = f"{course.title}" + (f"（{course.topic[:80]}）" if (course.topic or "").strip() else "")
+    res = await generate_mindmap_tree(
+        prompt=prompt,
+        depth=depth,
+        import_content=material,
+        db=db,
+        content_max_chars=_COURSE_MATERIAL_MAX_CHARS,
+    )
+    res["course"] = course
+    return res
 
 
 # ==============================================================================
