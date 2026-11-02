@@ -238,97 +238,9 @@ async def check_update(db: AsyncSession, force: bool = False) -> dict:
 
 
 
-def _find_parent_desktop_pid() -> int | None:
-    """取父进程 PID（仅当其映像名为 LearnFlow.exe，即打包版桌面壳）。
-
-    更新链必须先杀壳再杀后端：壳的 watchdog 检测到后端失联后会用旧安装目录
-    重拉后端，与安装器写文件互踩。按 PID /T 终止比按映像名（/IM 会杀掉所有
-    同名实例）保守；父进程不可得或映像名不符（开发模式父进程是终端/IDE）时
-    返回 None，由调用方退回映像名兜底。
-    """
-    import ctypes
-    import os
-    from ctypes import wintypes
-
-    class PROCESSENTRY32W(ctypes.Structure):
-        _fields_ = [
-            ("dwSize", wintypes.DWORD),
-            ("cntUsage", wintypes.DWORD),
-            ("th32ProcessID", wintypes.DWORD),
-            ("th32DefaultHeapID", ctypes.POINTER(wintypes.ULONG)),
-            ("th32ModuleID", wintypes.DWORD),
-            ("cntThreads", wintypes.DWORD),
-            ("th32ParentProcessID", wintypes.DWORD),
-            ("pcPriClassBase", ctypes.c_long),
-            ("dwFlags", wintypes.DWORD),
-            ("szExeFile", wintypes.WCHAR * 260),
-        ]
-
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-
-    snap = k32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
-    if not snap or snap == ctypes.c_void_p(-1).value:
-        return None
-    try:
-        me = os.getpid()
-        parent_pid = None
-        names: dict[int, str] = {}
-        pe = PROCESSENTRY32W()
-        pe.dwSize = ctypes.sizeof(pe)
-        ok = bool(k32.Process32FirstW(snap, ctypes.byref(pe)))
-        while ok:
-            names[int(pe.th32ProcessID)] = str(pe.szExeFile)
-            if int(pe.th32ProcessID) == me:
-                parent_pid = int(pe.th32ParentProcessID)
-            pe.dwSize = ctypes.sizeof(pe)
-            ok = bool(k32.Process32NextW(snap, ctypes.byref(pe)))
-    finally:
-        k32.CloseHandle(snap)
-    if parent_pid and names.get(parent_pid, "").lower() == "learnflow.exe":
-        return parent_pid
-    return None
-
-
-def _kill_update_targets() -> None:
-    """终止旧版进程（桌面壳 + 后端），释放安装目录文件锁。
-
-    - 桌面壳：backend 由壳 spawn，父进程映像名 = LearnFlow.exe 时按父 PID /T
-      （整树，连带 WebView 子进程）终止；否则退回映像名兜底。
-      learnflow-desktop.exe 为已废弃旧名，不再处理。
-    - 后端：按自身 PID /T 终止（连带编译器/沙箱子进程）；taskkill 不会终止
-      自身所在的调用链之外的进程，且打包版该 PID 即 learnflow-backend.exe。
-
-    所有 taskkill 带超时且吞异常：退出路径绝不能被外部命令挂起卡死。
-    """
-    import os
-    import subprocess
-
-    def _run(cmd, **kw) -> None:
-        try:
-            subprocess.run(cmd, capture_output=True, timeout=10, **kw)
-        except Exception:  # noqa: BLE001  含 TimeoutExpired/FileNotFoundError
-            pass
-
-    desktop_pid = _find_parent_desktop_pid()
-    if desktop_pid:
-        _run(["taskkill", "/F", "/T", "/PID", str(desktop_pid)])
-    else:
-        _run("taskkill /F /IM LearnFlow.exe >nul 2>&1", shell=True)
-    _run(["taskkill", "/F", "/T", "/PID", str(os.getpid())])
-
-
 def _launch_installer_and_exit(installer_path: "Path") -> None:
-    """唤起已下载的最新安装包界面并平稳退出当前旧版本进程，彻底释放文件锁。
-
-    两次唤起都失败时抛出异常：绝不能在没启动安装包的情况下自杀退出旧版本——
-    那会让用户既没更新成功、应用也没了。
-    """
+    """唤起已下载的最新安装包界面并平稳退出当前旧版本进程，彻底释放文件锁。"""
     import os
-    import socket
     import subprocess
     import sys
     import threading
@@ -338,60 +250,56 @@ def _launch_installer_and_exit(installer_path: "Path") -> None:
     installer_str = str(installer_path.resolve())
     logger.info("准备唤起新版本安装程序: %s", installer_str)
 
-    # 1. 使用 Windows 系统外壳独立打开安装包（脱离当前进程树，兼容 UAC 提权）；
-    #    两次尝试都抛异常时直接向上传播，绝不安排退出
+    # 1. 以完全脱离当前进程树的独立方式启动安装向导
+    #    优先使用 os.startfile，回退 cmd /c start ""，完全交由 Windows Shell 独立运行，
+    #    绝不作为后端的子进程，避免旧版本退出或 taskkill 时误伤安装程序
+    started = False
     try:
         os.startfile(installer_str)
+        started = True
     except Exception as e:
-        logger.warning("os.startfile 唤起失败，尝试调用 explorer.exe: %s", e)
-        subprocess.Popen(["explorer.exe", installer_str])
+        logger.warning("os.startfile 唤起失败，尝试调用 cmd start: %s", e)
 
-    # 2. 主动确认旧版本已停止服务后终止，而非盲等固定秒数
+    if not started:
+        try:
+            # cmd /c start "" 启动的程序属于全新会话组，脱离当前进程树
+            subprocess.Popen(f'start "" "{installer_str}"', shell=True)
+            started = True
+        except Exception as e:
+            logger.warning("cmd start 唤起失败，尝试调用 explorer: %s", e)
+            subprocess.Popen(["explorer.exe", installer_str])
+            started = True
+
+    # 2. 延迟 2.5 秒后安全关闭旧版本进程，给安装向导留出充分的启动与 UAC 窗口初始化时间
     def _delayed_exit():
-        import subprocess
-        import sys
-
-        # 生成管线在跑则等它收尾（最多 30s）：硬杀会截断半生成的章节与 DB 事务
+        # 等待进行中的生成管线（最多 10s）
         try:
             from app.services.generation import pipeline as _pipeline
 
-            for _ in range(30):
+            for _ in range(10):
                 if not _pipeline.any_running():
                     break
                 time.sleep(1)
         except Exception:  # noqa: BLE001
             pass
 
+        # 留足 2.5 秒缓冲时间，确保安装向导窗口已稳定弹出显示给用户
+        time.sleep(2.5)
+
         if sys.platform == "win32":
             try:
-                _kill_update_targets()
-                # 主动确认后端健康检查消失（最多 10s），而非固定 sleep。
-                # 打包版上一步 taskkill /T 已把本进程带走，轮询随进程消亡（属预期）；
-                # 存活到这里说明后端不在壳进程树下（如开发模式），等它真正失联，
-                # 超时照旧强杀兜底
-                deadline = time.time() + 10
-                while time.time() < deadline:
-                    try:
-                        with socket.create_connection(("127.0.0.1", app_settings.port), timeout=0.5):
-                            time.sleep(0.3)  # 端口仍可连 = 后端还在服务，继续等
-                    except OSError:
-                        break  # 健康检查消失：后端确已停止
-                for _cmd in (
-                    "taskkill /F /IM LearnFlow.exe >nul 2>&1",
-                    "taskkill /F /IM learnflow-backend.exe >nul 2>&1",
-                ):
-                    try:
-                        subprocess.run(_cmd, shell=True, timeout=10)
-                    except Exception:  # noqa: BLE001
-                        pass
+                # 仅针对旧版桌面壳与后端映像名做非递归清理（严禁带 /T，防止误伤刚启动的安装包向导）
+                subprocess.run("taskkill /F /IM LearnFlow.exe >nul 2>&1", shell=True)
+                subprocess.run("taskkill /F /IM learnflow-backend.exe >nul 2>&1", shell=True)
             except Exception:  # noqa: BLE001
-                # 清理链路任何一步出问题都不能阻止退出（否则旧版残留锁死安装目录）
-                logger.exception("旧版本退出清理失败，仍将强制退出")
-        # sys.exit 在非主线程只结束本线程（开发模式后端会存活锁文件），必须硬退出进程
+                logger.exception("旧版本退出清理异常")
+
+        # 彻底退出当前后端进程，释放安装目录下的全部文件占用
         os._exit(0)
 
     t = threading.Thread(target=_delayed_exit, daemon=True)
     t.start()
+    logger.info("已启动安装向导并安排旧进程退出: %s", installer_str)
     logger.info("已启动安装向导并安排旧进程退出: %s", installer_str)
 
 
@@ -663,8 +571,9 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
 
     # 唤起安装包并安排安全退出
     try:
+        yield f"data: {json.dumps({'type': 'installing', 'message': '新安装包已启动，请按向导完成安装…'}, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0.3)
         _launch_installer_and_exit(installer_path)
-        yield f"data: {json.dumps({'type': 'installing', 'message': '新安装包已启动，旧客户端即将关闭…'}, ensure_ascii=False)}\n\n"
     except Exception as e:
         logger.exception("启动安装程序异常: %s", e)
         yield f"data: {json.dumps({'type': 'error', 'detail': f'启动安装程序失败：{e}'}, ensure_ascii=False)}\n\n"

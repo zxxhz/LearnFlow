@@ -97,7 +97,7 @@ export default function ReplaceBankModal({
           }}
         />
 
-        {!file ? (
+        {!file || (!analysis && !isAnalyzing) ? (
           <div className="space-y-3">
             <div className="rounded-xl bg-brand-50/60 dark:bg-brand-950/30 p-3 border border-brand-200/80 dark:border-brand-900/60 text-brand-800 dark:text-brand-300 leading-relaxed">
               <div className="font-semibold flex items-center gap-1.5 mb-1">
@@ -111,13 +111,24 @@ export default function ReplaceBankModal({
               </p>
             </div>
 
+            {errorMsg && (
+              <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400">
+                ❌ 表格比对失败：{errorMsg}
+                <div className="mt-1 text-[11px] text-gray-500">
+                  请检查表格列布局是否规范（题型/题干/选项A-H/答案/解析/难度），或点击下方按钮重新选文件。
+                </div>
+              </div>
+            )}
+
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
               className="flex w-full flex-col items-center gap-2.5 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 py-12 text-gray-500 dark:text-gray-400 hover:border-brand-400 hover:text-brand-600 dark:hover:text-brand-400 transition bg-gray-50/40 dark:bg-gray-800/20"
             >
               <span className="text-3xl">📄</span>
-              <span className="text-sm font-medium">点击选择新版 .xls / .xlsx 题库表格文件</span>
+              <span className="text-sm font-medium">
+                {file ? `已选文件：${file.name}（点击重新选择）` : "点击选择新版 .xls / .xlsx 题库表格文件"}
+              </span>
               <span className="text-xs text-gray-400 dark:text-gray-500">
                 当前题库共有 {currentCount} 道题目；新表格支持单选、多选与判断题
               </span>
