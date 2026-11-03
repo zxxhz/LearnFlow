@@ -55,6 +55,10 @@ import urllib.request
 
 import uvicorn
 
+# 脚本模式（python scripts/smoke_test.py）只把 scripts/ 放进 sys.path，且项目未安装
+# 进 venv（[tool.uv] package = false），必须显式补上 backend 根才能 import app.*
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from app.core.config import settings
 from app.core.db import async_session_factory, init_db
 from app.models import Course, Document, Exercise, KnowledgePoint

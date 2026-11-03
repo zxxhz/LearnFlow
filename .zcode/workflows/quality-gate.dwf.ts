@@ -63,7 +63,7 @@ log(`后端源码编译: ${pyCompile.exitCode === 0 ? "通过" : "失败"}`);
 phase("隔离环境 113 项全量烟雾测试回归");
 const smoke = await world.run("cmd.exe", [
   "/c",
-  "set APP_DATA_DIR=backend/data-smoke && cd backend && uv run python scripts/smoke_test.py",
+  "cd backend && uv run python scripts/smoke_test.py",
 ], { timeoutMs: 300_000 });
 items.push({
   gate: "后端 113 项自动化 Smoke 跑测",

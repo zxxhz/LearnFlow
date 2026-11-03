@@ -72,7 +72,7 @@ log("前端类型检查通过");
 
 const smokeCheck = await world.run("cmd.exe", [
   "/c",
-  "set APP_DATA_DIR=backend/data-smoke && cd backend && uv run python scripts/smoke_test.py",
+  "cd backend && uv run python scripts/smoke_test.py",
 ], { timeoutMs: 300_000 });
 if (smokeCheck.exitCode !== 0) {
   throw new Error(`烟雾测试回归失败：\n${smokeCheck.stderr || smokeCheck.stdout}`);
