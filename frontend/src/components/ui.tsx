@@ -1,5 +1,5 @@
 // 通用 UI 原语：全应用一致的轻量组件集
-import { ReactNode, useEffect, useRef } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 
 type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 
@@ -111,8 +111,24 @@ export function Spinner({ className = "" }: { className?: string }) {
   );
 }
 
-// 打开中的模态框栈：只有栈顶的模态框响应 Esc（叠放时一次 Esc 只关最上层）
-const _openModals: symbol[] = [];
+// 全站统一的 Esc 关闭栈：只有最后打开的层（模态框/菜单）响应 Esc。
+// 本监听在模块加载时注册，早于阅读页抽屉等各自挂的 Esc 监听，
+// 因此栈非空时 stopImmediatePropagation 能可靠阻止它们在同一次按键里被同时触发；
+// 栈为空时直接放行，不影响阅读页抽屉等原有 Esc 行为。
+type EscEntry = { token: symbol; onEsc: () => void };
+const _escStack: EscEntry[] = [];
+if (typeof window !== "undefined") {
+  window.addEventListener(
+    "keydown",
+    (e) => {
+      if (e.key !== "Escape" || _escStack.length === 0) return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      _escStack[_escStack.length - 1].onEsc();
+    },
+    true,
+  );
+}
 
 export function Modal({
   open,
@@ -127,42 +143,57 @@ export function Modal({
   children: ReactNode;
   width?: string;
 }) {
-  // Esc 关闭栈顶模态框；用 stopImmediatePropagation 防止同窗口上其他 Esc 监听
-  // （阅读页抽屉、导图面板等）在同一次按键里被同时触发
+  // 进出场动画：render 控制是否挂载（出场过渡完成后再卸载），shown 控制过渡目标态。
+  // 20ms 延迟与项目内抽屉（ExerciseDrawer 等）一致：先绘制初始态，过渡才会生效。
+  const [render, setRender] = useState(open);
+  const [shown, setShown] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setRender(true);
+    const t = setTimeout(() => setShown(true), 20);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) return;
+    setShown(false);
+    const t = setTimeout(() => setRender(false), 200);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  // Esc 关闭栈顶模态框（栈机制见 _escStack 注释）
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     const token = Symbol("modal");
-    _openModals.push(token);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      if (_openModals[_openModals.length - 1] !== token) return; // 不是栈顶，交给上层模态框
-      e.stopImmediatePropagation();
-      e.preventDefault();
-      onCloseRef.current();
-    };
-    window.addEventListener("keydown", onKey, true);
+    const entry: EscEntry = { token, onEsc: () => onCloseRef.current() };
+    _escStack.push(entry);
     return () => {
-      const i = _openModals.indexOf(token);
-      if (i >= 0) _openModals.splice(i, 1);
-      window.removeEventListener("keydown", onKey, true);
+      const i = _escStack.findIndex((x) => x.token === token);
+      if (i >= 0) _escStack.splice(i, 1);
     };
-    // deps 只留 open：onClose 多为内联函数，每次重渲染换引用会导致
-    // effect 反复重建、把模态框从栈中拆出再压回栈顶，打乱叠放时 Esc 的次序
   }, [open]);
 
-  if (!open) return null;
+  if (!render) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      className={`fixed inset-0 z-50 flex items-center justify-center transition-colors duration-200 ease-out ${
+        shown ? "bg-black/40" : "bg-black/0"
+      }`}
       role="dialog"
       aria-modal="true"
+      aria-hidden={!open}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className={`w-full ${width} rounded-xl bg-white dark:bg-gray-900 p-5 shadow-xl`}>
+      <div
+        className={`w-full ${width} rounded-xl bg-white dark:bg-gray-900 p-5 shadow-xl transition-all duration-200 ease-out ${
+          shown ? "translate-y-0 scale-100 opacity-100" : "translate-y-2 scale-95 opacity-0"
+        }`}
+      >
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
           <button
@@ -204,6 +235,137 @@ export function ConfirmDialog({
         </Button>
       </div>
     </Modal>
+  );
+}
+
+/** 轻量操作反馈 toast：进场 slideUp，出计时后 200ms 淡出再回调 onDone（通常用于清空 message）。 */
+export function Toast({
+  message,
+  onDone,
+  duration = 3500,
+}: {
+  message: string;
+  onDone?: () => void;
+  duration?: number;
+}) {
+  const [closing, setClosing] = useState(false);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+
+  useEffect(() => {
+    if (!message) return;
+    setClosing(false);
+    const t = setTimeout(() => setClosing(true), duration);
+    return () => clearTimeout(t);
+  }, [message, duration]);
+
+  useEffect(() => {
+    if (!closing || !message) return;
+    const t = setTimeout(() => onDoneRef.current?.(), 200);
+    return () => clearTimeout(t);
+  }, [closing, message]);
+
+  if (!message) return null;
+  return (
+    <div
+      role="status"
+      className={`fixed bottom-6 right-6 z-50 max-w-sm rounded-xl bg-gray-900 px-4 py-3 text-sm text-white shadow-xl animate-slideUp transition-all duration-200 ease-out dark:bg-gray-800 ${
+        closing ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100"
+      }`}
+    >
+      {message}
+    </div>
+  );
+}
+
+export interface MenuItem {
+  label: string;
+  /** 可选的 emoji/字符前缀 */
+  icon?: string;
+  /** 危险操作（删除等）以红字呈现 */
+  danger?: boolean;
+  onSelect: () => void;
+}
+
+/** 轻量下拉菜单：面板常驻渲染 + opacity/scale 过渡（无需卸载即有出场动画）；
+ *  点外部或 Esc 关闭。Esc 走全站统一 _escStack：叠在 Modal 内时先关菜单再关模态框。 */
+export function DropdownMenu({
+  label,
+  items,
+  triggerClassName = "",
+  align = "right",
+  title,
+}: {
+  /** 触发按钮内容（文字或图标） */
+  label: ReactNode;
+  items: MenuItem[];
+  triggerClassName?: string;
+  align?: "left" | "right";
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const token = Symbol("menu");
+    const entry: EscEntry = { token, onEsc: () => setOpen(false) };
+    _escStack.push(entry);
+    document.addEventListener("mousedown", onDown);
+    return () => {
+      const i = _escStack.findIndex((x) => x.token === token);
+      if (i >= 0) _escStack.splice(i, 1);
+      document.removeEventListener("mousedown", onDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative inline-flex">
+      <button
+        type="button"
+        title={title}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className={triggerClassName}
+      >
+        {label}
+      </button>
+      <div
+        role="menu"
+        aria-hidden={!open}
+        className={`absolute top-full z-40 mt-1.5 min-w-[10rem] rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 py-1.5 shadow-lg transition-all duration-150 ease-out ${
+          align === "right" ? "right-0 origin-top-right" : "left-0 origin-top-left"
+        } ${open ? "scale-100 opacity-100" : "pointer-events-none scale-95 opacity-0"}`}
+      >
+        {items.map((item) => (
+          <button
+            key={item.label}
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpen(false);
+              item.onSelect();
+            }}
+            className={`flex w-full items-center gap-2 whitespace-nowrap px-3.5 py-2 text-left text-sm transition hover:bg-gray-100 dark:hover:bg-gray-800 ${
+              item.danger
+                ? "text-red-600 dark:text-red-400"
+                : "text-gray-700 dark:text-gray-300"
+            }`}
+          >
+            {item.icon && (
+              <span aria-hidden className="shrink-0">
+                {item.icon}
+              </span>
+            )}
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

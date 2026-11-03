@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import { subscribeSSE } from "../../lib/sse";
 import type { ChapterProgress, ProgressSSEEvent } from "../../lib/types";
-import { Badge, Button, ConfirmDialog, EmptyState, ErrorText, Input, Modal, Spinner } from "../../components/ui";
+import { Badge, Button, ConfirmDialog, DropdownMenu, EmptyState, ErrorText, Input, Modal, Spinner } from "../../components/ui";
 import OutlineEditor from "./OutlineEditor";
 import CourseAskPanel from "./CourseAskPanel";
 
@@ -331,46 +331,47 @@ export default function CourseDetailPage() {
             </Button>
           </div>
         ) : (
-          <>
-            <h1 className="min-w-0 flex-1 truncate text-2xl font-bold text-gray-900 dark:text-gray-100">{course.title}</h1>
-            <Button
-              variant="ghost"
-              className="shrink-0 text-xs"
-              title="重命名课程"
-              onClick={() => {
-                setTitleDraft(course.title);
-                setRenaming(true);
-              }}
-            >
-              ✏️ 重命名
-            </Button>
-          </>
+          <h1 className="min-w-0 flex-1 truncate text-2xl font-bold text-gray-900 dark:text-gray-100">{course.title}</h1>
         )}
         <div className="flex items-center gap-2">
           {course.status !== "draft" && (
-            <>
-              <Button
-                variant="ghost"
-                className="text-xs text-brand-600 dark:text-brand-400"
-                onClick={() => setMindmapOpen(true)}
-                title="基于课程大纲与已生成章节的知识点，一键生成思维导图"
-              >
-                🧠 生成思维导图
-              </Button>
-              <Button variant="ghost" className="text-xs" onClick={() => api.courses.exportNotesMd(course.id).catch((e) => alert(e.message))} title="汇集全课程所有章节摘要、个人划线与手写随笔批注，导出为 Markdown">
-                📝 导出笔记汇编
-              </Button>
-              <Button variant="ghost" className="text-xs" onClick={() => api.courses.exportMd(course.id).catch((e) => alert(e.message))}>
-                ⬇ 导出教材 MD
-              </Button>
-              <Button variant="ghost" className="text-xs" onClick={() => api.courses.exportHtml(course.id).catch((e) => alert(e.message))}>
-                ⬇ 导出 HTML
-              </Button>
-            </>
+            <Button
+              variant="ghost"
+              className="text-xs text-brand-600 dark:text-brand-400"
+              onClick={() => setMindmapOpen(true)}
+              title="基于课程大纲与已生成章节的知识点，一键生成思维导图"
+            >
+              🧠 生成思维导图
+            </Button>
           )}
-          <Button variant="secondary" onClick={() => setConfirmDel(true)}>
-            删除课程
-          </Button>
+          {course.status !== "draft" && (
+            <DropdownMenu
+              label="⬇ 导出 ▾"
+              title="导出课程内容"
+              triggerClassName="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+              items={[
+                { label: "笔记汇编（含批注）", icon: "📝", onSelect: () => api.courses.exportNotesMd(course.id).catch((e) => alert(e.message)) },
+                { label: "教材 Markdown", icon: "📄", onSelect: () => api.courses.exportMd(course.id).catch((e) => alert(e.message)) },
+                { label: "教材 HTML", icon: "🌐", onSelect: () => api.courses.exportHtml(course.id).catch((e) => alert(e.message)) },
+              ]}
+            />
+          )}
+          <DropdownMenu
+            label="⋯"
+            title="更多操作"
+            triggerClassName="inline-flex h-8 w-8 items-center justify-center rounded-lg text-lg leading-none text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+            items={[
+              {
+                label: "重命名课程",
+                icon: "✏️",
+                onSelect: () => {
+                  setTitleDraft(course.title);
+                  setRenaming(true);
+                },
+              },
+              { label: "删除课程", icon: "🗑️", danger: true, onSelect: () => setConfirmDel(true) },
+            ]}
+          />
         </div>
       </div>
       <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{course.topic}</p>

@@ -6,7 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import MarkdownIt from "markdown-it";
 import renderMathInElement from "katex/contrib/auto-render";
 import { api } from "../../lib/api";
-import { Badge, Button, ErrorText, Select, Spinner } from "../../components/ui";
+import { Badge, Button, ErrorText, Select, Spinner, Toast } from "../../components/ui";
 import { FontSizeControl } from "../../components/FontSizeControl";
 import { useFontSize } from "../../lib/fontSize";
 import BankQuestionCard, { visibleOptions } from "./BankQuestionCard";
@@ -98,7 +98,6 @@ export default function BankDrillPage() {
   const handleAddSuccess = (addedCount: number) => {
     qc.invalidateQueries({ queryKey: ["banks"] });
     setToastMsg(`已成功添加 ${addedCount} 道题目！`);
-    setTimeout(() => setToastMsg(""), 3500);
   };
 
   const handleQuestionUpdated = (updatedQ: BankQuestion, updatedRes?: BankAttemptResult | null) => {
@@ -142,7 +141,6 @@ export default function BankDrillPage() {
         ? `题目已修正！作答已重新校准为「回答正确」，自动移出错题池`
         : `题目内容与选项已成功更新！`
     );
-    setTimeout(() => setToastMsg(""), 3500);
   };
 
   const [replaceModalOpen, setReplaceModalOpen] = useState(false);
@@ -155,7 +153,6 @@ export default function BankDrillPage() {
     setAiExplains({});
     qc.invalidateQueries({ queryKey: ["banks"] });
     setToastMsg(`题库已成功替换更新为「${updatedBank.source_file}」，已做题作答状态完好继承！`);
-    setTimeout(() => setToastMsg(""), 4000);
   };
 
   // 轮中任何变化落盘；round 为空（无轮）时不写，round 归属不符（路由复用残留）也不写。
@@ -322,9 +319,6 @@ export default function BankDrillPage() {
           <Button variant="secondary" onClick={discardRound}>
             返回模式选择
           </Button>
-          <Button variant="secondary" onClick={() => setAddModalOpen(true)}>
-            ➕ 增加题目
-          </Button>
           <Link to="/bank" className="inline-flex items-center px-3 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
             ← 题库列表
           </Link>
@@ -332,19 +326,7 @@ export default function BankDrillPage() {
           {startError && <ErrorText>{startError}</ErrorText>}
         </div>
 
-        <AddQuestionModal
-          open={addModalOpen}
-          bankId={bank.id}
-          bankName={bank.name}
-          onClose={() => setAddModalOpen(false)}
-          onSuccess={handleAddSuccess}
-        />
-        {toastMsg && (
-          <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-4 py-2.5 text-xs font-semibold text-emerald-800 dark:text-emerald-200 shadow-lg animate-fadeIn">
-            <span>✅</span>
-            <span>{toastMsg}</span>
-          </div>
-        )}
+        <Toast message={toastMsg} onDone={() => setToastMsg("")} />
       </div>
     );
   }
@@ -368,15 +350,6 @@ export default function BankDrillPage() {
               ? "🆕 做新题模式"
               : "🎯 做题模式"} · {bank.name}
           </h1>
-          <button
-            type="button"
-            onClick={() => setAddModalOpen(true)}
-            className="inline-flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-xs text-gray-700 dark:text-gray-300 hover:border-brand-500 hover:text-brand-600 dark:hover:text-brand-400 transition shrink-0"
-            title="向此题库增加题目（支持表格导入、手动添加与智能切题）"
-          >
-            <span>➕</span>
-            <span>增加题目</span>
-          </button>
           <FontSizeControl
             value={drillFontSize}
             onChange={setDrillFontSize}
@@ -418,19 +391,7 @@ export default function BankDrillPage() {
           )}
         </div>
 
-        <AddQuestionModal
-          open={addModalOpen}
-          bankId={bank.id}
-          bankName={bank.name}
-          onClose={() => setAddModalOpen(false)}
-          onSuccess={handleAddSuccess}
-        />
-        {toastMsg && (
-          <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-4 py-2.5 text-xs font-semibold text-emerald-800 dark:text-emerald-200 shadow-lg animate-fadeIn">
-            <span>✅</span>
-            <span>{toastMsg}</span>
-          </div>
-        )}
+        <Toast message={toastMsg} onDone={() => setToastMsg("")} />
       </div>
     );
   }
@@ -649,12 +610,7 @@ export default function BankDrillPage() {
         onClose={() => setReplaceModalOpen(false)}
         onSuccess={handleReplaceSuccess}
       />
-      {toastMsg && (
-        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-4 py-2.5 text-xs font-semibold text-emerald-800 dark:text-emerald-200 shadow-lg animate-fadeIn">
-          <span>✅</span>
-          <span>{toastMsg}</span>
-        </div>
-      )}
+      <Toast message={toastMsg} onDone={() => setToastMsg("")} />
     </div>
   );
 }

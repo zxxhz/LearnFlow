@@ -7,6 +7,7 @@ import {
   Badge,
   Button,
   ConfirmDialog,
+  DropdownMenu,
   EmptyState,
   ErrorText,
   Input,
@@ -105,35 +106,32 @@ export default function BankListPage() {
                     {b.source_file} · 导入于 {b.created_at.slice(0, 10)}
                   </p>
                 </div>
-                <Button
-                  variant="ghost"
-                  className="shrink-0 text-xs"
-                  onClick={() => setPromptTarget(b)}
-                  title="设置该题库专属的 AI 答疑提示词（留空使用默认，支持一键 AI 润色）"
-                >
-                  ⚙️ 提示词
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="shrink-0 text-xs"
-                  onClick={() => {
-                    setRenameTarget(b);
-                    setRenameValue(b.name);
-                  }}
-                >
-                  ✏️ 重命名
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="shrink-0 text-xs text-brand-600 dark:text-brand-400"
-                  onClick={() => setReplaceTarget(b)}
-                  title="使用新表格替换当前题库（支持精简题目、保留已做题目状态）"
-                >
-                  🔄 替换表格
-                </Button>
-                <Button variant="ghost" className="shrink-0 text-xs" onClick={() => setDeleteTarget(b)}>
-                  删除
-                </Button>
+                <DropdownMenu
+                  label="⋯"
+                  title="更多操作"
+                  triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-lg leading-none text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+                  items={[
+                    {
+                      label: "AI 提示词",
+                      icon: "⚙️",
+                      onSelect: () => setPromptTarget(b),
+                    },
+                    {
+                      label: "重命名",
+                      icon: "✏️",
+                      onSelect: () => {
+                        setRenameTarget(b);
+                        setRenameValue(b.name);
+                      },
+                    },
+                    {
+                      label: "替换表格",
+                      icon: "🔄",
+                      onSelect: () => setReplaceTarget(b),
+                    },
+                    { label: "删除题库", icon: "🗑️", danger: true, onSelect: () => setDeleteTarget(b) },
+                  ]}
+                />
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                 <Badge>{b.stats.question_count} 题</Badge>

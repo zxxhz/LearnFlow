@@ -74,8 +74,51 @@ function NavActions({ onNavigate }: { onNavigate?: () => void }) {
         }}
         className="w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/50"
       >
-        📄 导入 Markdown
+        📥 导入课程
       </button>
+    </div>
+  );
+}
+
+/** 移动端导航抽屉：蒙层淡入 + 抽屉从左滑入/滑出（与阅读页抽屉一致的 20ms 挂载 + 过渡 + 延迟卸载模式） */
+function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [render, setRender] = useState(open);
+  const [shown, setShown] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setRender(true);
+      const t = setTimeout(() => setShown(true), 20);
+      return () => clearTimeout(t);
+    }
+    setShown(false);
+    const t = setTimeout(() => setRender(false), 200);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  if (!render) return null;
+  return (
+    <div className="fixed inset-0 z-50 md:hidden" onClick={onClose}>
+      <div
+        className={`absolute inset-0 bg-black/40 transition-opacity duration-200 ease-out ${
+          shown ? "opacity-100" : "opacity-0"
+        }`}
+      />
+      <aside
+        className={`absolute inset-y-0 left-0 flex w-64 flex-col bg-white dark:bg-gray-900 shadow-xl transition-transform duration-200 ease-out ${
+          shown ? "translate-x-0" : "-translate-x-full"
+        }`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-5 py-5">
+          <span className="text-xl font-bold text-brand-600">LearnFlow</span>
+          <button className="text-gray-400 dark:text-gray-500" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        <NavLinks onNavigate={onClose} />
+        <NavActions onNavigate={onClose} />
+      </aside>
     </div>
   );
 }
@@ -207,7 +250,7 @@ export default function Layout() {
             </div>
             <NavLinks />
             <NavActions />
-            <div className="flex items-center gap-1.5 border-t border-gray-100 dark:border-gray-800 p-3">
+            <div className="flex items-center border-t border-gray-100 dark:border-gray-800 p-3">
               <button
                 onClick={toggleTheme}
                 className="flex flex-1 items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -216,43 +259,13 @@ export default function Layout() {
                 <span>{theme === "dark" ? "☀️" : "🌙"}</span>
                 <span className="truncate">{theme === "dark" ? "浅色模式" : "深色模式"}</span>
               </button>
-              <button
-                type="button"
-                onClick={toggleNavCollapsed}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-600 dark:hover:text-gray-200 transition"
-                title="折叠导航 (Ctrl+B)"
-                aria-label="折叠导航"
-              >
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                  <line x1="9" y1="3" x2="9" y2="21" />
-                  <path d="M15 9l-3 3 3 3" />
-                </svg>
-              </button>
             </div>
           </div>
         </aside>
       )}
 
-      {/* 移动端抽屉 */}
-      {!isImmersive && navOpen && (
-        <div className="fixed inset-0 z-50 md:hidden" onClick={() => setNavOpen(false)}>
-          <div className="absolute inset-0 bg-black/40" />
-          <aside
-            className="absolute inset-y-0 left-0 flex w-64 flex-col bg-white dark:bg-gray-900 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-5 py-5">
-              <span className="text-xl font-bold text-brand-600">LearnFlow</span>
-              <button className="text-gray-400 dark:text-gray-500" onClick={() => setNavOpen(false)}>
-                ✕
-              </button>
-            </div>
-            <NavLinks onNavigate={() => setNavOpen(false)} />
-            <NavActions onNavigate={() => setNavOpen(false)} />
-          </aside>
-        </div>
-      )}
+      {/* 移动端抽屉（带进出场动画） */}
+      {!isImmersive && <MobileNavDrawer open={navOpen} onClose={() => setNavOpen(false)} />}
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* 顶栏：移动端常驻；平板/桌面端在左侧导航折叠后出现展开按钮 */}

@@ -37,6 +37,21 @@ export default {
         4.5: "1.125rem",
         0.2: "0.05rem",
       },
+      // 全站弹层动画：fadeIn 供 toast/提示条等入场，slideUp 供 toast/菜单上浮
+      keyframes: {
+        fadeIn: {
+          from: { opacity: "0" },
+          to: { opacity: "1" },
+        },
+        slideUp: {
+          from: { opacity: "0", transform: "translateY(10px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
+      },
+      animation: {
+        fadeIn: "fadeIn 0.2s ease-out",
+        slideUp: "slideUp 0.25s ease-out",
+      },
     },
   },
   plugins: [],

@@ -284,15 +284,6 @@ export default function BankQuestionCard({
                 🤔 存疑作答（已留存强化）
               </span>
             )}
-            <button
-              type="button"
-              onClick={() => setEditModalOpen(true)}
-              className="ml-auto inline-flex items-center gap-1 text-xs text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition"
-              title="如果发现题目参考答案或选项有误，可点击手动修改纠错"
-            >
-              <span>✏️</span>
-              <span>题目有误？修改答案与选项</span>
-            </button>
           </div>
           {result.explanation && (
             <p className="drill-explanation-text mt-1.5 whitespace-pre-wrap leading-relaxed text-gray-600 dark:text-gray-400">

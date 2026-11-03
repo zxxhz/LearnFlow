@@ -7,7 +7,7 @@ import { subscribeSSE } from "../../lib/sse";
 import { alignSections, parseBlocks } from "../../lib/markdown";
 import { anchorFromSelection, type AnchorRange } from "../../lib/anchor";
 import type { Annotation, AnnotationColor, CompareHighlightItem, ProgressSSEEvent } from "../../lib/types";
-import { Button, Modal, Spinner, Textarea } from "../../components/ui";
+import { Button, ConfirmDialog, Modal, Spinner, Textarea } from "../../components/ui";
 import BlockView from "./BlockView";
 import SelectionToolbar from "./SelectionToolbar";
 import AnnotationCard from "./AnnotationCard";
@@ -24,6 +24,53 @@ import { useAdhdMode } from "./adhd";
 import { useFontSize } from "../../lib/fontSize";
 import { FontSizeControl } from "../../components/FontSizeControl";
 import ErrorBoundary from "../../components/ErrorBoundary";
+
+/** 小屏左侧抽屉壳：蒙层淡入 + 内容从左滑入/滑出（20ms 挂载 + 过渡 + 延迟卸载，与全站抽屉一致）。
+ *  children 在出场动画期间保持挂载，动画结束后才真正卸载。 */
+function SlideInDrawer({
+  open,
+  onClose,
+  widthClass,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  widthClass: string;
+  children: React.ReactNode;
+}) {
+  const [render, setRender] = useState(open);
+  const [shown, setShown] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setRender(true);
+      const t = setTimeout(() => setShown(true), 20);
+      return () => clearTimeout(t);
+    }
+    setShown(false);
+    const t = setTimeout(() => setRender(false), 200);
+    return () => clearTimeout(t);
+  }, [open]);
+
+  if (!render) return null;
+  return (
+    <div className="fixed inset-0 z-40 md:hidden" onClick={onClose}>
+      <div
+        className={`absolute inset-0 bg-black/40 transition-opacity duration-200 ease-out ${
+          shown ? "opacity-100" : "opacity-0"
+        }`}
+      />
+      <div
+        className={`absolute inset-y-0 left-0 flex flex-col bg-white dark:bg-gray-900 shadow-xl transition-transform duration-200 ease-out ${widthClass} ${
+          shown ? "translate-x-0" : "-translate-x-full"
+        }`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
 
 export default function ReaderPage() {
   const { documentId } = useParams<{ documentId: string }>();
@@ -152,6 +199,8 @@ export default function ReaderPage() {
   // 且运行结束后 runningSection 已清空，错误将永远无法显示
   const [runErrors, setRunErrors] = useState<Record<string, string>>({});
   const [tocOpen, setTocOpen] = useState(false);
+  // 待确认删除的标注（替代原生 window.confirm，与全站 ConfirmDialog 风格统一）
+  const [annToDelete, setAnnToDelete] = useState<Annotation | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     const saved = safeStorage.get("learnflow-reader-sidebar-open");
     return saved !== null ? saved === "true" : true;
@@ -970,40 +1019,32 @@ export default function ReaderPage() {
       </div>
       </main>
 
-      {/* 小屏目录浮层 */}
-      {tocOpen && (
-        <div className="fixed inset-0 z-40 md:hidden" onClick={() => setTocOpen(false)}>
-          <div className="absolute inset-0 bg-black/40" />
-          <div
-            className="absolute inset-y-0 left-0 flex w-72 flex-col bg-white dark:bg-gray-900 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 p-4">
-              <span className="truncate text-sm font-bold text-gray-900 dark:text-gray-100">
-                {courseQuery.data?.title ?? doc.title}
-              </span>
-              <button className="text-gray-400 dark:text-gray-500" onClick={() => setTocOpen(false)}>
-                ✕
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2">
-              <TocSidebar
-                items={tocItems}
-                chapters={docs}
-                currentDocId={doc.id}
-                onJump={(sid) => {
-                  jumpTo(sid);
-                  setTocOpen(false);
-                }}
-                onSelectChapter={(docId) => {
-                  navigate(`/read/${docId}`);
-                  setTocOpen(false);
-                }}
-              />
-            </div>
-          </div>
+      {/* 小屏目录浮层（带进出场动画） */}
+      <SlideInDrawer open={tocOpen} onClose={() => setTocOpen(false)} widthClass="w-72">
+        <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 p-4">
+          <span className="truncate text-sm font-bold text-gray-900 dark:text-gray-100">
+            {courseQuery.data?.title ?? doc.title}
+          </span>
+          <button className="text-gray-400 dark:text-gray-500" onClick={() => setTocOpen(false)}>
+            ✕
+          </button>
         </div>
-      )}
+        <div className="flex-1 overflow-y-auto p-2">
+          <TocSidebar
+            items={tocItems}
+            chapters={docs}
+            currentDocId={doc.id}
+            onJump={(sid) => {
+              jumpTo(sid);
+              setTocOpen(false);
+            }}
+            onSelectChapter={(docId) => {
+              navigate(`/read/${docId}`);
+              setTocOpen(false);
+            }}
+          />
+        </div>
+      </SlideInDrawer>
 
       {/* 知识点抽屉：统一右侧 420px 滑入动效与正文平移避让 */}
       {kpOpen && (
@@ -1104,18 +1145,7 @@ export default function ReaderPage() {
             jumpTo(a.section_id, a.id);
           }}
           onStartReAnchor={setReAnchoring}
-          onDelete={(a) => {
-            if (confirm("删除该标注及其对话？")) {
-              api.annotations.remove(a.id)
-                .then(() => {
-                  invalidate();
-                  if (activeAnn?.id === a.id) {
-                    closeAnnotation();
-                  }
-                })
-                .catch((e) => alert(e?.message || "删除失败"));
-            }
-          }}
+          onDelete={(a) => setAnnToDelete(a)}
           onClose={closeDrawer}
           fontSize={courseFontSize}
         />
@@ -1169,6 +1199,28 @@ export default function ReaderPage() {
           </Button>
         </div>
       </Modal>
+
+      {/* 删除标注确认（替代原生 window.confirm，与全站弹窗风格统一） */}
+      <ConfirmDialog
+        open={!!annToDelete}
+        title="删除标注"
+        message="将删除该标注及其全部对话，且无法恢复。确定继续吗？"
+        onConfirm={() => {
+          const a = annToDelete;
+          setAnnToDelete(null);
+          if (!a) return;
+          api.annotations
+            .remove(a.id)
+            .then(() => {
+              invalidate();
+              if (activeAnn?.id === a.id) {
+                closeAnnotation();
+              }
+            })
+            .catch((e) => alert(e?.message || "删除失败"));
+        }}
+        onCancel={() => setAnnToDelete(null)}
+      />
 
       {/* 单段落手术式重写与核验弹窗 */}
       {reviseTarget && documentId && (

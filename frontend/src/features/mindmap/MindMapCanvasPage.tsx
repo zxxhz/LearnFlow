@@ -667,13 +667,9 @@ export default function MindMapCanvasPage() {
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
 
-  // 视口控制
+  // 视口控制（「重置」已与「全屏居中」合并：fit view 是更常用语义，双指/Ctrl+滚轮可微调）
   const handleZoomIn = () => setZoom((z) => Math.min(2.5, z * 1.15));
   const handleZoomOut = () => setZoom((z) => Math.max(0.3, z * 0.85));
-  const handleResetZoom = () => {
-    setZoom(1);
-    setPan({ x: 80, y: 160 });
-  };
   const handleFitScreen = () => {
     if (!containerRef.current || positionedNodes.length === 0) return;
     const cw = containerRef.current.clientWidth - 100;
@@ -1111,17 +1107,9 @@ export default function MindMapCanvasPage() {
             type="button"
             onClick={handleFitScreen}
             className="p-1 hover:text-brand-600"
-            title="自适应全屏"
+            title="自适应全屏（缩放至完整展示全部节点）"
           >
             ⊡ 全屏居中
-          </button>
-          <button
-            type="button"
-            onClick={handleResetZoom}
-            className="p-1 hover:text-brand-600"
-            title="恢复 100%"
-          >
-            重置
           </button>
         </div>
       </div>

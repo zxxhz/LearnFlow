@@ -4,7 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, downloadFile } from "../../lib/api";
 import type { MindMapSummary } from "../../lib/types";
-import { Button, EmptyState, Modal, Spinner, Textarea } from "../../components/ui";
+import { Button, ConfirmDialog, DropdownMenu, EmptyState, Modal, Spinner, Textarea } from "../../components/ui";
 
 export default function MindMapListPage() {
   const navigate = useNavigate();
@@ -21,6 +21,8 @@ export default function MindMapListPage() {
   const [importContent, setImportContent] = useState("");
 
   const [renamingMap, setRenamingMap] = useState<MindMapSummary | null>(null);
+  // 待确认删除的导图（替代原生 window.confirm，与全站弹窗风格统一）
+  const [deleteTargetMap, setDeleteTargetMap] = useState<MindMapSummary | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
 
   const { data: mindmaps, isLoading, isError, error, refetch } = useQuery({
@@ -90,8 +92,7 @@ export default function MindMapListPage() {
     onError: (e) => alert((e as Error).message),
   });
 
-  const handleExport = async (e: React.MouseEvent, id: string, title: string) => {
-    e.stopPropagation();
+  const handleExport = async (id: string, title: string) => {
     try {
       const res = await api.mindmaps.exportMarkdown(id);
       const blob = new Blob([res.markdown], { type: "text/markdown;charset=utf-8" });
@@ -258,53 +259,36 @@ export default function MindMapListPage() {
                   <span className="truncate text-base font-semibold text-gray-900 dark:text-gray-100 group-hover:text-brand-600 dark:group-hover:text-brand-400 transition-colors">
                     {m.title}
                   </span>
-                  <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setRenamingMap(m);
-                        setRenameTitle(m.title);
-                      }}
-                      className="p-1 rounded text-xs text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition"
-                      title="重命名"
-                    >
-                      ✏️
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => handleExport(e, m.id, m.title)}
-                      className="p-1 rounded text-xs text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition"
-                      title="导出 Markdown"
-                    >
-                      📤
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        downloadFile(`/mindmaps/${m.id}/export.json`).catch(
-                          (err) => alert(`导出失败: ${(err as Error).message}`)
-                        );
-                      }}
-                      className="p-1 rounded text-xs text-gray-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition"
-                      title="导出 JSON"
-                    >
-                      🗂
-                    </button>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (confirm(`确定删除思维导图「${m.title}」？此操作不可撤销。`)) {
-                          deleteMutation.mutate(m.id);
-                        }
-                      }}
-                      className="p-1 rounded text-xs text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition"
-                      title="删除"
-                    >
-                      🗑️
-                    </button>
+                  {/* stopPropagation：卡片整体可点进入画布，菜单区点击不得触发导航 */}
+                  <div
+                    className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <DropdownMenu
+                      label="⋯"
+                      title="更多操作"
+                      triggerClassName="flex h-7 w-7 items-center justify-center rounded-lg text-base leading-none text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition"
+                      items={[
+                        {
+                          label: "重命名",
+                          icon: "✏️",
+                          onSelect: () => {
+                            setRenamingMap(m);
+                            setRenameTitle(m.title);
+                          },
+                        },
+                        { label: "导出 Markdown", icon: "📤", onSelect: () => handleExport(m.id, m.title) },
+                        {
+                          label: "导出 JSON",
+                          icon: "🗂",
+                          onSelect: () =>
+                            downloadFile(`/mindmaps/${m.id}/export.json`).catch(
+                              (err) => alert(`导出失败: ${(err as Error).message}`)
+                            ),
+                        },
+                        { label: "删除", icon: "🗑️", danger: true, onSelect: () => setDeleteTargetMap(m) },
+                      ]}
+                    />
                   </div>
                 </div>
                 {m.topic && (
@@ -508,6 +492,18 @@ export default function MindMapListPage() {
           </div>
         </div>
       </Modal>
+
+      {/* 删除导图确认（与全站弹窗风格统一） */}
+      <ConfirmDialog
+        open={!!deleteTargetMap}
+        title="删除思维导图"
+        message={`确定删除「${deleteTargetMap?.title}」？此操作不可撤销。`}
+        onConfirm={() => {
+          if (deleteTargetMap) deleteMutation.mutate(deleteTargetMap.id);
+          setDeleteTargetMap(null);
+        }}
+        onCancel={() => setDeleteTargetMap(null)}
+      />
     </div>
   );
 }
