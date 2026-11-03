@@ -143,13 +143,12 @@ export default function AddQuestionModal({ open, bankId, bankName, onClose, onSu
   const handleRemoveOption = (idx: number) => {
     if (options.length <= 2) return;
     // 删除选项后，其后所有选项字母前移一位，答案字母同步重映射（否则答案指向错位内容）
-    const removedLetter = String.fromCharCode(65 + idx);
     setOptions((prev) => prev.filter((_, i) => i !== idx));
     const remap = (letterIdx: number) => (letterIdx > idx ? letterIdx - 1 : letterIdx);
     const kept = answer
       .split(",")
       .map((a) => a.charCodeAt(0) - 65)
-      .filter((i) => i !== removedLetter.charCodeAt(0) - 65)
+      .filter((i) => i !== idx)
       .map(remap)
       .filter((i) => i >= 0)
       .sort((a, b) => a - b)

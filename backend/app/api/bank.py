@@ -510,6 +510,8 @@ async def ai_explain_question(
             logger.exception("Bank explain stream error")
             yield f"data: {json.dumps({'type': 'error', 'detail': '服务异常，请稍后重试'}, ensure_ascii=False)}\n\n"
             return
+        finally:
+            await deltas.aclose()
 
         # 流式顺利结束，持久化到 bank_questions.ai_explanation
         full_text = "".join(accumulated).strip()

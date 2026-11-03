@@ -667,8 +667,9 @@ async def generate_mindmap_from_course(
             )
 
     material = _assemble_course_material(outline, chapters, kps_by_chapter, include_details)
-    if not outline and not any(ch["done"] for ch in chapters):
-        raise ValueError("课程大纲为空且暂无已生成章节，暂无可用于生成导图的内容")
+    clean_mat = material.strip()
+    if not clean_mat or clean_mat == "【课程大纲】":
+        raise ValueError("课程大纲为空且无可用的章节内容，暂无法生成思维导图")
 
     prompt = f"{course.title}" + (f"（{course.topic[:80]}）" if (course.topic or "").strip() else "")
     res = await generate_mindmap_tree(

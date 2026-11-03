@@ -122,11 +122,12 @@ export default function BankDrillPage() {
             ...old,
             answer: q.answer ?? old.answer,
             correct_answer:
-              q.qtype === "judge"
+              q.answer_raw ||
+              (q.qtype === "judge"
                 ? q.answer === "A"
                   ? "正确"
                   : "错误"
-                : (q.answer ?? old.answer).replace(",", "、"),
+                : (q.answer ?? old.answer).replace(/,/g, "、")),
             answer_raw: q.answer_raw ?? old.answer_raw,
             explanation: q.explanation ?? old.explanation,
           },
@@ -747,8 +748,8 @@ function WrongQuestionItem({
     if (tagMatch) return tagMatch[1].trim();
     const sentence = aiText.match(/[^。\n]*(?:原题|参考)答案[^。\n]{0,16}(?:有误|不准确|应为)[^。\n]*/);
     if (sentence) {
-      const shouldBe = sentence[0].match(/(?:实际[是为]|应为|正确答案(?:应?为)?)\s*[:：]?\s*([A-H]|正确|错误)/);
-      return shouldBe ? shouldBe[1] : "";
+      const shouldBe = sentence[0].match(/(?:实际[是为]|应为|正确答案(?:应?为)?)\s*[:：]?\s*([A-Ha-h]|正确|错误)/i);
+      return shouldBe ? shouldBe[1].toUpperCase() : "";
     }
     return null;
   }, [aiText]);

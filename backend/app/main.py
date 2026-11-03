@@ -194,9 +194,20 @@ class _AccessGuard:
                         o = urlsplit(origin)
                         origin_host = (o.hostname or "").lower()
                         origin_port = o.port or (443 if o.scheme == "https" else 80)
-                        # 服务端是纯 HTTP：Host 无端口即 80
-                        h_host, _, h_port = host_header.partition(":")
-                        host_port = int(h_port) if h_port else 80
+                        # 解析 Host 头的 host 与 port（纯 HTTP 服务端，支持 IPv6 [::1]:8420 形式）
+                        if host_header.startswith("["):
+                            end = host_header.find("]")
+                            if end != -1:
+                                h_host = host_header[1:end].lower()
+                                rest = host_header[end + 1 :]
+                                host_port = int(rest[1:]) if rest.startswith(":") else 80
+                            else:
+                                h_host, host_port = host_header, 80
+                        else:
+                            h_host_raw, _, h_port = host_header.partition(":")
+                            h_host = h_host_raw.lower()
+                            host_port = int(h_port) if h_port else 80
+
                         if origin_host != h_host or origin_port != host_port:
                             await _reject()(scope, receive, send)
                             return

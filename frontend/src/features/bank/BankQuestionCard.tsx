@@ -99,8 +99,8 @@ export default function BankQuestionCard({
     if (tagMatch) return tagMatch[1].trim();
     const sentence = aiText.match(/[^。\n]*(?:原题|参考)答案[^。\n]{0,16}(?:有误|不准确|应为)[^。\n]*/);
     if (sentence) {
-      const shouldBe = sentence[0].match(/(?:实际[是为]|应为|正确答案(?:应?为)?)\s*[:：]?\s*([A-H]|正确|错误)/);
-      return shouldBe ? shouldBe[1] : "";
+      const shouldBe = sentence[0].match(/(?:实际[是为]|应为|正确答案(?:应?为)?)\s*[:：]?\s*([A-Ha-h]|正确|错误)/i);
+      return shouldBe ? shouldBe[1].toUpperCase() : "";
     }
     return null;
   }, [aiText]);
@@ -116,11 +116,12 @@ export default function BankQuestionCard({
         ...result,
         answer: res.question.answer,
         correct_answer:
-          res.question.qtype === "judge"
+          res.question.answer_raw ||
+          (res.question.qtype === "judge"
             ? res.question.answer === "A"
               ? "正确"
               : "错误"
-            : res.question.answer.replace(",", "、"),
+            : res.question.answer.replace(/,/g, "、")),
         answer_raw: res.question.answer_raw,
         explanation: res.question.explanation,
       });
