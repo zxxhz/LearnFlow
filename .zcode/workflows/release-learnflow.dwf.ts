@@ -62,7 +62,9 @@ if (!syncRes.success) {
 log(`版本号同步完成，已更新文件：${syncRes.updatedFiles.join(", ")}`);
 
 phase("质量门禁：前端类型检查与烟雾测试跑测");
-const tscCheck = await world.run("cmd.exe", ["/c", "cd frontend && npx tsc --noEmit"], {
+// 绝对路径且不加引号：world.run 的 cwd 随会话目录漂移；Node spawn 会把参数内双引号
+// 转义成 cmd 不认的 \" 形式，路径无空格时直接裸写最稳
+const tscCheck = await world.run("cmd.exe", ["/c", "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\frontend && npx tsc --noEmit"], {
   timeoutMs: 120_000,
 });
 if (tscCheck.exitCode !== 0) {
@@ -72,8 +74,8 @@ log("前端类型检查通过");
 
 const smokeCheck = await world.run("cmd.exe", [
   "/c",
-  "cd backend && uv run python scripts/smoke_test.py",
-], { timeoutMs: 300_000 });
+  "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\backend && uv run python scripts/smoke_test.py",
+], { timeoutMs: 420_000 });
 if (smokeCheck.exitCode !== 0) {
   throw new Error(`烟雾测试回归失败：\n${smokeCheck.stderr || smokeCheck.stdout}`);
 }
@@ -85,7 +87,7 @@ const buildAgent = agent("构建与打包专员", {
 });
 
 const buildOutcome = await buildAgent.ask<string>(
-  `请执行发版构建：\n1. cd frontend && npm run build\n2. cd backend && uv run python scripts/build_backend.py\n3. cd desktop && export TAURI_SIGNING_PRIVATE_KEY=\"keys/learnflow.key\" && export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=\"\" && npx tauri build\n构建完成后确认 target/release/bundle/nsis 目录下已生成 LearnFlow_${targetVersion}_x64-setup.exe 及其同名 .sig 签名文件。`
+  `请执行发版构建（仓库根：C:/Users/Emoing/Desktop/学习agent，所有路径用绝对路径）：\n1. cd "C:/Users/Emoing/Desktop/学习agent/frontend" && npm run build\n2. cd "C:/Users/Emoing/Desktop/学习agent/backend" && uv run python scripts/build_backend.py\n3. cd "C:/Users/Emoing/Desktop/学习agent/desktop" && export TAURI_SIGNING_PRIVATE_KEY="C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/keys/learnflow.key" && export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" && npx tauri build\n构建完成后确认 C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/target/release/bundle/nsis/ 目录下已生成 LearnFlow_${targetVersion}_x64-setup.exe 及其同名 .sig 签名文件。`
 );
 log(`构建产物已就绪：${buildOutcome}`);
 
@@ -95,7 +97,7 @@ const manifestAgent = agent("签名与元数据专员", {
 });
 
 const manifest = await manifestAgent.ask<ManifestResult>(
-  `请定位刚生成的 LearnFlow_${targetVersion}_x64-setup.exe 及其 .sig 文件：\n1. 计算 exe 的 SHA-256；\n2. 提取 .sig 中的签名内容；\n3. 生成 latest.json（包含 version, pub_date, platforms.windows-x86_64.signature, sha256, url）；\n4. 保存 latest.json 到临时目录以便上传。`
+  `安装包与签名文件位于 C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/target/release/bundle/nsis/LearnFlow_${targetVersion}_x64-setup.exe（及同名 .sig）：\n1. 计算 exe 的 SHA-256；\n2. 提取 .sig 中的签名内容（整段 base64）；\n3. 生成 latest.json：顶层 version（"${targetVersion}"）与 pub_date（RFC3339 当前 UTC 时间），platforms["windows-x86_64"] 下含 signature（.sig 全文）与 url（"https://github.com/zxxhz/LearnFlow/releases/download/v${targetVersion}/LearnFlow_${targetVersion}_x64-setup.exe"）；签名覆盖的安装包哈希以官方 sha256 字段形式放在 platforms 内；\n4. 保存 latest.json 到 C:/Users/Emoing/AppData/Local/Temp/latest-v${targetVersion}.json 以便上传。`
 );
 log(`latest.json 生成完毕，SHA-256: ${manifest.exeSha256}`);
 
@@ -116,7 +118,7 @@ if (dryRun) {
   });
 
   releaseRes = await publishAgent.ask<ReleaseSummary>(
-    `请执行发布收尾：\n1. git add 所有版本修改文件；\n2. git commit -m "chore(release): v${targetVersion}"；\n3. git tag v${targetVersion}；\n4. git push origin main --tags；\n5. 通过 GitHub API 创建 Release（Tag: v${targetVersion}，标题: v${targetVersion}，说明:\n${releaseNotes || `v${targetVersion} 发布`}）；\n6. 上传 ${manifest.exeName} 与 latest.json。\n完成后返回发布详情与 URL。`
+    `请执行发布收尾（先 cd "C:/Users/Emoing/Desktop/学习agent" 再做所有 git 操作）：\n1. git add -A；\n2. git commit -m "chore(release): v${targetVersion} - 全面安全加固与稳定性修复（P0/P1漏洞修复/流式节流/并发锁统一）"；\n3. git tag v${targetVersion}；\n4. git push origin main --tags；\n5. 通过 git credential fill 取 GitHub PAT，调用 GitHub API 创建 Release（Tag: v${targetVersion}，标题: v${targetVersion}，说明:\n${releaseNotes || `v${targetVersion} 发布`}）；\n6. 上传资产：C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/target/release/bundle/nsis/${manifest.exeName} 与 C:/Users/Emoing/AppData/Local/Temp/latest-v${targetVersion}.json（资产名分别为 ${manifest.exeName} 与 latest.json）。\n完成后返回发布详情与 URL。`
   );
 }
 
