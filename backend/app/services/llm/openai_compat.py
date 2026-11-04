@@ -236,7 +236,10 @@ class OpenAICompatAdapter(LLMAdapter):
         except Exception as e:
             raise translate_openai_error(e) from e
         finally:
-            await stream.close()
+            try:
+                await stream.close()
+            except Exception as close_err:
+                logger.debug("stream close exception: %s", close_err)
 
 
 SCENES = ("generation", "chat")

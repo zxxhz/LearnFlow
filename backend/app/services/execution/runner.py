@@ -346,9 +346,10 @@ def run_code_sync(language: str, code: str) -> dict:
             with open(src, "w", encoding="utf-8") as f:
                 f.write(code)
             python = toolchain.find_python()
+            python_env = toolchain.build_sandbox_env(workdir)
             t0 = time.perf_counter()
             out, err, rc, timed_out = _run_process(
-                [python, "-I", "-B", "-X", "utf8", src], workdir, DEFAULT_TIMEOUT_SECONDS
+                [python, "-I", "-B", "-X", "utf8", src], workdir, DEFAULT_TIMEOUT_SECONDS, env=python_env
             )
             duration = int((time.perf_counter() - t0) * 1000)
             status = EXEC_TIMEOUT if timed_out else (EXEC_SUCCESS if rc == 0 else EXEC_RUNTIME_ERROR)
@@ -380,8 +381,8 @@ def run_code_sync(language: str, code: str) -> dict:
                 f.write(code)
             t0 = time.perf_counter()
             # 编译步同样前置编译器 bin 到 PATH：cc1plus/collect2 等 g++ 子进程的
-            # libwinpthread-1.dll 等 DLL 都在其 bin 目录，且不继承应用自身环境
-            compile_env = toolchain.dll_run_env(compiler)
+            # libwinpthread-1.dll 等 DLL 都在其 bin 目录，且使用最小隔离环境（不继承应用自身环境与凭据）
+            compile_env = toolchain.dll_run_env(compiler, workdir)
             cout, cerr, crc, _ = _run_process(
                 [compiler, "-std=c++17", "-O0", "-o", exe, src],
                 workdir,

@@ -40,18 +40,6 @@ export default function SnapSolvePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 数学公式渲染：流式期间 deferMath 关闭，结束后整体渲染一次
-  useEffect(() => {
-    if (!streaming && answerBoxRef.current) {
-      try {
-        // MarkdownLite 内部已渲染 KaTeX（deferMath 翻转后触发重渲染）
-        answerBoxRef.current.setAttribute("data-rendered", "1");
-      } catch {
-        /* ignore */
-      }
-    }
-  }, [streaming, answer]);
-
   const addPhotos = (list: FileList | null) => {
     if (!list || list.length === 0) return;
     setError("");
@@ -139,12 +127,14 @@ export default function SnapSolvePage() {
         ctrl.signal
       )
       .catch((e) => {
-        flusher.flushNow();
-        if ((e as Error).name !== "AbortError") {
-          setThinking(false);
-          setStreaming(false);
-          setError(`网络或服务异常：${(e as Error).message}`);
+        if ((e as Error).name === "AbortError") {
+          flusher.cancel();
+          return;
         }
+        flusher.flushNow();
+        setThinking(false);
+        setStreaming(false);
+        setError(`网络或服务异常：${(e as Error).message}`);
       })
       .finally(() => {
         // 服务端干净关流但没发 done/error 事件时不能永久卡在思考/流式态
@@ -228,7 +218,7 @@ export default function SnapSolvePage() {
                 <button
                   type="button"
                   onClick={() => removePhoto(i)}
-                  className="absolute right-1 top-1 rounded-full bg-black/60 px-1.5 text-xs text-white opacity-0 transition group-hover:opacity-100"
+                  className="absolute right-1 top-1 rounded-full bg-black/60 px-1.5 text-xs text-white opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
                   title="移除"
                 >
                   ✕

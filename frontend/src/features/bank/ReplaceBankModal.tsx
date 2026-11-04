@@ -21,6 +21,7 @@ export default function ReplaceBankModal({
   onSuccess,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const analyzeReqRef = useRef(0);
   const [file, setFile] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<BankReplaceAnalyzeOut | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -29,6 +30,7 @@ export default function ReplaceBankModal({
   const [tab, setTab] = useState<"recalibrated" | "added" | "removed">("recalibrated");
 
   const handleReset = () => {
+    analyzeReqRef.current++;
     setFile(null);
     setAnalysis(null);
     setIsAnalyzing(false);
@@ -39,12 +41,14 @@ export default function ReplaceBankModal({
 
   const handleFileSelect = async (selectedFile?: File) => {
     if (!selectedFile) return;
+    const reqId = ++analyzeReqRef.current;
     setFile(selectedFile);
     setAnalysis(null);
     setErrorMsg("");
     setIsAnalyzing(true);
     try {
       const res = await api.banks.replaceAnalyze(bankId, selectedFile);
+      if (reqId !== analyzeReqRef.current) return;
       setAnalysis(res);
       // 如果没有答案变更题，默认切到新增或移出
       if (res.recalibrated_count === 0 && res.added_count > 0) {
@@ -53,9 +57,12 @@ export default function ReplaceBankModal({
         setTab("removed");
       }
     } catch (e) {
+      if (reqId !== analyzeReqRef.current) return;
       setErrorMsg((e as Error).message);
     } finally {
-      setIsAnalyzing(false);
+      if (reqId === analyzeReqRef.current) {
+        setIsAnalyzing(false);
+      }
     }
   };
 

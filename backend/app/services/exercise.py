@@ -280,7 +280,10 @@ async def generate_for_kp(
         ExerciseDraftSet,
     )
 
-    await delete_kp_exercises(db, [kp.id])
+    affected_quiz_ids = await delete_kp_exercises(db, [kp.id])
+    if affected_quiz_ids:
+        from app.services.quiz import cleanup_empty_quizzes
+        await cleanup_empty_quizzes(db, affected_quiz_ids)
     saved: list[Exercise] = []
     for idx, item in enumerate(drafts.exercises):
         if not item.is_complete():

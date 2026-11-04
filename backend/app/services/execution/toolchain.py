@@ -260,15 +260,42 @@ def find_cpp_compiler() -> str | None:
     return str(managed) if managed else None
 
 
-def dll_run_env(compiler: str) -> dict[str, str] | None:
-    """运行编译产物时的环境：把编译器 bin 目录前置到 PATH，让 exe 找到
-    libstdc++-6.dll 等运行时 DLL（MinGW 目录布局下 DLL 与 g++.exe 同目录）。"""
-    if not _IS_WINDOWS:
-        return None
-    bin_dir = Path(compiler).resolve().parent
-    env = dict(os.environ)
-    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+def build_sandbox_env(workdir: str, extra_path: str | None = None) -> dict[str, str]:
+    """构造最小隔离环境变量，防止沙箱代码读取宿主 APP_* 配置或敏感凭据。"""
+    safe_keys = {
+        # Windows / 系统基础运行必需项
+        "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT",
+        "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "PROCESSOR_IDENTIFIER",
+        "PROCESSOR_LEVEL", "PROCESSOR_REVISION", "OS",
+        # 语言与字符编码
+        "LANG", "LC_ALL", "PYTHONIOENCODING", "PYTHONUTF8",
+    }
+    env = {k: v for k, v in os.environ.items() if k.upper() in safe_keys}
+    current_path = os.environ.get("PATH", "")
+    if extra_path:
+        env["PATH"] = extra_path + os.pathsep + current_path
+    else:
+        env["PATH"] = current_path
+
+    env["TEMP"] = workdir
+    env["TMP"] = workdir
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+
+    # 显式清除任何可能漏掉的凭据/配置/代理前缀
+    for k in list(env.keys()):
+        if k.upper().startswith(("APP_", "TOKEN", "KEY", "SECRET", "PASSWORD", "AUTH", "CREDENTIAL")):
+            del env[k]
+
     return env
+
+
+def dll_run_env(compiler: str, workdir: str | None = None) -> dict[str, str] | None:
+    """运行编译产物时的环境：把编译器 bin 目录前置到 PATH，让 exe 找到
+    libstdc++-6.dll 等运行时 DLL（MinGW 目录布局下 DLL 与 g++.exe 同目录），
+    同时采用最小沙箱隔离环境防止泄漏宿主变量。"""
+    bin_dir = str(Path(compiler).resolve().parent)
+    return build_sandbox_env(workdir or tempfile.gettempdir(), extra_path=bin_dir)
 
 
 # ---------- 非 ASCII 路径规避（g++/ld 的 ANSI 编码缺陷） ----------

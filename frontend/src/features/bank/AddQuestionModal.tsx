@@ -62,8 +62,10 @@ export default function AddQuestionModal({ open, bankId, bankName, onClose, onSu
   // 提交状态
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const analyzeReqRef = useRef(0);
 
   const handleReset = () => {
+    analyzeReqRef.current++;
     setFile(null);
     setAnalysis(null);
     setIsAnalyzing(false);
@@ -81,17 +83,22 @@ export default function AddQuestionModal({ open, bankId, bankName, onClose, onSu
   // --- 表格导入逻辑 ---
   const handleFileSelect = async (selectedFile?: File) => {
     if (!selectedFile) return;
+    const reqId = ++analyzeReqRef.current;
     setFile(selectedFile);
     setAnalysis(null);
     setErrorMsg("");
     setIsAnalyzing(true);
     try {
       const a = await api.banks.analyze(selectedFile);
+      if (reqId !== analyzeReqRef.current) return;
       setAnalysis(a);
     } catch (e) {
+      if (reqId !== analyzeReqRef.current) return;
       setErrorMsg((e as Error).message);
     } finally {
-      setIsAnalyzing(false);
+      if (reqId === analyzeReqRef.current) {
+        setIsAnalyzing(false);
+      }
     }
   };
 

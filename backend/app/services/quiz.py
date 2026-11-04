@@ -72,14 +72,11 @@ async def generate_quiz(
         ExerciseDraftSet,
     )
 
-    # LLM 已返回：现在开启短写事务（删旧 → 建新 → commit）
+    # LLM 已返回：现在开启短写事务（仅清理进入时记录的旧小测，防并发生成时清场）
     for qid in old_quiz_ids:
         await _delete_quiz_rows(db, qid)
-    old_quizzes = (
-        await db.scalars(select(Quiz).where(Quiz.document_id == document_id))
-    ).all()
-    for q in old_quizzes:
-        await db.delete(q)
+    if old_quiz_ids:
+        await db.execute(Quiz.__table__.delete().where(Quiz.id.in_(old_quiz_ids)))
 
     quiz = Quiz(
         document_id=document_id,

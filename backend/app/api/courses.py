@@ -339,9 +339,23 @@ async def ask_course(course_id: str, body: AskCourseIn, db: AsyncSession = Depen
             detail = e.message if isinstance(e, LLMError) else "服务异常，请重试。"
             yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
             return
+        finally:
+            try:
+                await deltas.aclose()
+            except Exception:
+                pass
         yield "data: {\"type\": \"done\"}\n\n"
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Type": "text/event-stream; charset=utf-8",
+        },
+    )
 
 
 @router.get("/{course_id}/progress")

@@ -198,13 +198,14 @@ export default function AnnotationCard({
         ctrl.signal
       );
     } catch (e) {
-      // 断流/中断：把缓冲里未刷新的尾部刷出来，保持气泡显示到最新已收内容
-      flusher.flushNow();
-      setMathDeferred(false);
-      if ((e as Error).name !== "AbortError") {
+      if ((e as Error).name === "AbortError") {
+        flusher.cancel();
+      } else {
+        flusher.flushNow();
         setIsThinking(false);
         setStreamErr(`网络错误：${(e as Error).message}`);
       }
+      setMathDeferred(false);
     } finally {
       // 服务端干净关流但没发 done/error 事件时（如静默断连），不能永久卡在思考态
       setIsThinking(false);

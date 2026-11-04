@@ -364,11 +364,26 @@ export default function ReaderPage() {
     };
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        if (e.repeat) return;
+        const target = e.target as HTMLElement | null;
+        if (
+          target &&
+          (target.tagName === "INPUT" ||
+            target.tagName === "TEXTAREA" ||
+            target.tagName === "SELECT" ||
+            target.isContentEditable)
+        ) {
+          return;
+        }
         e.preventDefault();
         toggleSidebar();
         return;
       }
       if (e.key === "Escape") {
+        if (tocOpen) {
+          setTocOpen(false);
+          return;
+        }
         setSelection(null);
         setReAnchoring(null);
         if (activeAnn) closeAnnotation();

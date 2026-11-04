@@ -81,8 +81,10 @@ async def import_mindmap(data: MindMapImportRequest, db: AsyncSession = Depends(
                 if not detected_title and parsed.get("title"):
                     detected_title = str(parsed["title"]).strip()
                 is_json = True
-        except ValueError:
-            raise HTTPException(status_code=422, detail="导入的导图层级超过上限（最多 30 层）")
+        except json.JSONDecodeError:
+            pass
+        except ValueError as ve:
+            raise HTTPException(status_code=422, detail=str(ve))
         except Exception:
             pass
 

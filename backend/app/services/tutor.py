@@ -112,6 +112,11 @@ async def stream_exercise_diagnosis(
         logger.exception("助教诊断流异常")
         yield f"data: {json.dumps({'type': 'error', 'detail': '助教服务暂时不可用，请稍后再试。'}, ensure_ascii=False)}\n\n"
         return
+    finally:
+        try:
+            await agent_stream.aclose()
+        except Exception:
+            pass
 
     # 助教伴学指导结束后，异步提炼学生的练习理解盲区
     reply_summary = "".join(tutor_replies)[:300]

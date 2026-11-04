@@ -71,13 +71,16 @@ async def solve_photo(
         except LLMError as e:
             yield f"data: {json.dumps({'type': 'error', 'detail': e.message}, ensure_ascii=False)}\n\n"
             return
-        except Exception as e:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("solve photo stream error")
-            yield f"data: {json.dumps({'type': 'error', 'detail': f'解答中断：{e}'}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'detail': '解答服务中断，请稍后重试'}, ensure_ascii=False)}\n\n"
             return
         finally:
             # 客户端断连/生成器提前关闭时确定性关闭上游 LLM 流，不依赖 GC 终结器
-            await deltas.aclose()
+            try:
+                await deltas.aclose()
+            except Exception:
+                pass
         yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(

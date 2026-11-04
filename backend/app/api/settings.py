@@ -75,11 +75,16 @@ def _masked_out(row: AppSetting) -> SettingsOut:
 
 
 def _blank_inherit(old_scene: dict, incoming: dict) -> dict:
-    """场景字段留空/掩码 → 继承旧值（api_key）或保留空（其余字段由适配层回落主配置）。"""
+    """场景字段留空/掩码 → 继承旧值（api_key）或保留空（其余字段由适配层回落主配置）。
+    若变更了服务地址 (base_url)，禁止继承旧密钥，清空以防凭据外泄。"""
     merged = dict(incoming)
     old_key = str(old_scene.get("api_key") or "")
     new_key = str(incoming.get("api_key") or "")
-    if not new_key or "****" in new_key:
+    old_base = (str(old_scene.get("base_url") or "")).rstrip("/")
+    new_base = (str(incoming.get("base_url") or "")).rstrip("/")
+    if old_base and new_base and old_base != new_base and (not new_key or "****" in new_key):
+        merged["api_key"] = ""
+    elif not new_key or "****" in new_key:
         merged["api_key"] = old_key
     return merged
 
@@ -95,8 +100,16 @@ async def update_settings(body: SettingsUpdate, db: AsyncSession = Depends(get_d
     current = _load_llm_json(row)
     if body.llm is not None:
         incoming = body.llm.model_dump()
-        # api_key 传空或掩码 → 保留库里旧值（PRD §5.7）
+        old_base = (str(current.get("base_url") or "")).rstrip("/")
+        new_base = (str(incoming.get("base_url") or "")).rstrip("/")
         new_key = incoming.get("api_key") or ""
+        # Base URL 变更时禁止静默继承旧密钥，防止攻击者通过篡改 Base URL 窃取旧服务商密钥
+        if old_base and new_base and old_base != new_base and (not new_key or "****" in new_key):
+            raise HTTPException(
+                status_code=400,
+                detail="更换服务地址 (Base URL) 时必须重新输入对应的 API Key，不支持继承原服务商密钥",
+            )
+        # api_key 传空或掩码 → 保留库里旧值（PRD §5.7）
         if not new_key or "****" in new_key:
             incoming["api_key"] = current.get("api_key", "")
         current.update({k: v for k, v in incoming.items() if v is not None})

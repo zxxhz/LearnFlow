@@ -147,20 +147,61 @@ export function Modal({
   // 20ms 延迟与项目内抽屉（ExerciseDrawer 等）一致：先绘制初始态，过渡才会生效。
   const [render, setRender] = useState(open);
   const [shown, setShown] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const prevActiveRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    prevActiveRef.current = document.activeElement as HTMLElement | null;
     setRender(true);
-    const t = setTimeout(() => setShown(true), 20);
+    const t = setTimeout(() => {
+      setShown(true);
+      if (panelRef.current) {
+        const focusable = panelRef.current.querySelector<HTMLElement>(
+          'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]):not([aria-label="关闭"]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable) {
+          focusable.focus();
+        } else {
+          panelRef.current.focus();
+        }
+      }
+    }, 20);
     return () => clearTimeout(t);
   }, [open]);
 
   useEffect(() => {
     if (open) return;
     setShown(false);
-    const t = setTimeout(() => setRender(false), 200);
+    const t = setTimeout(() => {
+      setRender(false);
+      prevActiveRef.current?.focus?.();
+    }, 200);
     return () => clearTimeout(t);
   }, [open]);
+
+  // Tab 焦点循环陷阱：防止 Tab 键穿透至背景层
+  useEffect(() => {
+    if (!open || !shown) return;
+    const handleTab = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !panelRef.current) return;
+      const focusables = panelRef.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleTab);
+    return () => window.removeEventListener("keydown", handleTab);
+  }, [open, shown]);
 
   // Esc 关闭栈顶模态框（栈机制见 _escStack 注释）
   const onCloseRef = useRef(onClose);
@@ -190,7 +231,9 @@ export function Modal({
       }}
     >
       <div
-        className={`w-full ${width} rounded-xl bg-white dark:bg-gray-900 p-5 shadow-xl transition-all duration-200 ease-out ${
+        ref={panelRef}
+        tabIndex={-1}
+        className={`w-full ${width} rounded-xl bg-white dark:bg-gray-900 p-5 shadow-xl transition-all duration-200 ease-out outline-none ${
           shown ? "translate-y-0 scale-100 opacity-100" : "translate-y-2 scale-95 opacity-0"
         }`}
       >
@@ -339,7 +382,7 @@ export function DropdownMenu({
         aria-hidden={!open}
         className={`absolute top-full z-40 mt-1.5 min-w-[10rem] rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 py-1.5 shadow-lg transition-all duration-150 ease-out ${
           align === "right" ? "right-0 origin-top-right" : "left-0 origin-top-left"
-        } ${open ? "scale-100 opacity-100" : "pointer-events-none scale-95 opacity-0"}`}
+        } ${open ? "scale-100 opacity-100 visible" : "pointer-events-none scale-95 opacity-0 invisible"}`}
       >
         {items.map((item) => (
           <button

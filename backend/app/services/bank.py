@@ -326,66 +326,79 @@ async def update_question(
     """更新题目内容/选项/答案，并可选按新答案自动重判最新作答记录（若改错为对则自动移出错题池）。
 
     选项内容/顺序变更也触发重判：旧作答字母按新选项位置解释，语义可能漂移。
+    全程持有 _bank_lock，并在锁内重查题目防与 replace 并发导致 StaleDataError。
     """
-    if title is not None and title.strip():
-        q.title = title.strip()
+    async with _bank_lock(q.bank_id):
+        fresh_q = await db.get(BankQuestion, q.id)
+        if fresh_q is None:
+            raise ValueError("题目不存在或已被移除")
+        q = fresh_q
 
-    content_changed = False
-    if q.qtype == QUESTION_JUDGE:
-        q.options = "[]"
-        if answer is not None and answer.strip():
-            ans_clean = "A" if answer.strip().upper() in ("A", "TRUE", "T", "对", "正确", "1", "YES", "√", "是") else "B"
-            if ans_clean != q.answer:
-                content_changed = True
-            q.answer = ans_clean
-            q.answer_raw = "正确" if ans_clean == "A" else "错误"
-    else:
-        if options is not None:
-            raw_opts = [opt.strip() for opt in options if opt.strip()]
-            if len(raw_opts) < 2:
-                raise ValueError("选择题至少需要保留 2 个有效选项")
-            opts = (raw_opts + [""] * 8)[:8]
-            new_options_json = json.dumps(opts, ensure_ascii=False)
-            if new_options_json != q.options:
-                content_changed = True
-            q.options = new_options_json
-        if answer is not None and answer.strip():
-            ans_norm = normalize_answer(q.qtype, answer.strip(), q.seq)
-            if ans_norm != q.answer:
-                content_changed = True
-            q.answer = ans_norm
-            q.answer_raw = ans_norm.replace(",", "、")
+        if title is not None and title.strip():
+            q.title = title.strip()
 
-    if explanation is not None:
-        q.explanation = explanation.strip()
+        content_changed = False
+        if q.qtype == QUESTION_JUDGE:
+            q.options = "[]"
+            if answer is not None and answer.strip():
+                clean = answer.strip().upper()
+                if clean in ("A", "TRUE", "T", "对", "正确", "1", "YES", "√", "是"):
+                    ans_clean = "A"
+                elif clean in ("B", "FALSE", "F", "错", "错误", "0", "NO", "×", "否"):
+                    ans_clean = "B"
+                else:
+                    raise ValueError("判断题答案只能是正确(A)或错误(B)")
+                if ans_clean != q.answer:
+                    content_changed = True
+                q.answer = ans_clean
+                q.answer_raw = "正确" if ans_clean == "A" else "错误"
+        else:
+            if options is not None:
+                raw_opts = [opt.strip() for opt in options if opt.strip()]
+                if len(raw_opts) < 2:
+                    raise ValueError("选择题至少需要保留 2 个有效选项")
+                opts = (raw_opts + [""] * 8)[:8]
+                new_options_json = json.dumps(opts, ensure_ascii=False)
+                if new_options_json != q.options:
+                    content_changed = True
+                q.options = new_options_json
+            if answer is not None and answer.strip():
+                ans_norm = normalize_answer(q.qtype, answer.strip(), q.seq)
+                if ans_norm != q.answer:
+                    content_changed = True
+                q.answer = ans_norm
+                q.answer_raw = ans_norm.replace(",", "、")
 
-    if difficulty is not None and difficulty.strip():
-        q.difficulty = difficulty.strip()
+        if explanation is not None:
+            q.explanation = explanation.strip()
 
-    # 仅在题目内容/参考答案实际变化时清空旧 AI 解析（只改难度/解析不清，省一次重新生成）
-    if content_changed:
-        q.ai_explanation = ""
+        if difficulty is not None and difficulty.strip():
+            q.difficulty = difficulty.strip()
 
-    recalibrated_attempt = None
-    if recalibrate_attempts and content_changed:
-        latest_att = (
-            await db.scalars(
-                select(BankAttempt)
-                .where(BankAttempt.question_id == q.id)
-                .order_by(BankAttempt.created_at.desc())
-                .limit(1)
-            )
-        ).first()
+        # 仅在题目内容/参考答案实际变化时清空旧 AI 解析（只改难度/解析不清，省一次重新生成）
+        if content_changed:
+            q.ai_explanation = ""
 
-        if latest_att:
-            submitted = [x.strip() for x in latest_att.content.split(",") if x.strip()]
-            new_passed = judge_answer(q.qtype, q.answer, submitted)
-            if latest_att.passed != new_passed:
-                latest_att.passed = new_passed
-            recalibrated_attempt = latest_att
+        recalibrated_attempt = None
+        if recalibrate_attempts and content_changed:
+            latest_att = (
+                await db.scalars(
+                    select(BankAttempt)
+                    .where(BankAttempt.question_id == q.id)
+                    .order_by(BankAttempt.created_at.desc())
+                    .limit(1)
+                )
+            ).first()
 
-    await db.commit()
-    return q, recalibrated_attempt
+            if latest_att:
+                submitted = [x.strip() for x in latest_att.content.split(",") if x.strip()]
+                new_passed = judge_answer(q.qtype, q.answer, submitted)
+                if latest_att.passed != new_passed:
+                    latest_att.passed = new_passed
+                recalibrated_attempt = latest_att
+
+        await db.commit()
+        return q, recalibrated_attempt
 
 
 def _normalize_title_for_match(title: str) -> str:
@@ -439,15 +452,15 @@ def align_questions_for_replacement(
         else:
             unmatched_new.append(nq)
 
-    # 第二轮：Level 2 题干唯一回退匹配（针对选项文字修正或增减选项场景，题干长且双方均全局唯一）。
-    # 追加选项集合 Jaccard 相似度 ≥0.5 护栏：「下列说法正确的是」这类同题干不同题不会被误继承。
+    # 第二轮：Level 2 题干唯一回退匹配（针对选项文字修正或增减选项场景，双方题干均唯一）。
+    # len(norm_t) >= 2 兼容短题干（如 "1+1=?"），并追加选项集合 Jaccard 相似度 ≥0.5 护栏防误匹配。
     added: list[dict] = []
     for nq in unmatched_new:
         norm_t = _normalize_title_for_match(nq["title"])
         k2 = (nq["qtype"], norm_t)
 
         candidates = [c for c in lvl2_pool.get(k2, []) if c.id not in used_old_ids]
-        if len(norm_t) >= 6 and len(candidates) == 1:
+        if len(norm_t) >= 2 and len(candidates) == 1:
             found_old = candidates[0]
             old_opts = json.loads(found_old.options) if found_old.options else []
             old_set = (
@@ -460,9 +473,12 @@ def align_questions_for_replacement(
                 if nq["qtype"] != QUESTION_JUDGE
                 else frozenset()
             )
-            union = old_set | new_set
-            # 双侧均无选项（判断题）视为完全一致；否则要求交并比 ≥0.5
-            similar = not union or len(old_set & new_set) / len(union) >= 0.5
+            if found_old.qtype == QUESTION_JUDGE:
+                similar = True
+            else:
+                union = old_set | new_set
+                # 修复原 not union 短路：选择题必须有有效选项并要求交并比 ≥0.5
+                similar = bool(union) and (len(old_set & new_set) / len(union) >= 0.5)
             if similar:
                 used_old_ids.add(found_old.id)
                 matched.append((found_old, nq))
@@ -987,15 +1003,19 @@ async def delete_bank(db: AsyncSession, bank: QuestionBank) -> None:
     """级联删除：作答流水 → 题目 → 题库 → 归档目录。
 
     目录先改名 banks/.trash-{id} 再删：rmtree 中途崩溃不会留下"看似完好"的半删目录。
+    全程持写锁防止与并发追加、替换或作答提交冲突。
     """
-    await db.execute(
-        BankAttempt.__table__.delete().where(BankAttempt.bank_id == bank.id)
-    )
-    await db.execute(
-        BankQuestion.__table__.delete().where(BankQuestion.bank_id == bank.id)
-    )
-    await db.delete(bank)
-    await db.commit()
+    async with _bank_lock(bank.id):
+        await db.execute(
+            BankAttempt.__table__.delete().where(BankAttempt.bank_id == bank.id)
+        )
+        await db.execute(
+            BankQuestion.__table__.delete().where(BankQuestion.bank_id == bank.id)
+        )
+        await db.delete(bank)
+        await db.commit()
+        _bank_locks.pop(bank.id, None)
+
     bank_dir = settings.data_dir / "banks" / bank.id
     trash_dir = settings.data_dir / "banks" / f".trash-{bank.id}"
     if not bank_dir.exists():

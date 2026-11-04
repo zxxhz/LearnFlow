@@ -1,6 +1,7 @@
 """文档单段落手术式重写与核查纠偏服务（决策4）。"""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Literal
 from pydantic import BaseModel
@@ -65,6 +66,17 @@ async def review_section_revision(
     return original_raw, result
 
 
+_doc_locks: dict[str, asyncio.Lock] = {}
+
+
+def _doc_lock(doc_id: str) -> asyncio.Lock:
+    lock = _doc_locks.get(doc_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _doc_locks[doc_id] = lock
+    return lock
+
+
 async def apply_section_revision(
     db: AsyncSession,
     document: Document,
@@ -72,44 +84,50 @@ async def apply_section_revision(
     revised_markdown: str,
 ) -> str:
     """将修订后的 Markdown 手术式替换到文档文件中，并重建 Section 索引。返回更新后的完整正文。"""
-    markdown = load_document_markdown(document)
-    lines = markdown.replace("\r\n", "\n").split("\n")
-    blocks = parse_blocks(markdown)
+    async with _doc_lock(document.id):
+        fresh_doc = await db.get(Document, document.id)
+        if fresh_doc is None or fresh_doc.version != document.version:
+            raise ValueError("文档内容已发生变更，请刷新页面后重试修订")
+        document = fresh_doc
 
-    if section.order_index >= len(blocks):
-        raise ValueError("段落索引超出当前文档范围，请刷新后重试")
+        markdown = load_document_markdown(document)
+        lines = markdown.replace("\r\n", "\n").split("\n")
+        blocks = parse_blocks(markdown)
 
-    target_block = blocks[section.order_index]
-    revised_lines = revised_markdown.replace("\r\n", "\n").split("\n")
-    new_lines = lines[: target_block.line_start] + revised_lines + lines[target_block.line_end :]
-    new_markdown = "\n".join(new_lines)
+        if section.order_index >= len(blocks):
+            raise ValueError("段落索引超出当前文档范围，请刷新后重试")
 
-    if not document.file_path:
-        raise ValueError("文档未关联正文文件，无法应用修订")
+        target_block = blocks[section.order_index]
+        revised_lines = revised_markdown.replace("\r\n", "\n").split("\n")
+        new_lines = lines[: target_block.line_start] + revised_lines + lines[target_block.line_end :]
+        new_markdown = "\n".join(new_lines)
 
-    file_path = settings.data_dir / document.file_path
-    # 先写临时文件，数据库提交成功后再原子替换——
-    # 反过来（先写正文再重建索引）一旦 rebuild/commit 失败，磁盘与索引就永久失配
-    tmp_path = file_path.with_name(file_path.name + ".revising")
-    tmp_path.write_text(new_markdown, encoding="utf-8")
+        if not document.file_path:
+            raise ValueError("文档未关联正文文件，无法应用修订")
 
-    new_version = document.version + 1
-    document.version = new_version
+        file_path = settings.data_dir / document.file_path
+        # 先写临时文件，数据库提交成功后再原子替换——
+        # 反过来（先写正文再重建索引）一旦 rebuild/commit 失败，磁盘与索引就永久失配
+        tmp_path = file_path.with_name(file_path.name + ".revising")
+        tmp_path.write_text(new_markdown, encoding="utf-8")
 
-    try:
-        await rebuild_sections(
-            db,
-            document=document,
-            new_markdown=new_markdown,
-            new_version=new_version,
-            force_inherited={section.order_index: section.id},
-        )
-        await db.commit()
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-    import os
+        new_version = document.version + 1
+        document.version = new_version
 
-    os.replace(tmp_path, file_path)
-    logger.info("applied section revision to doc=%s sec=%s v=%d", document.id, section.id, new_version)
-    return new_markdown
+        try:
+            await rebuild_sections(
+                db,
+                document=document,
+                new_markdown=new_markdown,
+                new_version=new_version,
+                force_inherited={section.order_index: section.id},
+            )
+            await db.commit()
+        except Exception:
+            tmp_path.unlink(missing_ok=True)
+            raise
+        import os
+
+        os.replace(tmp_path, file_path)
+        logger.info("applied section revision to doc=%s sec=%s v=%d", document.id, section.id, new_version)
+        return new_markdown

@@ -535,7 +535,7 @@ export default function BlockView({
             e.stopPropagation();
             onReviseSection(sectionId, block.raw);
           }}
-          className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-1 -top-2.5 z-10 inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-gray-700 bg-white/95 dark:bg-gray-800/95 px-2 py-0.5 text-[11px] text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 shadow-xs backdrop-blur-xs select-none"
+          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity absolute right-1 -top-2.5 z-10 inline-flex items-center gap-1 rounded-md border border-gray-200 dark:border-gray-700 bg-white/95 dark:bg-gray-800/95 px-2 py-0.5 text-[11px] text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 shadow-xs backdrop-blur-xs select-none"
           title="对本段落提出质疑或重写建议"
         >
           <span>🚩</span>

@@ -5,7 +5,9 @@
 - 开发模式：uv run uvicorn app.main:app --reload（前端另起 vite dev server）
 """
 import contextlib
+import ipaddress
 import logging
+import socket
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -158,6 +160,46 @@ def _render_lan_auth_html(title: str, reason: str, show_input: bool = True) -> s
 </html>"""
 
 
+_TRUSTED_HOSTS: set[str] = {"127.0.0.1", "localhost", "::1", "testclient"}
+try:
+    _hn = socket.gethostname().lower()
+    if _hn:
+        _TRUSTED_HOSTS.add(_hn)
+        _TRUSTED_HOSTS.add(f"{_hn}.local")
+except Exception:
+    pass
+
+
+def _parse_host_header(host_header: str) -> tuple[str, int]:
+    """解析 Host 头的 host 与 port（支持 IPv6 [::1]:8420 形式）。"""
+    if host_header.startswith("["):
+        end = host_header.find("]")
+        if end != -1:
+            h_host = host_header[1:end].lower()
+            rest = host_header[end + 1 :]
+            host_port = int(rest[1:]) if rest.startswith(":") else 80
+        else:
+            h_host, host_port = host_header, 80
+    else:
+        h_host_raw, _, h_port = host_header.partition(":")
+        h_host = h_host_raw.lower()
+        host_port = int(h_port) if h_port else 80
+    return h_host, host_port
+
+
+def _is_trusted_host(h_host: str) -> bool:
+    """防 DNS rebinding 攻击：校验 Host 头是否属于合法受信任地址。"""
+    if not h_host:
+        return False
+    if h_host in _TRUSTED_HOSTS:
+        return True
+    try:
+        ipaddress.ip_address(h_host)
+        return True
+    except ValueError:
+        return False
+
+
 class _AccessGuard:
     """纯 ASGI 中间件：非回环来源（局域网）必须携带访问令牌；本机与桌面壳直通。
 
@@ -169,16 +211,26 @@ class _AccessGuard:
 
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
-            # 变更类 /api 请求的同源校验（对回环与局域网一视同仁）：
+            headers = {k.lower(): v for k, v in scope.get("headers", [])}
+            host_header = headers.get(b"host", b"").decode("latin-1").strip().lower()
+            h_host, host_port = _parse_host_header(host_header) if host_header else ("", 80)
+
+            # 1. Host 头合法性校验（防 DNS rebinding 攻击）：
+            # 攻击者通过公共域名绑定 127.0.0.1 试图 drive-by 绕过回环免令牌限制，
+            # 任何 Host 头非本机回环/机器名/合法 IP 的请求一律拒绝
+            if host_header and not _is_trusted_host(h_host):
+                res = JSONResponse(status_code=403, content={"detail": "非法的 Host 请求头，拒绝访问"})
+                await res(scope, receive, send)
+                return
+
+            # 2. 变更类 /api 请求的同源校验（对回环与局域网一视同仁）：
             # multipart/form-data 与 form 编码属 CORS simple request，无 preflight，
             # 回环免令牌端口上本机浏览器恶意页面可 drive-by 提交（如视觉调用烧额度）。
             # 浏览器对 POST 必带 Origin；合法客户端（桌面壳/手机 PWA）Origin 与 Host 同源，
             # 非浏览器客户端（curl）不带 Origin → 放行，不影响任何正常用法。
             if scope.get("method") not in ("GET", "HEAD", "OPTIONS") and scope.get("path", "").startswith("/api/"):
-                headers = {k.lower(): v for k, v in scope.get("headers", [])}
                 origin = headers.get(b"origin", b"").decode("latin-1").strip()
                 sec_fetch_site = headers.get(b"sec-fetch-site", b"").decode("latin-1").strip().lower()
-                host_header = headers.get(b"host", b"").decode("latin-1").strip().lower()
 
                 def _reject() -> JSONResponse:
                     return JSONResponse(status_code=403, content={"detail": "跨站请求已被拒绝"})
@@ -194,19 +246,6 @@ class _AccessGuard:
                         o = urlsplit(origin)
                         origin_host = (o.hostname or "").lower()
                         origin_port = o.port or (443 if o.scheme == "https" else 80)
-                        # 解析 Host 头的 host 与 port（纯 HTTP 服务端，支持 IPv6 [::1]:8420 形式）
-                        if host_header.startswith("["):
-                            end = host_header.find("]")
-                            if end != -1:
-                                h_host = host_header[1:end].lower()
-                                rest = host_header[end + 1 :]
-                                host_port = int(rest[1:]) if rest.startswith(":") else 80
-                            else:
-                                h_host, host_port = host_header, 80
-                        else:
-                            h_host_raw, _, h_port = host_header.partition(":")
-                            h_host = h_host_raw.lower()
-                            host_port = int(h_port) if h_port else 80
 
                         if origin_host != h_host or origin_port != host_port:
                             await _reject()(scope, receive, send)

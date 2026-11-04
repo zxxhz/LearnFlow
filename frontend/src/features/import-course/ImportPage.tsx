@@ -349,7 +349,7 @@ export default function ImportPage() {
                     <button
                       type="button"
                       onClick={() => removePhoto(i)}
-                      className="absolute right-1 top-1 rounded-full bg-black/60 px-1.5 text-xs text-white opacity-0 transition group-hover:opacity-100"
+                      className="absolute right-1 top-1 rounded-full bg-black/60 px-1.5 text-xs text-white opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
                       title="移除"
                     >
                       ✕

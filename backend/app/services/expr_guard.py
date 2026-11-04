@@ -63,6 +63,11 @@ def assert_math_expr_safe(expr: str, max_len: int = 500, max_nodes: int = 400) -
                 # 幂塔（9**9**9 → 9**(9**9)）与超大常量指数会让 sympy 整数爆炸挂死线程
                 if isinstance(node.right, ast.BinOp) and isinstance(node.right.op, ast.Pow):
                     raise UnsafeExpression("表达式包含嵌套幂运算（幂塔），会导致计算爆炸")
+                # 指数部分严禁包含阶乘、组合数等阶乘级膨胀函数（防 2**factorial(10000) 穿透）
+                for sub in ast.walk(node.right):
+                    if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name):
+                        if sub.func.id in _BOUNDED_FUNCS:
+                            raise UnsafeExpression("幂运算的指数部分不允许使用阶乘或组合数等爆炸性函数")
                 mag = _const_abs(node.right)
                 if mag is not None and mag > 10_000:
                     raise UnsafeExpression("指数过大，会导致计算爆炸")

@@ -6,6 +6,7 @@ import { findNodeInTree } from "../../lib/mindmap";
 import { Button, Spinner, Textarea } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
 import { useFontSize } from "../../lib/fontSize";
+import { createStreamFlusher } from "../../lib/streamFlusher";
 
 interface Props {
   mindmapId: string;
@@ -132,6 +133,7 @@ export default function NodeDetailDrawer({
     setDetailErr("");
 
     let acc = "";
+    const flusher = createStreamFlusher((text) => setStreamingDetailText(text), 120);
     try {
       await api.mindmaps.nodeDetailSSE(
         mindmapId,
@@ -140,8 +142,9 @@ export default function NodeDetailDrawer({
         (ev: MindMapNodeDetailSSEEvent) => {
           if (ev.type === "delta" && ev.text) {
             acc += ev.text;
-            setStreamingDetailText(acc);
+            flusher.push(acc);
           } else if (ev.type === "done") {
+            flusher.flushNow();
             // 仅用累计正文落节点：ev.detail 可能是错误说明等非正文文案，
             // acc 为空时保持节点原值，不把兜底文案写进正文
             if (acc) {
@@ -150,6 +153,7 @@ export default function NodeDetailDrawer({
             setStreamingDetailText("");
             setGeneratingDetail(false);
           } else if (ev.type === "error") {
+            flusher.flushNow();
             setDetailErr(ev.detail || "生成解析失败");
             setGeneratingDetail(false);
           }
@@ -157,6 +161,7 @@ export default function NodeDetailDrawer({
         ctrl.signal
       );
     } catch (err: any) {
+      flusher.cancel();
       if (err.name !== "AbortError") {
         setDetailErr(err.message || "请求失败");
       }
@@ -182,6 +187,7 @@ export default function NodeDetailDrawer({
     setQaHistory(newHist);
 
     let acc = "";
+    const flusher = createStreamFlusher((text) => setQaStreaming(text), 120);
     try {
       await api.mindmaps.nodeQASSE(
         mindmapId,
@@ -190,14 +196,16 @@ export default function NodeDetailDrawer({
         (ev: MindMapNodeQASSEEvent) => {
           if (ev.type === "delta" && ev.text) {
             acc += ev.text;
-            setQaStreaming(acc);
+            flusher.push(acc);
           } else if (ev.type === "done") {
+            flusher.flushNow();
             if (acc) {
               setQaHistory([...newHist, { role: "assistant", content: acc }]);
             }
             setQaStreaming("");
             setQaLoading(false);
           } else if (ev.type === "error") {
+            flusher.flushNow();
             setQaHistory([...newHist, { role: "assistant", content: "⚠️ 问答遇到异常，请稍后重试。" }]);
             setQaStreaming("");
             setQaLoading(false);
@@ -206,6 +214,7 @@ export default function NodeDetailDrawer({
         ctrl.signal
       );
     } catch (err: any) {
+      flusher.cancel();
       if (err.name !== "AbortError") {
         setQaHistory([...newHist, { role: "assistant", content: `⚠️ 连接错误: ${err.message}` }]);
       }
@@ -433,7 +442,7 @@ export default function NodeDetailDrawer({
 
           {currentDetail ? (
             <div className="msg-md text-xs leading-relaxed text-gray-800 dark:text-gray-200 bg-gray-50/50 dark:bg-gray-900/40 rounded-lg p-3 border border-gray-100 dark:border-gray-800">
-              <MarkdownLite text={currentDetail} />
+              <MarkdownLite text={currentDetail} deferMath={generatingDetail} />
               {generatingDetail && (
                 <span className="inline-block h-3.5 w-1.5 ml-0.5 align-middle bg-brand-500 animate-pulse rounded-sm" />
               )}
@@ -485,7 +494,7 @@ export default function NodeDetailDrawer({
             {qaStreaming && (
               <div className="flex justify-start">
                 <div className="msg-md max-w-[90%] rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 px-3 py-1.5 text-xs text-gray-800 dark:text-gray-200">
-                  <MarkdownLite text={qaStreaming} />
+                  <MarkdownLite text={qaStreaming} deferMath={qaLoading} />
                   <span className="inline-block h-3 w-1.5 ml-0.5 align-middle bg-brand-500 animate-pulse rounded-sm" />
                 </div>
               </div>

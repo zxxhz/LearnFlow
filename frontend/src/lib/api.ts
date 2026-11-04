@@ -84,7 +84,20 @@ export function getAccessToken(): string {
     const fromStorage = localStorage.getItem("lf_access_token");
     if (fromStorage) return fromStorage;
     const params = new URLSearchParams(window.location.search);
-    return params.get("token") || "";
+    const token = params.get("token") || "";
+    if (token) {
+      localStorage.setItem("lf_access_token", token);
+      // 清除 URL 中的 token 参数，防止长期留存在地址栏与历史记录中
+      try {
+        params.delete("token");
+        const newSearch = params.toString();
+        const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : "") + window.location.hash;
+        window.history.replaceState(null, "", newUrl);
+      } catch {
+        /* ignore */
+      }
+    }
+    return token;
   } catch {
     return "";
   }
@@ -119,8 +132,8 @@ export async function downloadFile(path: string): Promise<void> {
   a.href = url;
   a.download = name;
   a.click();
-  // 下一 tick 再 revoke：WebKit 内核下同步 revoke 可能取消尚未开始的下载
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  // 延迟 10s revoke：防止 WebKit / Tauri 壳下下载管理器异步拾取 Blob 时被过早撤回
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {

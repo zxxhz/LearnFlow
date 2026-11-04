@@ -9,6 +9,7 @@ import logging
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory, get_db
@@ -392,17 +393,28 @@ async def submit_attempt(
     q = await db.get(BankQuestion, body.question_id)
     if q is None:
         raise HTTPException(status_code=404, detail="题目不存在")
-    passed = bank_service.judge_answer(q.qtype, q.answer, body.content)
-    user_ans = ",".join(x.strip().upper() for x in body.content if x and x.strip())
-    attempt = BankAttempt(
-        bank_id=q.bank_id,
-        question_id=q.id,
-        content=user_ans,
-        passed=passed,
-        is_doubtful=body.is_doubtful,
-    )
-    db.add(attempt)
-    await db.commit()
+    async with bank_service._bank_lock(q.bank_id):
+        # 锁内重读题目，防止并发替换或修改删除题目导致外键报错
+        fresh_q = await db.get(BankQuestion, body.question_id)
+        if fresh_q is None:
+            raise HTTPException(status_code=404, detail="题目不存在或已被移除")
+        q = fresh_q
+        passed = bank_service.judge_answer(q.qtype, q.answer, body.content)
+        user_ans = ",".join(x.strip().upper() for x in body.content if x and x.strip())
+        attempt = BankAttempt(
+            bank_id=q.bank_id,
+            question_id=q.id,
+            content=user_ans,
+            passed=passed,
+            is_doubtful=body.is_doubtful,
+        )
+        db.add(attempt)
+        try:
+            await db.commit()
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status_code=404, detail="题目已被更新或删除")
+
     return BankAttemptResult(
         attempt_id=attempt.id,
         passed=passed,
@@ -517,11 +529,13 @@ async def ai_explain_question(
         full_text = "".join(accumulated).strip()
         if full_text:
             try:
-                async with async_session_factory() as save_db:
-                    saved_q = await save_db.get(BankQuestion, question_id)
-                    if saved_q:
-                        saved_q.ai_explanation = full_text
-                        await save_db.commit()
+                async with bank_service._bank_lock(q.bank_id):
+                    async with async_session_factory() as save_db:
+                        saved_q = await save_db.get(BankQuestion, question_id)
+                        # 仅当题目内容与选项未发生变更时才回写，防止陈旧解析覆盖更新后的题目
+                        if saved_q and saved_q.answer == q.answer and saved_q.options == q.options:
+                            saved_q.ai_explanation = full_text
+                            await save_db.commit()
             except Exception as se:
                 logger.warning(f"Failed to persist question ai_explanation: {se}")
 

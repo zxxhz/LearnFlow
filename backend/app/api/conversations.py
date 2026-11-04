@@ -75,10 +75,15 @@ async def post_message(
             logger.warning(f"LLM stream error: {e}")
             yield f"data: {json.dumps({'type': 'error', 'detail': e.message}, ensure_ascii=False)}\n\n"
             return
-        except Exception as e:  # noqa: BLE001
-            logger.exception(f"Conversation stream exception: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'detail': f'服务异常：{e}'}, ensure_ascii=False)}\n\n"
+        except Exception:  # noqa: BLE001
+            logger.exception("Conversation stream exception")
+            yield f"data: {json.dumps({'type': 'error', 'detail': '服务异常，请稍后重试'}, ensure_ascii=False)}\n\n"
             return
+        finally:
+            try:
+                await deltas.aclose()
+            except Exception:
+                pass
 
         full_content = "".join(buffer)
         async with async_session_factory() as s:

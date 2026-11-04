@@ -984,9 +984,15 @@ async def stream_mindmap_agent(
 
     # 2. 流式返回 Agent 的伴学解释文本
     stream = await adapter.chat(messages, stream=True)
-    async for chunk in stream:
-        if chunk:
-            yield {"type": "delta", "text": chunk}
+    try:
+        async for chunk in stream:
+            if chunk:
+                yield {"type": "delta", "text": chunk}
+    finally:
+        try:
+            await stream.aclose()
+        except Exception:
+            pass
 
     yield {"type": "done", "tree": mindmap.root if tree_changed else None}
 
@@ -1029,10 +1035,16 @@ async def stream_node_detail(
 
     full_text = ""
     stream = await adapter.chat(messages, stream=True)
-    async for chunk in stream:
-        if chunk:
-            full_text += chunk
-            yield {"type": "delta", "text": chunk}
+    try:
+        async for chunk in stream:
+            if chunk:
+                full_text += chunk
+                yield {"type": "delta", "text": chunk}
+    finally:
+        try:
+            await stream.aclose()
+        except Exception:
+            pass
 
     # 结果持久化：流式生成可能持续数十秒，期间画布编辑/Agent 指令可能已更新库中树。
     # 用全新短会话重新加载最新树，仅改写目标节点的 detail 字段，避免旧内存树整列覆盖造成丢更新。
@@ -1094,9 +1106,15 @@ async def stream_node_qa(
     messages.append({"role": "user", "content": question.strip()})
 
     stream = await adapter.chat(messages, stream=True)
-    async for chunk in stream:
-        if chunk:
-            yield {"type": "delta", "text": chunk}
+    try:
+        async for chunk in stream:
+            if chunk:
+                yield {"type": "delta", "text": chunk}
+    finally:
+        try:
+            await stream.aclose()
+        except Exception:
+            pass
 
     yield {"type": "done"}
 

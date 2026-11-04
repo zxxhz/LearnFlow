@@ -101,8 +101,8 @@ export default function MindMapListPage() {
       a.href = url;
       a.download = `${title || "思维导图"}.md`;
       a.click();
-      // 异步 tick 后再 revoke：同步 revoke 在 WebKit 内核（Tauri WKWebView）下可能取消尚未开始的下载
-      setTimeout(() => URL.revokeObjectURL(url), 0);
+      // 延迟 10s revoke：防止 WebKit / Tauri 壳下下载管理器异步拾取 Blob 时被过早撤回
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
     } catch (err) {
       alert(`导出失败: ${(err as Error).message}`);
     }
@@ -251,8 +251,16 @@ export default function MindMapListPage() {
           {filtered.map((m) => (
             <div
               key={m.id}
+              role="link"
+              tabIndex={0}
               onClick={() => navigate(`/mindmap/${m.id}`)}
-              className="group relative flex flex-col justify-between rounded-xl border border-gray-200 dark:border-gray-700/80 bg-white dark:bg-gray-800/60 p-4 shadow-xs hover:border-brand-500 dark:hover:border-brand-400 hover:shadow-md transition-all cursor-pointer"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  navigate(`/mindmap/${m.id}`);
+                }
+              }}
+              className="group relative flex flex-col justify-between rounded-xl border border-gray-200 dark:border-gray-700/80 bg-white dark:bg-gray-800/60 p-4 shadow-xs hover:border-brand-500 dark:hover:border-brand-400 hover:shadow-md transition-all cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
             >
               <div>
                 <div className="flex items-start justify-between gap-2">
@@ -263,12 +271,14 @@ export default function MindMapListPage() {
                   <div
                     className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity"
                     onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
                   >
                     <DropdownMenu
                       label="⋯"
                       title="更多操作"
                       triggerClassName="flex h-7 w-7 items-center justify-center rounded-lg text-base leading-none text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200 transition"
                       items={[
+                        { label: "打开导图", icon: "📖", onSelect: () => navigate(`/mindmap/${m.id}`) },
                         {
                           label: "重命名",
                           icon: "✏️",

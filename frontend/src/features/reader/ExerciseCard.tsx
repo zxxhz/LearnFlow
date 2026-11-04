@@ -217,8 +217,10 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
         ctrl.signal
       );
     } catch (err: any) {
-      flusher.flushNow();
-      if (err.name !== "AbortError") {
+      if (err.name === "AbortError") {
+        flusher.cancel();
+      } else {
+        flusher.flushNow();
         setTutorStatus(null);
         setTutorText((prev) => prev + `\n\n> ⚠️ ${err.message || "连接失败"}`);
       }

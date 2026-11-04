@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { Button, Spinner } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
+import { createStreamFlusher } from "../../lib/streamFlusher";
 
 interface Turn {
   role: "user" | "assistant";
@@ -28,18 +29,28 @@ export default function CourseAskPanel({ courseId }: { courseId: string }) {
     setQuestion("");
     setTurns((t) => [...t, { role: "user", text: q }, { role: "assistant", text: "" }]);
     setBusy(true);
-    const append = (delta: string) =>
+
+    let acc = "";
+    const flusher = createStreamFlusher((text) => {
       setTurns((t) => {
         const copy = [...t];
-        copy[copy.length - 1] = { ...copy[copy.length - 1], text: copy[copy.length - 1].text + delta };
+        copy[copy.length - 1] = { ...copy[copy.length - 1], text };
         return copy;
       });
+    }, 120);
+
+    const append = (delta: string) => {
+      acc += delta;
+      flusher.push(acc);
+    };
+
     const finish = (err?: string) => {
+      flusher.flushNow();
       setBusy(false);
       if (err) {
         setTurns((t) => {
           const copy = [...t];
-          copy[copy.length - 1] = { ...copy[copy.length - 1], text: copy[copy.length - 1].text || `⚠️ ${err}` };
+          copy[copy.length - 1] = { ...copy[copy.length - 1], text: acc || `⚠️ ${err}` };
           return copy;
         });
       }
@@ -62,7 +73,11 @@ export default function CourseAskPanel({ courseId }: { courseId: string }) {
                     : "border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 text-gray-800 dark:text-gray-200 [&_p]:my-1"
                 }`}
               >
-                {t.role === "assistant" ? <MarkdownLite text={t.text || "…"} /> : t.text}
+                {t.role === "assistant" ? (
+                  <MarkdownLite text={t.text || "…"} deferMath={busy && i === turns.length - 1} />
+                ) : (
+                  t.text
+                )}
               </div>
             </div>
           ))}

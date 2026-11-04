@@ -181,7 +181,19 @@ async def import_photo_transcribe(
     )
     messages = build_vision_messages(system_prompt, instruction, data_urls)
     try:
-        content = await adapter.chat(messages, stream=False)
+        # 改用流式聚合：防止 8 张照片长转写在静默生成期触发 httpx 180s read-timeout 挂断
+        chunks: list[str] = []
+        deltas = await adapter.chat(messages, stream=True)
+        try:
+            async for chunk in deltas:
+                if chunk:
+                    chunks.append(chunk)
+        finally:
+            try:
+                await deltas.aclose()
+            except Exception:
+                pass
+        content = "".join(chunks)
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001

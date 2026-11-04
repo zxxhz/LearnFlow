@@ -4,6 +4,7 @@ import type { MindMapAgentSSEEvent, MindMapNode } from "../../lib/types";
 import { api } from "../../lib/api";
 import { Button, Spinner } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
+import { createStreamFlusher } from "../../lib/streamFlusher";
 
 interface Props {
   mindmapId: string;
@@ -158,6 +159,7 @@ export default function MindMapAgentPanel({
     const collectedActions: Array<{ name: string; args: any }> = [];
     // done/error 事件已把回复落历史时置 true：finally 里的"断流兜底"不再重复追加
     const messagesHandledRef = { current: false };
+    const flusher = createStreamFlusher((streamText) => setStreamingText(streamText), 120);
 
     try {
       await api.mindmaps.agentSSE(
@@ -175,8 +177,9 @@ export default function MindMapAgentPanel({
             onTreeUpdate(ev.tree);
           } else if (ev.type === "delta" && ev.text) {
             accText += ev.text;
-            setStreamingText(accText);
+            flusher.push(accText);
           } else if (ev.type === "done") {
+            flusher.flushNow();
             messagesHandledRef.current = true;
             if (ev.tree) {
               onTreeUpdate(ev.tree);
@@ -194,6 +197,7 @@ export default function MindMapAgentPanel({
             setCurrentActions([]);
             setLoading(false);
           } else if (ev.type === "error") {
+            flusher.flushNow();
             messagesHandledRef.current = true;
             setMessages((prev) => [
               ...prev,
@@ -397,7 +401,7 @@ export default function MindMapAgentPanel({
         {streamingText && (
           <div className="flex justify-start">
             <div className="msg-md max-w-[90%] rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 px-3.5 py-2 leading-relaxed text-gray-800 dark:text-gray-200 shadow-xs">
-              <MarkdownLite text={streamingText} />
+              <MarkdownLite text={streamingText} deferMath={loading} />
               <span className="inline-block h-3.5 w-1.5 ml-0.5 align-middle bg-brand-500 animate-pulse rounded-sm" />
             </div>
           </div>

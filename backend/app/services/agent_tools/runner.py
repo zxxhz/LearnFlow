@@ -97,6 +97,12 @@ async def stream_agent_with_tools(
 
     # 工具交互完成或未获得预生成文本时，进行流式回答
     deltas = await adapter.chat(history, stream=True)
-    async for delta in deltas:
-        yield {"type": "delta", "text": delta}
+    try:
+        async for delta in deltas:
+            yield {"type": "delta", "text": delta}
+    finally:
+        try:
+            await deltas.aclose()
+        except Exception:
+            pass
     yield {"type": "done"}

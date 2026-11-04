@@ -155,9 +155,17 @@ def render_sync(expressions: str, x_min: float, x_max: float) -> str:
 @router.post("/render")
 async def render(body: PlotRequest):
     try:
-        svg = await asyncio.to_thread(render_sync, body.expressions, body.x_min, body.x_max)
+        svg = await asyncio.wait_for(
+            asyncio.to_thread(render_sync, body.expressions, body.x_min, body.x_max),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=400, detail="数学表达式计算超时，请简化函数")
     except HTTPException:
         raise
+    except (OverflowError, TypeError, ValueError) as e:
+        logger.warning("math render calculation error: %s", e)
+        raise HTTPException(status_code=400, detail="数学表达式数值计算溢出或无效")
     except Exception:  # noqa: BLE001
         # 未预期的内部错误不外泄原始异常文本
         logger.exception("math render failed")
