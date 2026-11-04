@@ -19,6 +19,8 @@ hiddenimports = [
     "PIL",
     "PIL.ImageOps",
     "anyio._backends._asyncio",
+    # Windows 原生证书信任链注入，消除 GitHub API SSL 校验失败
+    "truststore",
     # matplotlib 后端运行时才选定（math.py 里 matplotlib.use("Agg")），钩子收集不到：
     # 渲染走 Agg，savefig(format="svg") 走 backend_svg
     "matplotlib.backends.backend_agg",

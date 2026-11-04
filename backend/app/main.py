@@ -4,6 +4,12 @@
 - 桌面打包：PyInstaller（run_backend.py 入口）→ 同上，路径按冻结模式解析
 - 开发模式：uv run uvicorn app.main:app --reload（前端另起 vite dev server）
 """
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
+
 import contextlib
 import ipaddress
 import logging

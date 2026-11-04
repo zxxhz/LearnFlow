@@ -5,6 +5,12 @@
 - 节流：自动检查（打开应用时前端触发）1 小时内不重复请求；设置页按钮可强制刷新
 - 跨版本日志聚合：若当前版本为 0.0.1，最新版本为 0.0.4，将聚合中间所有已发布版本的更新说明，跳过无日志或不存在的版本
 """
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except Exception:
+    pass
+
 import asyncio
 import logging
 import re

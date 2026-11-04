@@ -97,7 +97,7 @@ const manifestAgent = agent("签名与元数据专员", {
 });
 
 const manifest = await manifestAgent.ask<ManifestResult>(
-  `安装包与签名文件位于 C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/target/release/bundle/nsis/LearnFlow_${targetVersion}_x64-setup.exe（及同名 .sig）：\n1. 计算 exe 的 SHA-256；\n2. 提取 .sig 中的签名内容（整段 base64）；\n3. 生成 latest.json：顶层 version（"${targetVersion}"）与 pub_date（RFC3339 当前 UTC 时间），platforms["windows-x86_64"] 下含 signature（.sig 全文）与 url（"https://github.com/zxxhz/LearnFlow/releases/download/v${targetVersion}/LearnFlow_${targetVersion}_x64-setup.exe"）；签名覆盖的安装包哈希以官方 sha256 字段形式放在 platforms 内；\n4. 保存 latest.json 到 C:/Users/Emoing/AppData/Local/Temp/latest-v${targetVersion}.json 以便上传。`
+  `安装包与签名文件位于 C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/target/release/bundle/nsis/LearnFlow_${targetVersion}_x64-setup.exe（及同名 .sig）：\n1. 计算 exe 的 SHA-256；\n2. 提取 .sig 中的签名内容（整段 base64）；\n3. 生成符合 Tauri v2 标准的 latest.json：顶层必须包含 version（"${targetVersion}"）、notes（发布说明 Markdown 文本：\n${releaseNotes}\n）、pub_date（RFC3339 当前 UTC 时间），platforms["windows-x86_64"] 下含 signature（.sig 全文）与 url（"https://github.com/zxxhz/LearnFlow/releases/download/v${targetVersion}/LearnFlow_${targetVersion}_x64-setup.exe"）；签名覆盖的安装包哈希以官方 sha256 字段形式放在 platforms 内；\n4. 保存 latest.json 到 C:/Users/Emoing/AppData/Local/Temp/latest-v${targetVersion}.json 以便上传。`
 );
 log(`latest.json 生成完毕，SHA-256: ${manifest.exeSha256}`);
 

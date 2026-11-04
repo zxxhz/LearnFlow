@@ -1113,6 +1113,7 @@ dependencies = [
     { name = "python-multipart" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "sympy" },
+    { name = "truststore" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "xlrd" },
 ]
@@ -1138,6 +1139,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.30" },
     { name = "sympy", specifier = ">=1.14.0" },
+    { name = "truststore", specifier = ">=0.9.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30" },
     { name = "xlrd", specifier = ">=2.0" },
 ]
