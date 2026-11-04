@@ -117,9 +117,9 @@ if (dryRun) {
     system: "你是 GitHub 发布与发布物分发工程师。负责将已修改的版本文件提交到 Git，打上 vX.Y.Z 标签并推送到 remote；随后通过 git credential 获取 GitHub PAT，调用 GitHub REST API 创建对应 Release 并上传 NSIS 安装包和 latest.json 两个资产。",
   });
 
-  releaseRes = await publishAgent.ask<ReleaseSummary>(
-    `请执行发布收尾（先 cd "C:/Users/Emoing/Desktop/学习agent" 再做所有 git 操作）：\n1. git add -A；\n2. git commit -m "chore(release): v${targetVersion} - 全面安全加固与稳定性修复（P0/P1漏洞修复/流式节流/并发锁统一）"；\n3. git tag v${targetVersion}；\n4. git push origin main --tags；\n5. 通过 git credential fill 取 GitHub PAT，调用 GitHub API 创建 Release（Tag: v${targetVersion}，标题: v${targetVersion}，说明:\n${releaseNotes || `v${targetVersion} 发布`}）；\n6. 上传资产：C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/target/release/bundle/nsis/${manifest.exeName} 与 C:/Users/Emoing/AppData/Local/Temp/latest-v${targetVersion}.json（资产名分别为 ${manifest.exeName} 与 latest.json）。\n完成后返回发布详情与 URL。`
-  );
+    releaseRes = await publishAgent.ask<ReleaseSummary>(
+      `请执行发布收尾（先 cd "C:/Users/Emoing/Desktop/学习agent" 再做所有 git 操作）：\n1. git add -A；\n2. git commit -m "chore(release): v${targetVersion} - 修复非编程课闯关语言选择与课程导出路径选择"；\n3. git tag v${targetVersion}；\n4. git push origin main --tags；\n5. 通过 git credential fill 取 GitHub PAT，调用 GitHub API 创建 Release（Tag: v${targetVersion}，标题: v${targetVersion}，说明:\n${releaseNotes || `v${targetVersion} 发布`}）；\n6. 上传资产：C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/target/release/bundle/nsis/${manifest.exeName} 与 C:/Users/Emoing/AppData/Local/Temp/latest-v${targetVersion}.json（资产名分别为 ${manifest.exeName} 与 latest.json）。\n完成后返回发布详情与 URL。`
+    );
 }
 
 await artifact.markdown(

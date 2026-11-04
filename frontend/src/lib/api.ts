@@ -65,6 +65,7 @@ import type {
   TodayStudyHubOut,
 } from "./types";
 import { streamSSE, subscribeSSE } from "./sse";
+import { showToast } from "./toast";
 
 const BASE = "/api";
 
@@ -103,7 +104,88 @@ export function getAccessToken(): string {
   }
 }
 
-/** 触发浏览器下载后端导出的文件（Content-Disposition 命名）。 */
+/**
+ * 跨端/跨浏览器通用文件保存器：
+ * 1. 优先调用现代浏览器 / WebView2 原生「另存为」对话框（showSaveFilePicker），
+ *    允许用户自主挑选目录（桌面、文档、U盘等）并确认文件名；
+ * 2. 若用户在系统对话框点击取消，平滑中断，不报错、不抛异常；
+ * 3. 若环境不支持或被安全策略限制，平滑降级至 <a> 标签触发系统默认下载，
+ *    并通过全局 Toast 明确提示保存路径，且提供「打开下载目录」一键直达按钮。
+ */
+export async function saveBlobAs(
+  blob: Blob,
+  suggestedName: string
+): Promise<{ ok: boolean; cancelled?: boolean; name: string }> {
+  const name = suggestedName || "export";
+  const ext = name.includes(".") ? name.split(".").pop()?.toLowerCase() || "" : "";
+
+  // 1. 原生「另存为」对话框（File System Access API）
+  if (typeof window !== "undefined" && "showSaveFilePicker" in window) {
+    try {
+      const mime =
+        blob.type ||
+        (ext === "md"
+          ? "text/markdown"
+          : ext === "html"
+          ? "text/html"
+          : ext === "json"
+          ? "application/json"
+          : "application/octet-stream");
+
+      const types = ext
+        ? [
+            {
+              description: `${ext.toUpperCase()} 文件`,
+              accept: { [mime]: [`.${ext}`] },
+            },
+          ]
+        : undefined;
+
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName: name,
+        types,
+      });
+
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+
+      const finalName = handle.name || name;
+      showToast(`✅ 导出成功：已保存为「${finalName}」`);
+      return { ok: true, name: finalName };
+    } catch (err: any) {
+      if (err.name === "AbortError") {
+        // 用户主动在系统弹窗中点击“取消”，直接安静退出
+        return { ok: false, cancelled: true, name };
+      }
+      console.warn("showSaveFilePicker 降级至 <a> 标签下载:", err);
+    }
+  }
+
+  // 2. 降级方案：创建隐藏 <a> 标签触发系统默认下载
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+
+  showToast(`✅ 导出成功：已保存至系统“下载”目录（${name}）`, {
+    action: {
+      label: "打开下载目录",
+      onClick: () => {
+        api.settings.openDownloadsDir().catch(() => {});
+      },
+    },
+  });
+
+  return { ok: true, name };
+}
+
+/** 触发下载后端导出的文件（Content-Disposition 命名），调用 saveBlobAs 允许用户选择路径 */
 export async function downloadFile(path: string): Promise<void> {
   const token = getAccessToken();
   const headers: Record<string, string> = {};
@@ -127,13 +209,7 @@ export async function downloadFile(path: string): Promise<void> {
   const m = dispo.match(/filename\*=UTF-8''([^;]+)/);
   const name = m ? decodeURIComponent(m[1]) : "export";
   const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  // 延迟 10s revoke：防止 WebKit / Tauri 壳下下载管理器异步拾取 Blob 时被过早撤回
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  await saveBlobAs(blob, name);
 }
 
 async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -186,6 +262,8 @@ export const api = {
     testLlm: () => request<LLMTestResult>("/settings/llm/test", { method: "POST" }),
     openDataDir: () =>
       request<{ ok: boolean }>("/settings/open-data-dir", { method: "POST" }),
+    openDownloadsDir: () =>
+      request<{ ok: boolean; path?: string }>("/settings/open-downloads-dir", { method: "POST" }),
     ollamaModels: () => request<{ models: string[] }>("/llm/ollama/models"),
     mirrors: {
       getStatus: () => request<MirrorsStatus>("/settings/mirrors"),

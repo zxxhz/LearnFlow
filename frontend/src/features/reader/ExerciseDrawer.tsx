@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
-import type { Exercise, KnowledgePoint } from "../../lib/types";
+import type { Course, Exercise, KnowledgePoint } from "../../lib/types";
 import { Button, ConfirmDialog, Select, Spinner } from "../../components/ui";
 import ExerciseCard from "./ExerciseCard";
 import FontSizeControl from "../../components/FontSizeControl";
@@ -10,6 +10,7 @@ import { useFontSize } from "../../lib/fontSize";
 
 interface Props {
   documentId: string;
+  course?: Course | null;
   kps: KnowledgePoint[];
   exercises: Exercise[];
   focusKpId: string | null;
@@ -20,8 +21,23 @@ interface Props {
   onFullscreenChange?: (isFullscreen: boolean) => void;
 }
 
+function checkIsCodingCourse(course?: Course | null): boolean {
+  if (!course) return false;
+  if (course.discipline) {
+    return course.discipline === "coding";
+  }
+  const text = `${course.topic || ""} ${course.title || ""}`.toLowerCase();
+  const codingKws = [
+    "c++", "cpp", "python", "java", "golang", "go", "rust",
+    "javascript", "typescript", "vue", "react", "算法", "leetcode",
+    "编程", "代码", "程序设计", "开发", "前端", "后端",
+  ];
+  return codingKws.some((k) => text.includes(k));
+}
+
 export default function ExerciseDrawer({
   documentId,
+  course,
   kps,
   exercises,
   focusKpId,
@@ -34,6 +50,7 @@ export default function ExerciseDrawer({
   const queryClient = useQueryClient();
   const [mounted, setMounted] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const isCoding = checkIsCodingCourse(course);
 
   const { fontSize: fallbackFontSize, setFontSize: fallbackSetFontSize } = useFontSize("course");
   const currentFontSize = propFontSize ?? fallbackFontSize;
@@ -283,20 +300,24 @@ export default function ExerciseDrawer({
                   ))}
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <Select className="w-28 py-1 text-xs" value={quizLang} onChange={(e) => setQuizLang(e.target.value as "python" | "cpp")}>
-                    <option value="python">Python</option>
-                    <option value="cpp">C++</option>
-                  </Select>
+                  {isCoding && (
+                    <Select className="w-28 py-1 text-xs" value={quizLang} onChange={(e) => setQuizLang(e.target.value as "python" | "cpp")}>
+                      <option value="python">Python</option>
+                      <option value="cpp">C++</option>
+                    </Select>
+                  )}
                   <Button
                     variant="secondary"
                     className="text-xs"
                     disabled={selectedKpIds.length === 0}
-                    onClick={() => generateQuiz.mutate({ kpIds: selectedKpIds, language: quizLang })}
+                    onClick={() => generateQuiz.mutate({ kpIds: selectedKpIds, language: isCoding ? quizLang : "python" })}
                   >
                     出卷（每知识点 1 题）
                   </Button>
                 </div>
-                <p className="text-[10px] text-gray-400 dark:text-gray-500">单选 + 填空 + 代码混合，全部自动判定；重新出卷会替换当前小测。</p>
+                <p className="text-[10px] text-gray-400 dark:text-gray-500">
+                  {isCoding ? "单选 + 填空 + 代码混合，全部自动判定；重新出卷会替换当前小测。" : "单选 + 填空题自动判定；重新出卷会替换当前小测。"}
+                </p>
               </>
             )}
           </div>
@@ -317,27 +338,29 @@ export default function ExerciseDrawer({
                 </div>
               </div>
               <div className="flex items-center gap-1.5">
-                <Select
-                  className="w-28 py-1 text-xs"
-                  value={lang}
-                  onChange={(e) => setLangByKp((p) => ({ ...p, [kp.id]: e.target.value as "python" | "cpp" }))}
-                  aria-label="练习语言"
-                >
-                  <option value="python">Python</option>
-                  <option value="cpp">C++</option>
-                </Select>
+                {isCoding && (
+                  <Select
+                    className="w-28 py-1 text-xs"
+                    value={lang}
+                    onChange={(e) => setLangByKp((p) => ({ ...p, [kp.id]: e.target.value as "python" | "cpp" }))}
+                    aria-label="练习语言"
+                  >
+                    <option value="python">Python</option>
+                    <option value="cpp">C++</option>
+                  </Select>
+                )}
                 <Button
                   variant="secondary"
                   className="text-xs"
                   disabled={busy}
-                  onClick={() => generate.mutate({ kpId: kp.id, language: lang })}
+                  onClick={() => generate.mutate({ kpId: kp.id, language: isCoding ? lang : "python" })}
                 >
                   {busy ? (
                     <>
                       <Spinner className="h-3.5 w-3.5" /> 出题中…
                     </>
                   ) : list.length > 0 ? (
-                    "↻ 重新生成"
+                    "↻ 重新生成关卡"
                   ) : (
                     "＋ 生成关卡"
                   )}

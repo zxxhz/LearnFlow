@@ -27,6 +27,7 @@ export interface Course {
   scope: string | null;
   outline: OutlineItem[];
   status: CourseStatus;
+  discipline?: "coding" | "math" | "theory";
   course_settings: { auto_create_cards?: boolean } | null;
   created_at: string;
   updated_at: string;

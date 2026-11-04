@@ -1120,6 +1120,7 @@ export default function ReaderPage() {
       {exerciseOpen && (
         <ExerciseDrawer
           documentId={doc.id}
+          course={courseQuery.data}
           kps={activeKps}
           exercises={exercisesQuery.data ?? []}
           focusKpId={exerciseFocus}

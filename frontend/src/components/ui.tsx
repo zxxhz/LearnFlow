@@ -286,10 +286,15 @@ export function Toast({
   message,
   onDone,
   duration = 3500,
+  action,
 }: {
   message: string;
   onDone?: () => void;
   duration?: number;
+  action?: {
+    label: string;
+    onClick: () => void;
+  };
 }) {
   const [closing, setClosing] = useState(false);
   const onDoneRef = useRef(onDone);
@@ -312,11 +317,23 @@ export function Toast({
   return (
     <div
       role="status"
-      className={`fixed bottom-6 right-6 z-50 max-w-sm rounded-xl bg-gray-900 px-4 py-3 text-sm text-white shadow-xl animate-slideUp transition-all duration-200 ease-out dark:bg-gray-800 ${
+      className={`fixed bottom-6 right-6 z-50 flex max-w-md items-center gap-3 rounded-xl bg-gray-900/95 px-4 py-3 text-sm text-white shadow-xl animate-slideUp transition-all duration-200 ease-out dark:bg-gray-800/95 backdrop-blur-xs ${
         closing ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100"
       }`}
     >
-      {message}
+      <span className="flex-1 leading-snug">{message}</span>
+      {action && (
+        <button
+          type="button"
+          onClick={() => {
+            action.onClick();
+            setClosing(true);
+          }}
+          className="shrink-0 rounded-lg bg-white/20 px-2.5 py-1 text-xs font-semibold text-white hover:bg-white/30 transition active:scale-95"
+        >
+          {action.label}
+        </button>
+      )}
     </div>
   );
 }

@@ -165,6 +165,27 @@ async def open_data_dir():
         return {"ok": False}
 
 
+@router.post("/settings/open-downloads-dir")
+async def open_downloads_dir():
+    from pathlib import Path
+
+    downloads = Path.home() / "Downloads"
+    if not downloads.exists():
+        downloads = Path.home()
+    path = str(downloads)
+    try:
+        if sys.platform == "win32":
+            os.startfile(path)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+        return {"ok": True, "path": path}
+    except Exception as e:
+        logger.warning("open downloads dir failed: %r", e)
+        return {"ok": False, "error": str(e)}
+
+
 @router.get("/version")
 async def version():
     from app.core.config import APP_VERSION

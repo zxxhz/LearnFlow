@@ -54,13 +54,18 @@ async def generate_quiz(
             f"### 知识点 {i + 1}：{kp.title}\n摘要：{kp.summary or '（无摘要）'}\n教材原文：\n{await _kp_texts(db, kp)}"
         )
     total = len(kps) * per_kp
+
+    from app.services.exercise import detect_course_discipline
+    discipline = detect_course_discipline(course.topic if course else "", course.title if course else "")
+    effective_language = language if discipline == "coding" else "无（非编程课）"
+
     system = render_prompt(
         "quiz_gen",
         COURSE_TOPIC=course.topic if course else "",
         COURSE_TITLE=course.title if course else "",
         KP_BLOCKS="\n\n".join(kp_blocks),
         KP_TITLES="、".join(kp.title for kp in kps),
-        LANGUAGE=language,
+        LANGUAGE=effective_language,
         TOTAL=str(total),
     )
     adapter = await create_adapter_from_settings(db, scene="generation")
@@ -90,6 +95,9 @@ async def generate_quiz(
     saved = 0
     for item in drafts.exercises:
         if item.kind not in (EXERCISE_CHOICE, EXERCISE_FILL, EXERCISE_CODE):
+            continue
+        if discipline != "coding" and item.kind == EXERCISE_CODE:
+            logger.warning("非编程课程小测中忽略 LLM 误生成的代码关卡: %s", item.title)
             continue
         if not item.is_complete():
             logger.warning("skip incomplete quiz item: kind=%s title=%s", item.kind, item.title)

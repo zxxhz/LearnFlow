@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 from app.schemas.common import ORMModel, OutlineItem
 
@@ -39,6 +39,13 @@ class CourseOut(ORMModel):
 
             return json.loads(v) if v else {}
         return v
+
+    @computed_field
+    @property
+    def discipline(self) -> str:
+        from app.services.exercise import detect_course_discipline
+
+        return detect_course_discipline(self.topic, self.title)
 
 
 class CourseSettingsUpdate(BaseModel):

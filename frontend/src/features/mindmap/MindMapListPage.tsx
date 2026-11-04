@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, downloadFile } from "../../lib/api";
+import { api, downloadFile, saveBlobAs } from "../../lib/api";
 import type { MindMapSummary } from "../../lib/types";
 import { Button, ConfirmDialog, DropdownMenu, EmptyState, Modal, Spinner, Textarea } from "../../components/ui";
 
@@ -96,13 +96,7 @@ export default function MindMapListPage() {
     try {
       const res = await api.mindmaps.exportMarkdown(id);
       const blob = new Blob([res.markdown], { type: "text/markdown;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${title || "思维导图"}.md`;
-      a.click();
-      // 延迟 10s revoke：防止 WebKit / Tauri 壳下下载管理器异步拾取 Blob 时被过早撤回
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      await saveBlobAs(blob, `${title || "思维导图"}.md`);
     } catch (err) {
       alert(`导出失败: ${(err as Error).message}`);
     }

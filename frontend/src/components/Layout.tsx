@@ -7,6 +7,8 @@ import { useTheme } from "../lib/theme";
 import { safeSessionStorage, safeStorage } from "../lib/safeStorage";
 import { isTauri, openExternalUrl } from "../lib/updater";
 import UpdateDialog from "./UpdateDialog";
+import { Toast } from "./ui";
+import type { ToastPayload } from "../lib/toast";
 
 const NAV_ITEMS = [
   { to: "/", label: "首页", icon: "🏠" },
@@ -197,6 +199,19 @@ export default function Layout() {
     return () => window.removeEventListener("learnflow:update-found", onFound);
   }, []);
 
+  // 全局轻量 Toast 反馈（导出完成、系统提示等）
+  const [globalToast, setGlobalToast] = useState<ToastPayload | null>(null);
+  useEffect(() => {
+    const onToast = (e: Event) => {
+      const detail = (e as CustomEvent<ToastPayload>).detail;
+      if (detail && detail.message) {
+        setGlobalToast(detail);
+      }
+    };
+    window.addEventListener("learnflow:toast", onToast);
+    return () => window.removeEventListener("learnflow:toast", onToast);
+  }, []);
+
   // 桌面壳模式下全局拦截 target="_blank" 外部链接，唤起系统默认浏览器
   useEffect(() => {
     if (!isTauri()) return;
@@ -320,6 +335,14 @@ export default function Layout() {
         </main>
       </div>
       <UpdateDialog update={dialogUpdate} onClose={closeUpdateDialog} />
+      {globalToast && (
+        <Toast
+          message={globalToast.message}
+          duration={globalToast.duration ?? 4500}
+          action={globalToast.action}
+          onDone={() => setGlobalToast(null)}
+        />
+      )}
     </div>
   );
 }
