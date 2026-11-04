@@ -26,7 +26,10 @@ function checkIsCodingCourse(course?: Course | null): boolean {
   if (course.discipline) {
     return course.discipline === "coding";
   }
-  const text = `${course.topic || ""} ${course.title || ""}`.toLowerCase();
+  // 与后端 detect_course_discipline 同口径：先剥掉括号补充说明（"数学实验（Python）"不算编程课）
+  const text = `${course.topic || ""} ${course.title || ""}`
+    .toLowerCase()
+    .replace(/（[^）]*）|\([^)]*\)/g, "");
   const codingKws = [
     "c++", "cpp", "python", "java", "golang", "go", "rust",
     "javascript", "typescript", "vue", "react", "算法", "leetcode",

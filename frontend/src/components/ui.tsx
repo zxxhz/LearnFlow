@@ -317,7 +317,7 @@ export function Toast({
   return (
     <div
       role="status"
-      className={`fixed bottom-6 right-6 z-50 flex max-w-md items-center gap-3 rounded-xl bg-gray-900/95 px-4 py-3 text-sm text-white shadow-xl animate-slideUp transition-all duration-200 ease-out dark:bg-gray-800/95 backdrop-blur-xs ${
+      className={`fixed bottom-6 right-6 z-50 flex max-w-md items-center gap-3 rounded-xl bg-gray-900/95 px-4 py-3 text-sm text-white shadow-xl animate-slideUp transition-all duration-200 ease-out dark:bg-gray-800/95 backdrop-blur-sm ${
         closing ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100"
       }`}
     >

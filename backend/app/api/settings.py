@@ -167,9 +167,27 @@ async def open_data_dir():
 
 @router.post("/settings/open-downloads-dir")
 async def open_downloads_dir():
+    """打开系统「下载」目录：Windows 优先读已知文件夹注册表（用户移动过下载位置也准）。"""
     from pathlib import Path
 
-    downloads = Path.home() / "Downloads"
+    downloads: Path | None = None
+    if sys.platform == "win32":
+        try:
+            import winreg
+
+            # 已知文件夹 GUID：{374DE290-123F-4565-9164-39C4925E467B} = Downloads
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders",
+            ) as key:
+                raw, _ = winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")
+                candidate = Path(winreg.ExpandEnvironmentStrings(str(raw)))
+                if candidate.is_dir():
+                    downloads = candidate
+        except Exception as e:
+            logger.debug("read downloads known folder failed: %r", e)
+    if downloads is None:
+        downloads = Path.home() / "Downloads"
     if not downloads.exists():
         downloads = Path.home()
     path = str(downloads)

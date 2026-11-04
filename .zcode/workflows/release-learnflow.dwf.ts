@@ -118,7 +118,7 @@ if (dryRun) {
   });
 
     releaseRes = await publishAgent.ask<ReleaseSummary>(
-      `请执行发布收尾（先 cd "C:/Users/Emoing/Desktop/学习agent" 再做所有 git 操作）：\n1. git add -A；\n2. git commit -m "chore(release): v${targetVersion} - 修复非编程课闯关语言选择与课程导出路径选择"；\n3. git tag v${targetVersion}；\n4. git push origin main --tags；\n5. 通过 git credential fill 取 GitHub PAT，调用 GitHub API 创建 Release（Tag: v${targetVersion}，标题: v${targetVersion}，说明:\n${releaseNotes || `v${targetVersion} 发布`}）；\n6. 上传资产：C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/target/release/bundle/nsis/${manifest.exeName} 与 C:/Users/Emoing/AppData/Local/Temp/latest-v${targetVersion}.json（资产名分别为 ${manifest.exeName} 与 latest.json）。\n完成后返回发布详情与 URL。`
+      `请执行发布收尾（先 cd "C:/Users/Emoing/Desktop/学习agent" 再做所有 git 操作）：\n1. git add -A；\n2. git commit -m "chore(release): v${targetVersion} - 修复导出另存为 MIME 校验与文件名清洗"；\n3. git tag v${targetVersion}；\n4. git push origin main --tags；\n5. 通过 git credential fill 取 GitHub PAT，调用 GitHub API 创建 Release（Tag: v${targetVersion}，标题: v${targetVersion}，说明:\n${releaseNotes || `v${targetVersion} 发布`}）；\n6. 上传资产：C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/target/release/bundle/nsis/${manifest.exeName} 与 C:/Users/Emoing/AppData/Local/Temp/latest-v${targetVersion}.json（资产名分别为 ${manifest.exeName} 与 latest.json）。\n完成后返回发布详情与 URL。`
     );
 }
 

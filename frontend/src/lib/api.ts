@@ -116,14 +116,20 @@ export async function saveBlobAs(
   blob: Blob,
   suggestedName: string
 ): Promise<{ ok: boolean; cancelled?: boolean; name: string }> {
-  const name = suggestedName || "export";
+  // 清洗 Windows 非法文件名字符（\ / : * ? " < > | 与控制符）：导图标题等未经
+  // 服务端净化的来源含这些字符会让 showSaveFilePicker 抛 TypeError 静默降级
+  const name =
+    (suggestedName || "export").replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").trim() || "export";
   const ext = name.includes(".") ? name.split(".").pop()?.toLowerCase() || "" : "";
 
   // 1. 原生「另存为」对话框（File System Access API）
   if (typeof window !== "undefined" && "showSaveFilePicker" in window) {
     try {
+      // WebView2/Chromium 只接受裸 MIME 类型：后端 media_type 带 charset 时
+      // blob.type 形如 "text/markdown;charset=utf-8"，原样作 accept 键会抛
+      // TypeError（Invalid type）并静默降级，必须取分号前的 essence
       const mime =
-        blob.type ||
+        (blob.type || "").split(";")[0].trim() ||
         (ext === "md"
           ? "text/markdown"
           : ext === "html"
