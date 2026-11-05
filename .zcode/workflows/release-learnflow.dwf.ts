@@ -1,146 +1,199 @@
 /* zcode-workflow
-description: LearnFlow 自动化发版与签名发布工作流：八处版本同步、类型/测试门禁、双端构建、Tauri 签名、生成 latest.json
-  及 GitHub Release 发布
-whenToUse: 当需要发布 LearnFlow 新版本时使用，一键完成 8 处版本同步、预检测试、双端构建、Tauri 签名与 GitHub Release
+description: LearnFlow 自动化发版工作流（全确定性）：预检、八处版本同步、类型/烟雾门禁、双端构建、latest.json、
+  GitHub 发布与发布后核验——全部由 world.run 门禁脚本完成，零子代理消耗
+whenToUse: 当需要发布 LearnFlow 新版本时使用，一键完成发布预检、8 处版本同步、质量门禁、双端构建、Tauri 签名、
+  latest.json 生成、GitHub Release 发布与发布后确定性核验
 args:
   version:
     type: string
-    description: 目标版本号，如 0.4.63
+    description: 目标版本号，如 0.4.67
     required: true
-  dryRun:
-    type: boolean
-    description: 是否仅执行测试和构建校验，不推送到 GitHub（试跑模式）
-    default: false
   notes:
     type: string
     description: 版本更新日志 Markdown 内容
     required: true
+  dryRun:
+    type: boolean
+    description: 是否只做预检、同步、门禁、构建与本地元数据，不推送（试跑模式）
+    default: false
+  commitMessage:
+    type: string
+    description: "发布提交信息，缺省为 chore(release): vX.Y.Z"
+    required: false
 */
-interface VersionSyncResult {
-  updatedFiles: string[];
-  success: boolean;
-  notes: string;
-}
-
-interface ManifestResult {
-  exeName: string;
-  exeSha256: string;
-  signature: string;
-  manifestJson: string;
-}
-
-interface ReleaseSummary {
-  version: string;
-  releaseUrl: string;
-  assets: string[];
-  status: "published" | "dry_run" | "failed";
-  details: string;
-}
 
 const targetVersion = String(args.version ?? "").trim();
 const releaseNotes = String(args.notes ?? "").trim();
 const dryRun = Boolean(args.dryRun ?? false);
+const commitMessage = String(args.commitMessage ?? "").trim() || `chore(release): v${targetVersion}`;
 
 if (!targetVersion) {
-  throw new Error("缺少必填参数 version，例如 0.4.63");
+  throw new Error("缺少必填参数 version，例如 0.4.67");
 }
+if (!releaseNotes) {
+  throw new Error("缺少必填参数 notes（版本更新日志 Markdown）");
+}
+
+// 仓库根 = 会话工作目录；脚本经 venv python 直跑（不经 cmd），含换行的 notes 可安全走 argv
+const TAIL = { tail: 16384 };
 
 log(`开始执行 LearnFlow 发版工作流，目标版本：v${targetVersion}，dryRun: ${dryRun}`);
 
-phase("版本号同步检查与更新");
-const syncAgent = agent("版本同步专员", {
-  system: "你是版本发布工程师。负责精准同步 LearnFlow 仓库的 8 处版本号配置。严格保证：backend/app/core/config.py、desktop/src-tauri/tauri.conf.json、desktop/package.json、backend/pyproject.toml、desktop/src-tauri/Cargo.toml、frontend/package.json、frontend/public/sw.js 以及 Cargo.lock 保持完全一致的语义化版本号。",
-});
-
-const syncRes = await syncAgent.ask<VersionSyncResult>(
-  `请将仓库全部 8 处版本号统一更新为 "${targetVersion}"，并在 desktop/src-tauri 目录下运行 cargo check 确保 Cargo.lock 一并更新。确认每处替换准确无误后返回结果。`
-);
-
-if (!syncRes.success) {
-  throw new Error(`版本号同步失败：${syncRes.notes}`);
-}
-log(`版本号同步完成，已更新文件：${syncRes.updatedFiles.join(", ")}`);
-
-phase("质量门禁：前端类型检查与烟雾测试跑测");
-// 绝对路径且不加引号：world.run 的 cwd 随会话目录漂移；Node spawn 会把参数内双引号
-// 转义成 cmd 不认的 \" 形式，路径无空格时直接裸写最稳
-const tscCheck = await world.run("cmd.exe", ["/c", "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\frontend && npx tsc --noEmit"], {
+phase("发布预检：版本格式、标签冲突与工作树");
+const pre = await world.run("C:\\Users\\Emoing\\Desktop\\学习agent\\backend\\.venv\\Scripts\\python.exe",["-X", "utf8", "backend/scripts/preflight_release.py", targetVersion], {
   timeoutMs: 120_000,
+  output: TAIL,
 });
+if (pre.exitCode !== 0) {
+  throw new Error(`发布预检未通过：\n${pre.stdout || pre.stderr}`);
+}
+log(`预检通过：v${targetVersion} 可发布`);
+
+phase("同步八处版本号");
+const sync = await world.run("C:\\Users\\Emoing\\Desktop\\学习agent\\backend\\.venv\\Scripts\\python.exe",["-X", "utf8", "backend/scripts/sync_versions.py", targetVersion], {
+  timeoutMs: 60_000,
+  output: TAIL,
+});
+if (sync.exitCode !== 0) {
+  throw new Error(`版本号同步失败：\n${sync.stdout || sync.stderr}`);
+}
+log("八处版本号已同步（APP_VERSION/pyproject/两个 package.json/tauri.conf/Cargo.toml/sw.js/Cargo.lock）");
+
+phase("质量门禁：前端类型检查与全量烟雾测试");
+const tscCheck = await world.run(
+  "cmd.exe",
+  ["/c", "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\frontend && npx tsc --noEmit"],
+  { timeoutMs: 120_000, output: TAIL }
+);
 if (tscCheck.exitCode !== 0) {
   throw new Error(`前端 TypeScript 类型检查失败：\n${tscCheck.stderr || tscCheck.stdout}`);
 }
 log("前端类型检查通过");
 
-const smokeCheck = await world.run("cmd.exe", [
-  "/c",
-  "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\backend && uv run python scripts/smoke_test.py",
-], { timeoutMs: 420_000 });
+const smokeCheck = await world.run(
+  "cmd.exe",
+  ["/c", "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\backend && uv run python scripts/smoke_test.py"],
+  { timeoutMs: 420_000, output: TAIL }
+);
 if (smokeCheck.exitCode !== 0) {
   throw new Error(`烟雾测试回归失败：\n${smokeCheck.stderr || smokeCheck.stdout}`);
 }
-log("后端 113 项全量烟雾测试回归通过");
+log("后端全量烟雾测试回归通过");
 
-phase("执行前后端与桌面 NSIS 安装包构建");
-const buildAgent = agent("构建与打包专员", {
-  system: "你是构建工程师。负责依次运行前端打包、PyInstaller 后端打包以及 Tauri 桌面端构建。构建过程中需确保 TAURI_SIGNING_PRIVATE_KEY 指向正确私钥完成 minisign 签名。",
-});
-
-const buildOutcome = await buildAgent.ask<string>(
-  `请执行发版构建（仓库根：C:/Users/Emoing/Desktop/学习agent，所有路径用绝对路径）：\n1. cd "C:/Users/Emoing/Desktop/学习agent/frontend" && npm run build\n2. cd "C:/Users/Emoing/Desktop/学习agent/backend" && uv run python scripts/build_backend.py\n3. cd "C:/Users/Emoing/Desktop/学习agent/desktop" && export TAURI_SIGNING_PRIVATE_KEY="C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/keys/learnflow.key" && export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" && npx tauri build\n构建完成后确认 C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/target/release/bundle/nsis/ 目录下已生成 LearnFlow_${targetVersion}_x64-setup.exe 及其同名 .sig 签名文件。`
+phase("双端构建：前端产物、PyInstaller 后端与 Tauri 签名安装包");
+const feBuild = await world.run(
+  "cmd.exe",
+  ["/c", "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\frontend && npm run build"],
+  { timeoutMs: 300_000, output: TAIL }
 );
-log(`构建产物已就绪：${buildOutcome}`);
-
-phase("生成最新更新元数据 latest.json");
-const manifestAgent = agent("签名与元数据专员", {
-  system: "你是发布元数据工程师。负责读取安装包 .sig 文件内容，计算安装包 SHA-256 哈希，组装符合 Tauri v2 Updater 规范的 latest.json，并校验各字段完整性。",
-});
-
-const manifest = await manifestAgent.ask<ManifestResult>(
-  `安装包与签名文件位于 C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/target/release/bundle/nsis/LearnFlow_${targetVersion}_x64-setup.exe（及同名 .sig）：\n1. 计算 exe 的 SHA-256；\n2. 提取 .sig 中的签名内容（整段 base64）；\n3. 生成符合 Tauri v2 标准的 latest.json：顶层必须包含 version（"${targetVersion}"）、notes（发布说明 Markdown 文本：\n${releaseNotes}\n）、pub_date（RFC3339 当前 UTC 时间），platforms["windows-x86_64"] 下含 signature（.sig 全文）与 url（"https://github.com/zxxhz/LearnFlow/releases/download/v${targetVersion}/LearnFlow_${targetVersion}_x64-setup.exe"）；签名覆盖的安装包哈希以官方 sha256 字段形式放在 platforms 内；\n4. 保存 latest.json 到 C:/Users/Emoing/AppData/Local/Temp/latest-v${targetVersion}.json 以便上传。`
-);
-log(`latest.json 生成完毕，SHA-256: ${manifest.exeSha256}`);
-
-phase("Git 提交、标签推送与 GitHub Release 发布");
-let releaseRes: ReleaseSummary;
-if (dryRun) {
-  log("当前为 dryRun 试跑模式，跳过 Git 提交与 GitHub API 发布");
-  releaseRes = {
-    version: targetVersion,
-    releaseUrl: "dry-run://local",
-    assets: [manifest.exeName, "latest.json"],
-    status: "dry_run",
-    details: "本地构建与签名校验全部成功，dryRun 模式未推送到远程仓库。",
-  };
-} else {
-  const publishAgent = agent("GitHub 发布专员", {
-    system: "你是 GitHub 发布与发布物分发工程师。负责将已修改的版本文件提交到 Git，打上 vX.Y.Z 标签并推送到 remote；随后通过 git credential 获取 GitHub PAT，调用 GitHub REST API 创建对应 Release 并上传 NSIS 安装包和 latest.json 两个资产。",
-  });
-
-    releaseRes = await publishAgent.ask<ReleaseSummary>(
-      `请执行发布收尾（先 cd "C:/Users/Emoing/Desktop/学习agent" 再做所有 git 操作）：\n1. git add -A；\n2. git commit -m "chore(release): v${targetVersion} - 修复导出另存为 MIME 校验与文件名清洗"；\n3. git tag v${targetVersion}；\n4. git push origin main --tags；\n5. 通过 git credential fill 取 GitHub PAT，调用 GitHub API 创建 Release（Tag: v${targetVersion}，标题: v${targetVersion}，说明:\n${releaseNotes || `v${targetVersion} 发布`}）；\n6. 上传资产：C:/Users/Emoing/Desktop/学习agent/desktop/src-tauri/target/release/bundle/nsis/${manifest.exeName} 与 C:/Users/Emoing/AppData/Local/Temp/latest-v${targetVersion}.json（资产名分别为 ${manifest.exeName} 与 latest.json）。\n完成后返回发布详情与 URL。`
-    );
+if (feBuild.exitCode !== 0) {
+  throw new Error(`前端生产构建失败：\n${feBuild.stderr || feBuild.stdout}`);
 }
+log("前端生产产物构建完成");
+
+const beBuild = await world.run(
+  "cmd.exe",
+  ["/c", "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\backend && uv run python scripts/build_backend.py"],
+  { timeoutMs: 600_000, output: TAIL }
+);
+if (beBuild.exitCode !== 0) {
+  throw new Error(`PyInstaller 后端打包失败：\n${beBuild.stderr || beBuild.stdout}`);
+}
+log("PyInstaller 后端打包完成");
+
+// set 值与 && 之间不留空格（cmd 会把尾随空格算进值内）；路径无空格可不加引号
+const tauriBuild = await world.run(
+  "cmd.exe",
+  [
+    "/c",
+    "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\desktop && set TAURI_SIGNING_PRIVATE_KEY=C:\\Users\\Emoing\\Desktop\\学习agent\\desktop\\src-tauri\\keys\\learnflow.key&& set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=&& npx tauri build",
+  ],
+  { timeoutMs: 900_000, output: TAIL }
+);
+if (tauriBuild.exitCode !== 0) {
+  throw new Error(`Tauri NSIS 构建失败：\n${tauriBuild.stderr || tauriBuild.stdout}`);
+}
+log(`Tauri NSIS 安装包与 minisign 签名完成：LearnFlow_${targetVersion}_x64-setup.exe`);
+
+phase("生成更新元数据 latest.json");
+const latest = await world.run(
+  "C:\\Users\\Emoing\\Desktop\\学习agent\\backend\\.venv\\Scripts\\python.exe",
+  ["-X", "utf8", "backend/scripts/build_latest.py", targetVersion, "--notes", releaseNotes],
+  { timeoutMs: 120_000, output: TAIL }
+);
+if (latest.exitCode !== 0) {
+  throw new Error(`latest.json 生成失败：\n${latest.stdout || latest.stderr}`);
+}
+const shaMatch = /SHA256=([a-f0-9]{64})/.exec(latest.stdout);
+const notesLenMatch = /NOTES_LEN=(\d+)/.exec(latest.stdout);
+const exeSha256 = shaMatch?.[1] ?? "";
+const notesLen = notesLenMatch ? Number(notesLenMatch[1]) : 0;
+if (!exeSha256 || notesLen < 30) {
+  throw new Error(`latest.json 元数据解析异常：SHA256=${exeSha256} NOTES_LEN=${notesLen}`);
+}
+log(`latest.json 生成完毕，安装包 SHA-256: ${exeSha256}，notes ${notesLen} 字符`);
+
+phase("发布到 GitHub：提交、打标、推送与资产上传");
+// 发布脚本内部按 --dry-run 分流：dryRun 只做凭据/资产/连通性检查，不写 git、不调 API
+const publishArgs = [
+  "-X",
+  "utf8",
+  "backend/scripts/publish_release.py",
+  targetVersion,
+  "--notes",
+  releaseNotes,
+  "--commit-msg",
+  commitMessage,
+];
+if (dryRun) publishArgs.push("--dry-run");
+const publish = await world.run("C:\\Users\\Emoing\\Desktop\\学习agent\\backend\\.venv\\Scripts\\python.exe",publishArgs, { timeoutMs: 900_000, output: TAIL });
+if (publish.exitCode !== 0) {
+  throw new Error(`发布失败：\n${publish.stdout || publish.stderr}`);
+}
+const urlMatch = /RELEASE_URL=(\S+)/.exec(publish.stdout);
+const releaseUrl = urlMatch?.[1] ?? (dryRun ? "dry-run://local" : "");
+log(dryRun ? "dryRun 发布检查通过（未推送）" : `GitHub Release 已发布：${releaseUrl}`);
+
+phase("发布后确定性核验");
+const verifyArgs = ["-X", "utf8", "backend/scripts/verify_release.py", targetVersion];
+if (dryRun) verifyArgs.push("--local");
+const verify = await world.run("C:\\Users\\Emoing\\Desktop\\学习agent\\backend\\.venv\\Scripts\\python.exe",verifyArgs, { timeoutMs: 600_000, output: TAIL });
+if (verify.exitCode !== 0) {
+  throw new Error(`发布核验未通过：\n${verify.stdout || verify.stderr}`);
+}
+const passCount = /全部通过（(\d+) 项）/.exec(verify.stdout)?.[1] ?? "0";
+log(`发布核验 ${passCount} 项全部通过`);
 
 await artifact.markdown(
   "release-report",
-  `# LearnFlow v${targetVersion} 发布报告\n\n- **状态**：${releaseRes.status}\n- **发布地址**：[GitHub Release](${releaseRes.releaseUrl})\n- **发布资产**：\n  - \`${manifest.exeName}\` (SHA-256: \`${manifest.exeSha256}\`)\n  - \`latest.json\`\n\n## 更新日志\n\n${releaseNotes}\n`,
+  `# LearnFlow v${targetVersion} 发布报告\n\n- **状态**：${dryRun ? "dry_run（未推送）" : "published"}\n${
+    releaseUrl ? `- **发布地址**：[GitHub Release](${releaseUrl})\n` : ""
+  }- **发布资产**：\n  - \`LearnFlow_${targetVersion}_x64-setup.exe\` (SHA-256: \`${exeSha256}\`)\n  - \`latest.json\`（notes ${notesLen} 字符）\n\n## 更新日志\n\n${releaseNotes}\n\n## 确定性核验\n\n\`\`\`\n${verify.stdout.trim()}\n\`\`\`\n`,
   {
     title: `LearnFlow v${targetVersion} 发版报告`,
-    description: `版本 v${targetVersion} 自动化构建、签名与发布交付结果`,
+    description: dryRun
+      ? "dryRun 模式：本地构建与校验全部成功，未推送 GitHub"
+      : "版本自动化构建、签名、发布与发布后确定性核验结果",
     primary: true,
   }
 );
 
 return {
-  conclusion: `LearnFlow v${targetVersion} 发版工作流执行完成，状态：${releaseRes.status}。`,
+  conclusion: dryRun
+    ? `LearnFlow v${targetVersion} dryRun 试跑完成：预检、版本同步、门禁、双端构建、本地元数据与本地核验全部通过，未推送 GitHub。`
+    : `LearnFlow v${targetVersion} 发版完成并经 ${passCount} 项确定性核验全部通过，发布地址：${releaseUrl}。`,
   findings: [],
   verified: [
-    "前端 TypeScript 类型检查通过",
-    "后端 113 项全量 smoke 测试通过",
-    "前端生产产物与 PyInstaller 后端打包通过",
-    "Tauri NSIS 安装包与 minisign 签名验证通过",
-    "latest.json SHA-256 与签名元数据生成完成",
+    "preflight_release.py：版本格式/标签冲突/工作树清洁检查",
+    "sync_versions.py：八处版本号替换并字节级回读断言",
+    "cmd: npx tsc --noEmit 前端类型检查",
+    "cmd: uv run python scripts/smoke_test.py 后端全量烟雾测试",
+    "cmd: npm run build / build_backend.py / npx tauri build 双端构建与 minisign 签名",
+    "build_latest.py：安装包 SHA-256 与 latest.json（notes ≥30 字符）",
+    dryRun
+      ? "publish_release.py --dry-run：PAT/资产/API 连通性检查"
+      : "publish_release.py：git 提交/打标/推送 + GitHub Release 创建与资产上传",
+    `verify_release.py${dryRun ? " --local" : ""}：${passCount} 项发布核验全部通过`,
   ],
-  notCovered: dryRun ? ["跳过了 Git 提交与 GitHub 远程资产发布（dryRun 模式）"] : [],
+  notCovered: dryRun ? ["跳过 git 提交/推送、GitHub Release 创建与远程资产上传（dryRun 模式）"] : [],
 };
