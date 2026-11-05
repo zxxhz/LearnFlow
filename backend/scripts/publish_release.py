@@ -172,7 +172,9 @@ def main() -> int:
 
         upload_base = f"{UPLOAD}/repos/{OWNER}/{REPO_NAME}/releases/{release_id}/assets"
         upload_with_retry(client, headers, upload_base, exe.name, exe.read_bytes(), "application/octet-stream")
-        upload_with_retry(client, headers, upload_base, latest_path.name, latest_path.read_bytes(), "application/json")
+        upload_with_retry(client, headers, upload_base, "latest.json", latest_path.read_bytes(), "application/json")
+        if latest_path.name != "latest.json":
+            upload_with_retry(client, headers, upload_base, latest_path.name, latest_path.read_bytes(), "application/json")
 
     print(f"RELEASE_URL={html_url}")
     return 0
