@@ -53,6 +53,17 @@ def must(cmd: list[str], what: str, cwd: Path | None = None, input_text: str | N
 
 
 def get_pat() -> str:
+    env_token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if env_token:
+        return env_token
+    # 优先在 Windows 上直接调用 git-credential-manager 避免 MSYS2 信号管道沙箱阻断
+    gcm = Path(r"C:\Program Files\Git\mingw64\bin\git-credential-manager.exe")
+    if gcm.is_file():
+        r = run([str(gcm), "get"], input_text="protocol=https\nhost=github.com\n\n")
+        if r.returncode == 0:
+            for line in r.stdout.splitlines():
+                if line.startswith("password="):
+                    return line.partition("=")[2].strip()
     r = run(["git", "credential", "fill"], input_text="protocol=https\nhost=github.com\n\n")
     if r.returncode != 0:
         print(f"❌ git credential fill 失败：{r.stderr.strip()}")
@@ -116,8 +127,11 @@ def main() -> int:
         print(f"❌ latest.json 元数据异常：version={latest_meta.get('version')!r} notes 为空")
         return 1
 
+    pat = get_pat()
+    auth_url = f"https://{pat}@github.com/{OWNER}/{REPO_NAME}.git"
+
     # 远程标签已存在则拒绝（防重复发布）；dry-run 不落盘，仅提示
-    ls = run(["git", "ls-remote", "--tags", "origin", f"refs/tags/{tag}"])
+    ls = run(["git", "-c", "http.sslbackend=openssl", "ls-remote", "--tags", auth_url, f"refs/tags/{tag}"])
     if ls.returncode == 0 and ls.stdout.strip():
         if args.dry_run:
             print(f"  ⚠️ 远程已存在标签 {tag}（dry-run 不受影响，真实发布会拒绝）")
@@ -127,7 +141,6 @@ def main() -> int:
 
     if args.dry_run:
         print("=== DRY-RUN 模式：以下操作将被跳过（git add/commit/tag/push、创建 Release、上传资产） ===")
-        pat = get_pat()
         print(f"  ✅ GitHub PAT 可用（长度 {len(pat)}）")
         print(f"  ✅ 资产就绪：{exe.name}（{exe.stat().st_size} 字节）")
         print(f"  ✅ 元数据就绪：{latest_path.name}（notes {len(latest_meta['notes'])} 字符）")
@@ -148,11 +161,10 @@ def main() -> int:
     must(["git", "commit", "-m", commit_msg], "git commit")
     print(f"  ✅ 已提交：{commit_msg}")
     must(["git", "tag", tag], "git tag")
-    must(["git", "push", "origin", "main", "--tags"], "git push")
+    must(["git", "-c", "http.sslbackend=openssl", "push", auth_url, "main", "--tags"], "git push")
     print("  ✅ 已推送 origin main --tags")
 
     # 2. GitHub API
-    pat = get_pat()
     headers = {"Authorization": f"Bearer {pat}", "Accept": "application/vnd.github+json"}
 
     with httpx.Client(follow_redirects=False) as client:

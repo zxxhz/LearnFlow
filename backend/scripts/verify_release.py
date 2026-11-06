@@ -80,8 +80,15 @@ def main() -> int:
 
     if not args.local:
         # 远程标签
-        ls = run_git(["ls-remote", "--tags", "origin", f"refs/tags/{tag}"])
-        check(ls.returncode == 0 and bool(ls.stdout.strip()), f"标签 {tag} 已推送至 origin")
+        ls = run_git(["-c", "http.sslbackend=openssl", "ls-remote", "--tags", f"https://github.com/{OWNER}/{REPO_NAME}.git", f"refs/tags/{tag}"])
+        tag_ok = (ls.returncode == 0 and bool(ls.stdout.strip()))
+        if not tag_ok:
+            try:
+                r_tag = httpx.get(f"{API}/repos/{OWNER}/{REPO_NAME}/git/ref/tags/{tag}", headers={"User-Agent": "LearnFlow-Verify"}, timeout=15)
+                tag_ok = (r_tag.status_code == 200)
+            except Exception:
+                pass
+        check(tag_ok, f"标签 {tag} 已推送至 origin")
 
         try:
             import truststore
