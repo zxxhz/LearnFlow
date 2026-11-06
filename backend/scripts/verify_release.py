@@ -106,8 +106,16 @@ def main() -> int:
                 check(f"LearnFlow_{version}_x64-setup.exe" in names, f"资产含安装包：{names}")
                 check("latest.json" in names, "资产含 latest.json")
 
+            def fetch_with_mirror_fallback(url: str, is_head: bool = False):
+                try:
+                    return client.head(url) if is_head else client.get(url)
+                except Exception:
+                    # 国内直连 github.com:443 波动超时，通过主流镜像测速通道复核
+                    mirror_url = f"https://gh-proxy.com/{url}"
+                    return client.head(mirror_url) if is_head else client.get(mirror_url)
+
             # 远程 latest.json
-            rr = client.get(
+            rr = fetch_with_mirror_fallback(
                 f"https://github.com/{OWNER}/{REPO_NAME}/releases/download/{tag}/latest.json"
             )
             check(rr.status_code == 200, f"远程 latest.json 可下载（HTTP {rr.status_code}）")
@@ -126,7 +134,7 @@ def main() -> int:
                     )
                 # 下载 URL 可达 + 大小一致
                 if exe.exists():
-                    head = client.head(expected_url)
+                    head = fetch_with_mirror_fallback(expected_url, is_head=True)
                     size = head.headers.get("content-length")
                     check(
                         head.status_code == 200 and size and int(size) == exe.stat().st_size,
