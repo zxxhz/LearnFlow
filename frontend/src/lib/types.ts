@@ -799,3 +799,59 @@ export interface MindMapNodeQASSEEvent {
   text?: string;
 }
 
+// ===== 云端自建中转 (Cloud Relay) =====
+
+export type RelayConnectionState = "connected" | "connecting" | "disconnected" | "error";
+
+export type RelayAiMode = "cloud" | "local" | "auto";
+
+export interface RelayConfig {
+  enabled: boolean;
+  server_url: string;
+  token?: string;
+  auto_sync?: boolean;
+  ai_mode?: RelayAiMode;
+  effective_ai_mode?: "cloud" | "local";
+  status?: RelayConnectionState;
+  last_sync_at?: string | null;
+  last_error?: string | null;
+  latency_ms?: number | null;
+}
+
+export interface RelayStatus {
+  enabled: boolean;
+  status: RelayConnectionState;
+  server_url?: string;
+  connected?: boolean;
+  ai_mode?: RelayAiMode;
+  effective_ai_mode?: "cloud" | "local";
+  last_sync_at?: string | null;
+  last_error?: string | null;
+  latency_ms?: number | null;
+  message?: string;
+}
+
+export interface RelayTestResult {
+  ok: boolean;
+  message: string;
+  latency_ms?: number;
+}
+
+export interface RelaySyncResult {
+  ok: boolean;
+  message: string;
+  synced_at?: string;
+  pulled_count?: number;
+  pushed_count?: number;
+  details?: Record<string, any>;
+  action?: "pull" | "push" | "both";
+}
+
+export interface RelayAiModeResult {
+  ok: boolean;
+  ai_mode: RelayAiMode;
+  effective_ai_mode?: "cloud" | "local";
+  message?: string;
+}
+
+

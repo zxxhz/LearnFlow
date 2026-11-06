@@ -7,6 +7,8 @@ __pycache__/
 
 # 运行时数据（自包含，复制即备份；不入库）
 backend/data/
+server/data/
+server/data*/
 .env
 
 # Node

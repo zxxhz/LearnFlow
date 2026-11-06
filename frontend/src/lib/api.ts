@@ -63,6 +63,12 @@ import type {
   SolveSSEEvent,
   TutorSSEEvent,
   TodayStudyHubOut,
+  RelayConfig,
+  RelayStatus,
+  RelayTestResult,
+  RelaySyncResult,
+  RelayAiMode,
+  RelayAiModeResult,
 } from "./types";
 import { streamSSE, subscribeSSE } from "./sse";
 import { showToast } from "./toast";
@@ -255,6 +261,118 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
 
 function jsonBody(body: unknown): RequestInit {
   return { body: JSON.stringify(body) };
+}
+
+// ===== 云端自建中转 (Cloud Relay) API 调用 =====
+
+export async function getRelayConfig(): Promise<RelayConfig> {
+  return request<RelayConfig>("/relay/config");
+}
+
+export async function updateRelayConfig(config: Partial<RelayConfig>): Promise<RelayConfig> {
+  const payload = {
+    ...config,
+    server_token: config.token ?? (config as any).server_token,
+  };
+  return request<RelayConfig>("/relay/config", {
+    method: "POST",
+    ...jsonBody(payload),
+  });
+}
+
+export async function testRelayConnection(
+  serverUrl: string,
+  token: string
+): Promise<{ ok: boolean; message: string; latency_ms?: number }> {
+  return request<{ ok: boolean; message: string; latency_ms?: number }>("/relay/test-connection", {
+    method: "POST",
+    ...jsonBody({
+      server_url: serverUrl,
+      server_token: token,
+      token,
+    }),
+  });
+}
+
+export async function triggerRelaySync(): Promise<RelaySyncResult> {
+  return request<RelaySyncResult>("/relay/sync/now", {
+    method: "POST",
+  });
+}
+
+export async function pullRelayData(): Promise<RelaySyncResult> {
+  try {
+    return await request<RelaySyncResult>("/relay/sync/pull", { method: "POST" });
+  } catch (err: any) {
+    throw err;
+  }
+}
+
+export async function pushRelayData(): Promise<RelaySyncResult> {
+  try {
+    return await request<RelaySyncResult>("/relay/sync/push", { method: "POST" });
+  } catch (err: any) {
+    if (err.message?.includes("404")) {
+      return await triggerRelaySync();
+    }
+    throw err;
+  }
+}
+
+export async function syncBothRelayData(): Promise<RelaySyncResult> {
+  try {
+    return await request<RelaySyncResult>("/relay/sync/both", { method: "POST" });
+  } catch (err: any) {
+    if (err.message?.includes("404")) {
+      return await triggerRelaySync();
+    }
+    throw err;
+  }
+}
+
+export async function getRelayAiMode(): Promise<RelayAiModeResult> {
+  try {
+    return await request<RelayAiModeResult>("/relay/ai-mode");
+  } catch (err: any) {
+    if (err.message?.includes("404")) {
+      const cfg = await getRelayConfig();
+      return {
+        ok: true,
+        ai_mode: cfg.ai_mode ?? "auto",
+        effective_ai_mode: cfg.effective_ai_mode ?? "cloud",
+      };
+    }
+    throw err;
+  }
+}
+
+export async function setRelayAiMode(mode: RelayAiMode): Promise<RelayAiModeResult> {
+  try {
+    return await request<RelayAiModeResult>("/relay/ai-mode", {
+      method: "POST",
+      ...jsonBody({ ai_mode: mode }),
+    });
+  } catch (err: any) {
+    if (err.message?.includes("405")) {
+      return await request<RelayAiModeResult>("/relay/ai-mode", {
+        method: "PUT",
+        ...jsonBody({ ai_mode: mode }),
+      });
+    }
+    if (err.message?.includes("404")) {
+      const updated = await updateRelayConfig({ ai_mode: mode });
+      return {
+        ok: true,
+        ai_mode: updated.ai_mode ?? mode,
+        effective_ai_mode: updated.effective_ai_mode,
+      };
+    }
+    throw err;
+  }
+}
+
+export async function getRelayStatus(): Promise<RelayStatus> {
+  return request<RelayStatus>("/relay/status");
 }
 
 export const api = {
@@ -662,6 +780,18 @@ export const api = {
       onEvent: (ev: MindMapNodeQASSEEvent) => void,
       signal?: AbortSignal
     ) => streamSSE<MindMapNodeQASSEEvent>(`/mindmaps/${id}/nodes/${nodeId}/qa`, body, onEvent, signal),
+  },
+  relay: {
+    getConfig: getRelayConfig,
+    updateConfig: updateRelayConfig,
+    testConnection: testRelayConnection,
+    triggerSync: triggerRelaySync,
+    pullData: pullRelayData,
+    pushData: pushRelayData,
+    syncBoth: syncBothRelayData,
+    getAiMode: getRelayAiMode,
+    setAiMode: setRelayAiMode,
+    getStatus: getRelayStatus,
   },
 };
 

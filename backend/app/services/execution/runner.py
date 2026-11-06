@@ -339,7 +339,8 @@ def _unique_file(workdir: str, suffix: str) -> str:
 
 def run_code_sync(language: str, code: str) -> dict:
     """同步执行（应通过 asyncio.to_thread 调用）。返回执行结果字典（不含持久化字段）。"""
-    workdir = tempfile.mkdtemp(prefix="learnflow-exec-")
+    workdir = os.path.join(tempfile.gettempdir(), f"learnflow-exec-{uuid.uuid4().hex[:12]}")
+    os.makedirs(workdir, exist_ok=True)
     try:
         if language == "python":
             src = _unique_file(workdir, ".py")

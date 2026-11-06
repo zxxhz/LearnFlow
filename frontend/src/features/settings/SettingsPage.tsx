@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import type { AnnotationColor, AdhdMode, LLMConfig, Preferences, SceneLLMConfig, SceneName, SettingsData } from "../../lib/types";
 import DataSafetySection from "./DataSafetySection";
+import RelaySettingsCard from "./RelaySettingsCard";
 import { Button, Input, Select, Spinner } from "../../components/ui";
 import { HL_COLOR_KEYS, HL_DEFAULTS, HL_LABELS } from "../reader/colors";
 import RuntimeEnvSection from "./RuntimeEnvSection";
@@ -555,6 +556,9 @@ export default function SettingsPage() {
 
       {/* 数据与安全：备份 / 恢复 / 局域网访问令牌 */}
       <DataSafetySection />
+
+      {/* 自建云端中转服务器配置 */}
+      <RelaySettingsCard />
 
       {/* 下载源测速与智能路由 */}
       <DownloadMirrorsSection />

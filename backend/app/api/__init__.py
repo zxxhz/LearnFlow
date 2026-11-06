@@ -13,6 +13,7 @@ from app.api import (
     math,
     mindmap,
     quiz,
+    relay,
     runtime,
     search,
     settings,
@@ -42,4 +43,5 @@ api_router.include_router(search.router)
 api_router.include_router(system.router)
 api_router.include_router(tutor.router)
 api_router.include_router(solve.router)
+api_router.include_router(relay.router)
 

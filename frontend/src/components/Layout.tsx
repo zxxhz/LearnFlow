@@ -9,6 +9,7 @@ import { isTauri, openExternalUrl } from "../lib/updater";
 import UpdateDialog from "./UpdateDialog";
 import { Toast } from "./ui";
 import type { ToastPayload } from "../lib/toast";
+import RelayStatusBadge from "./RelayStatusBadge";
 
 const NAV_ITEMS = [
   { to: "/", label: "首页", icon: "🏠" },
@@ -120,6 +121,9 @@ function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () => void
         </div>
         <NavLinks onNavigate={onClose} />
         <NavActions onNavigate={onClose} />
+        <div className="p-3 border-t border-gray-100 dark:border-gray-800">
+          <RelayStatusBadge />
+        </div>
       </aside>
     </div>
   );
@@ -265,15 +269,20 @@ export default function Layout() {
             </div>
             <NavLinks />
             <NavActions />
-            <div className="flex items-center border-t border-gray-100 dark:border-gray-800 p-3">
-              <button
-                onClick={toggleTheme}
-                className="flex flex-1 items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-                title="切换深色 / 浅色"
-              >
-                <span>{theme === "dark" ? "☀️" : "🌙"}</span>
-                <span className="truncate">{theme === "dark" ? "浅色模式" : "深色模式"}</span>
-              </button>
+            <div className="flex flex-col gap-2 border-t border-gray-100 dark:border-gray-800 p-3">
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={toggleTheme}
+                  className="flex flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+                  title="切换深色 / 浅色"
+                >
+                  <span>{theme === "dark" ? "☀️" : "🌙"}</span>
+                  <span className="truncate">{theme === "dark" ? "浅色" : "深色"}</span>
+                </button>
+              </div>
+              <div className="px-1">
+                <RelayStatusBadge />
+              </div>
             </div>
           </div>
         </aside>
@@ -319,14 +328,17 @@ export default function Layout() {
 
             <span className="text-base font-bold text-brand-600">LearnFlow</span>
 
-            <button
-              onClick={toggleTheme}
-              className="ml-auto rounded-md p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-              aria-label="切换深色 / 浅色"
-              title="切换深色 / 浅色"
-            >
-              {theme === "dark" ? "☀️" : "🌙"}
-            </button>
+            <div className="ml-auto flex items-center gap-2">
+              <RelayStatusBadge />
+              <button
+                onClick={toggleTheme}
+                className="rounded-md p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                aria-label="切换深色 / 浅色"
+                title="切换深色 / 浅色"
+              >
+                {theme === "dark" ? "☀️" : "🌙"}
+              </button>
+            </div>
           </header>
         )}
         {/* scrollbar-gutter: 滚动条出现/消失不再让居中内容横移（各页面标题位置保持一致） */}

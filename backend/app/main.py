@@ -63,7 +63,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from app.services.generation.pipeline import resume_pending_generations
 
         await resume_pending_generations()
-    yield
+
+    # 启动自建云端中转长连接（若已配置启用）
+    from app.services.relay import get_relay_config, relay_client
+
+    if get_relay_config().enabled:
+        await relay_client.start()
+
+    try:
+        yield
+    finally:
+        await relay_client.stop()
 
 
 def _db_session():

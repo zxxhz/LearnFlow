@@ -1,0 +1,37 @@
+version: "3.8"
+
+services:
+  relay-server:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: learnflow-relay:latest
+    container_name: learnflow-relay
+    restart: unless-stopped
+    ports:
+      - "${SERVER_PORT:-8421}:8421"
+    environment:
+      - SERVER_PORT=8421
+      # 是否强制启用 Token 鉴权（true / false，默认 false）
+      - RELAY_AUTH_REQUIRED=${RELAY_AUTH_REQUIRED:-false}
+      # 访问安全 Token（若 RELAY_AUTH_REQUIRED=false 且此处为空，则开放免密访问）
+      - RELAY_SERVER_TOKEN=${RELAY_SERVER_TOKEN:-}
+      # AI 执行模式: auto (默认) | cloud (云端大模型) | local (本地Worker)
+      - AI_MODE=${AI_MODE:-auto}
+      # 云端内置大模型配置（用于 cloud 模式或 auto 离线回退）
+      - SERVER_LLM_BASE_URL=${SERVER_LLM_BASE_URL:-https://api.openai.com/v1}
+      - SERVER_LLM_API_KEY=${SERVER_LLM_API_KEY:-}
+      - SERVER_LLM_MODEL=${SERVER_LLM_MODEL:-gpt-4o-mini}
+      - DATA_DIR=/app/data
+      - STATIC_DIR=/app/static
+    volumes:
+      # 持久化存储云端 SQLite 数据库与缓存
+      - ./data:/app/data
+      # 可选：将构建出的前端产物映射进容器供 Web 访问
+      - ../frontend/dist:/app/static:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8421/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
