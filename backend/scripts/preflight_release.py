@@ -45,10 +45,24 @@ def main() -> int:
 
     # 2b. 远程标签不存在
     remote_tags = run_git(["ls-remote", "--tags", "origin", f"refs/tags/{tag}"])
-    if remote_tags.returncode != 0:
-        errors.append(f"查询远程标签失败：{remote_tags.stderr.strip()}")
-    elif remote_tags.stdout.strip():
-        errors.append(f"远程 origin 已存在标签 {tag}，禁止重复发布")
+    if remote_tags.returncode == 0:
+        if remote_tags.stdout.strip():
+            errors.append(f"远程 origin 已存在标签 {tag}，禁止重复发布")
+    else:
+        # git ls-remote 失败（Windows 沙箱或环境无直接凭据），回落经 GitHub API 验证
+        try:
+            import httpx
+            r = httpx.get(
+                f"https://api.github.com/repos/zxxhz/LearnFlow/git/ref/tags/{tag}",
+                headers={"User-Agent": "LearnFlow-Preflight"},
+                timeout=15,
+            )
+            if r.status_code == 200:
+                errors.append(f"远程 GitHub 已存在标签 {tag}，禁止重复发布")
+            elif r.status_code not in (404,):
+                errors.append(f"GitHub API 查询远程标签返回异常状态码 HTTP {r.status_code}")
+        except Exception as e:
+            errors.append(f"查询远程标签失败（git: {remote_tags.stderr.strip()}; api: {e}）")
 
     # 3. 工作树清洁（.zcode/ 下的会话文件豁免）
     status = run_git(["status", "--porcelain"])
