@@ -102,7 +102,7 @@ log("前端类型检查通过");
 
 const smokeCheck = await world.run(
   "cmd.exe",
-  ["/c", "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\backend && uv run python scripts/smoke_test.py"],
+  ["/c", "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\backend && set APP_PORT=8431&& uv run python scripts/smoke_test.py"],
   { timeoutMs: 420_000, output: TAIL }
 );
 if (smokeCheck.exitCode !== 0) {
@@ -113,7 +113,7 @@ log("后端全量烟雾测试回归通过");
 phase("双端构建：前端产物、PyInstaller 后端与 Tauri 签名安装包");
 const feBuild = await world.run(
   "cmd.exe",
-  ["/c", "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\frontend && npm run build"],
+  ["/c", "cd /d C:\\Users\\Emoing\\Desktop\\学习agent\\frontend && if not exist C:\\Users\\Emoing\\Desktop\\学习agent\\.tmp mkdir C:\\Users\\Emoing\\Desktop\\学习agent\\.tmp && set TMP=C:\\Users\\Emoing\\Desktop\\学习agent\\.tmp&& set TEMP=C:\\Users\\Emoing\\Desktop\\学习agent\\.tmp&& npm run build"],
   { timeoutMs: 300_000, output: TAIL }
 );
 if (feBuild.exitCode !== 0) {

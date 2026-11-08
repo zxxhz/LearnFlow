@@ -38,3 +38,6 @@ backend/toolchains/
 # 冒烟测试隔离数据目录（scripts/smoke_test.py 的 APP_DATA_DIR）
 backend/data-smoke/
 backend/data-smoke*/
+
+# 会话内构建临时目录（esbuild/工具链 TEMP 指向点，不入库）
+.tmp/
