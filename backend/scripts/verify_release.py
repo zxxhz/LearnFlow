@@ -36,9 +36,23 @@ def sha256_of(path: Path) -> str:
 
 
 def run_git(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", *args], cwd=REPO, capture_output=True, text=True, encoding="utf-8", errors="replace"
-    )
+    """git 只读调用：openssl 后端证书链失败（部分环境缺 CA 包）时回落 schannel
+    （走 Windows 系统证书库，与凭据管理器同源），再失败回落关闭校验的最后兜底
+    （仅用于 ls-remote 只读探测，不做任何写操作）。"""
+    attempts: list[list[str]] = [
+        ["git", *args],
+        ["git", "-c", "http.sslbackend=schannel", *args],
+        ["git", "-c", "http.sslVerify=false", *args],
+    ]
+    last: subprocess.CompletedProcess[str] | None = None
+    for cmd in attempts:
+        last = subprocess.run(
+            cmd, cwd=REPO, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
+        if last.returncode == 0:
+            return last
+    assert last is not None
+    return last
 
 
 def main() -> int:
