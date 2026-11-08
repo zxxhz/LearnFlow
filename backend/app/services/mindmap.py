@@ -23,7 +23,7 @@ from app.schemas.mindmap import (
 )
 from app.services.llm import create_adapter_from_settings, extract_json
 from app.services.prompt import render_prompt
-from app.services.profile import format_profile_for_prompt
+from app.services.profile import discipline_for_course, discipline_for_course_id, format_profile_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -499,13 +499,15 @@ async def generate_mindmap_tree(
     import_content: str,
     db: AsyncSession,
     content_max_chars: int = 4000,
+    discipline: str = "general",
 ) -> dict[str, Any]:
     """结合用户画像与深度要求，生成多层级纯净思维导图。
 
     content_max_chars：参考材料截断上限（通用主题 4000；课程链路传更大值）。
+    discipline：当前生成所属学科域，盲区注入按学科过滤防串味。
     """
     adapter = await create_adapter_from_settings(db, scene="generation")
-    profile_snippet = await format_profile_for_prompt(db)
+    profile_snippet = await format_profile_for_prompt(db, scope=discipline or None)
     system_prompt = render_prompt("mindmap_gen", LEARNER_PROFILE=profile_snippet)
 
     user_content = f"请围绕以下主题与材料，构建层级深度为 {depth} 层的思维导图：\n\n【核心主题】\n{prompt.strip()}"
@@ -678,6 +680,7 @@ async def generate_mindmap_from_course(
         import_content=material,
         db=db,
         content_max_chars=_COURSE_MATERIAL_MAX_CHARS,
+        discipline=discipline_for_course(course),
     )
     res["course"] = course
     return res
@@ -807,7 +810,7 @@ async def stream_mindmap_agent(
     支持多轮连续上下文对话，解析用户自然语言意图，调用工具对导图进行动态增删改查修剪，并流式反馈解释。
     """
     adapter = await create_adapter_from_settings(db, scene="chat")
-    profile_snippet = await format_profile_for_prompt(db)
+    profile_snippet = await format_profile_for_prompt(db, scope=await discipline_for_course_id(db, mindmap.course_id))
     outline = _format_tree_outline_for_agent(mindmap.root)
 
     focus_hint = ""
@@ -1016,7 +1019,7 @@ async def stream_node_detail(
     path = get_node_path(mindmap.root, node_id) or [node.get("title", "")]
     path_str = " > ".join(path)
     adapter = await create_adapter_from_settings(db, scene="generation")
-    profile_snippet = await format_profile_for_prompt(db)
+    profile_snippet = await format_profile_for_prompt(db, scope=await discipline_for_course_id(db, mindmap.course_id))
 
     instruction_line = f"- 特别要求：{instruction.strip()}" if instruction.strip() else ""
     prompt = render_prompt(
@@ -1084,7 +1087,7 @@ async def stream_node_qa(
     path = get_node_path(mindmap.root, node_id) or [node.get("title", "")]
     path_str = " > ".join(path)
     adapter = await create_adapter_from_settings(db, scene="chat")
-    profile_snippet = await format_profile_for_prompt(db)
+    profile_snippet = await format_profile_for_prompt(db, scope=await discipline_for_course_id(db, mindmap.course_id))
 
     system_prompt = render_prompt(
         "mindmap_node_qa",

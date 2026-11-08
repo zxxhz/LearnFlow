@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,23 +61,79 @@ async def get_or_create_profile(db: AsyncSession, profile_id: str = DEFAULT_PROF
 
 
 async def get_active_misconceptions(
-    db: AsyncSession, limit: int = 10
+    db: AsyncSession, limit: int = 10, scope: str | None = None
 ) -> list[LearnerMisconception]:
-    """获取用户当前未解决的易错认知/盲区记录。"""
-    stmt = (
-        select(LearnerMisconception)
-        .where(LearnerMisconception.status == "active")
-        .order_by(LearnerMisconception.created_at.desc())
-        .limit(limit)
-    )
+    """获取用户当前未解决的易错认知/盲区记录。
+
+    scope：传入学科域（coding/math/theory）时只取该学科与通用（general）盲区，
+    避免其他学科盲区串味；None 保持全量（向后兼容）。
+    """
+    stmt = select(LearnerMisconception).where(LearnerMisconception.status == "active")
+    if scope:
+        stmt = stmt.where(LearnerMisconception.scope.in_([scope, "general"]))
+    stmt = stmt.order_by(LearnerMisconception.created_at.desc()).limit(limit)
     return list((await db.scalars(stmt)).all())
 
 
-async def format_profile_for_prompt(db: AsyncSession) -> str:
+def discipline_for_course(course: Any) -> str:
+    """课程 → 学科域（coding/math/theory），取不到回落 general。"""
+    if course is None:
+        return "general"
+    try:
+        from app.services.exercise import detect_course_discipline
+
+        return detect_course_discipline(
+            str(getattr(course, "topic", "") or ""), str(getattr(course, "title", "") or "")
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("resolve course discipline failed: %s", e)
+        return "general"
+
+
+def discipline_for_text(text: str) -> str:
+    """自由文本（课程主题/题库名等）→ 学科域，兜底 general。"""
+    try:
+        from app.services.exercise import detect_course_discipline
+
+        return detect_course_discipline(str(text or ""), str(text or ""))
+    except Exception:  # noqa: BLE001
+        return "general"
+
+
+async def discipline_for_course_id(db: AsyncSession, course_id: str | None) -> str:
+    """课程 id → 学科域；无效 id 回落 general。"""
+    if not course_id:
+        return "general"
+    try:
+        from app.models.course import Course
+
+        return discipline_for_course(await db.get(Course, course_id))
+    except Exception as e:  # noqa: BLE001
+        logger.debug("resolve course discipline failed: %s", e)
+        return "general"
+
+
+async def discipline_for_document(db: AsyncSession, document: Any) -> str:
+    """文档 → 所属课程学科域；课程缺失或查询失败回落 general（不阻断主链路）。"""
+    try:
+        course_id = str(getattr(document, "course_id", "") or "") if document else ""
+        if not course_id:
+            return "general"
+        from app.models.course import Course
+
+        return discipline_for_course(await db.get(Course, course_id))
+    except Exception as e:  # noqa: BLE001
+        logger.debug("resolve document discipline failed: %s", e)
+        return "general"
+
+
+async def format_profile_for_prompt(db: AsyncSession, scope: str | None = None) -> str:
     """为大纲/正文/问答/助教 Prompt 格式化学习者认知上下文。
 
     若画像完全为空且无活跃盲区，返回空字符串；
     若包含信息，则组合成引导语。
+    scope：当前链路所属学科域（coding/math/theory）。传入后仅注入该学科与
+    通用盲区，防止跨学科串味（如 C++ 盲区混进高数讲义）；None 保持全量兼容。
     画像初始化失败时降级为通用风格提示，不阻断生成/答疑主链路。
     """
     try:
@@ -84,7 +141,7 @@ async def format_profile_for_prompt(db: AsyncSession) -> str:
     except LookupError as e:
         logger.warning(f"画像不可用，Prompt 注入降级: {e}")
         return "\n## 教学风格偏好\n- 答疑与引导风格：优先采用苏格拉底式启发提问，引导学生自主思考\n"
-    misconceptions = await get_active_misconceptions(db, limit=8)
+    misconceptions = await get_active_misconceptions(db, limit=8, scope=scope)
 
     bg = (profile.background_summary or "").strip()
     has_misc = bool(misconceptions)
@@ -118,10 +175,15 @@ async def evolve_profile_from_interaction(
     context: str = "",
     interaction: str = "",
     dialogue_snippet: str = "",
+    scope: str = "general",
+    source_type: str = "",
+    source_id: str = "",
 ) -> dict[str, Any] | None:
     """根据一次学习交互提炼并更新画像与认知易错点。
 
     兼容单参数 (dialogue_snippet) 以及 (session_factory, context=..., interaction=...) 多种历史调用方式。
+    scope/source_type/source_id：本次交互的学科域与证据来源（练习/题库/划线对话），
+    落库时盖章到新盲区上，支撑分学科注入与证据回溯。
     """
     parts = []
     if context:
@@ -152,10 +214,12 @@ async def evolve_profile_from_interaction(
                 SNIPPET=snippet,
             )
 
-            adapter = await create_adapter_from_settings(db, scene="chat")
+            # 后台静默任务走 task 槽位（未配置自动回落主配置），并限制输出长度防长跑
+            adapter = await create_adapter_from_settings(db, scene="task")
             response = await adapter.chat(
                 [{"role": "user", "content": prompt}],
                 temperature=0.3,
+                max_tokens=800,
             )
             data = extract_json(response)
             if not isinstance(data, dict):
@@ -188,14 +252,23 @@ async def evolve_profile_from_interaction(
                             tag=tag_str,
                             evidence=str(item.get("evidence", ""))[:128],
                             status="active",
+                            scope=str(scope or "general")[:20],
+                            source_type=str(source_type or "")[:20],
+                            source_id=str(source_id or "")[:64],
                         )
                         db.add(misc)
 
             await db.commit()
-            return data
         except Exception as e:
             logger.warning(f"Failed to evolve learner profile: {e}")
             return None
+
+    # 活跃盲区超阈值时后台归并同类项（吸收 DeepTutor Memory consolidator）
+    try:
+        await maybe_consolidate_misconceptions()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("misconception consolidate skipped: %s", e)
+    return data
 
 
 def trigger_profile_evolution(
@@ -203,6 +276,9 @@ def trigger_profile_evolution(
     *,
     context: str = "",
     interaction: str = "",
+    scope: str = "general",
+    source_type: str = "",
+    source_id: str = "",
 ) -> None:
     """触发非阻塞后台认知演进任务，持有强引用避免被 GC 回收。"""
     try:
@@ -212,6 +288,9 @@ def trigger_profile_evolution(
                 dialogue_snippet=dialogue_snippet,
                 context=context,
                 interaction=interaction,
+                scope=scope,
+                source_type=source_type,
+                source_id=source_id,
             )
         )
         _background_tasks.add(task)
@@ -224,3 +303,121 @@ def trigger_profile_evolution(
 
 
 extract_and_update_learner_profile = evolve_profile_from_interaction
+
+
+# 盲区证据来源类型常量（source_type 取值）
+MISCONCEPTION_SOURCE_EXERCISE = "exercise"
+MISCONCEPTION_SOURCE_BANK_QUESTION = "bank_question"
+MISCONCEPTION_SOURCE_CONVERSATION = "conversation"
+
+# 活跃盲区超过该数量时触发后台同类项归并（吸收 DeepTutor consolidator 思路）
+CONSOLIDATE_THRESHOLD = 25
+
+
+async def auto_resolve_misconceptions(source_type: str, source_id: str) -> int:
+    """来源对象被学习者独立做对后，自动关闭对应盲区（证据闭环）。
+
+    吸收 DeepTutor「练习表现反哺记忆」的闭环：盲区不再只能人工标记已解决，
+    而是随原始作答通过自动出清。返回关闭条数。
+    """
+    if not source_type or not source_id:
+        return 0
+    try:
+        async with async_session_factory() as db:
+            stmt = select(LearnerMisconception).where(
+                LearnerMisconception.source_type == str(source_type)[:20],
+                LearnerMisconception.source_id == str(source_id)[:64],
+                LearnerMisconception.status == "active",
+            )
+            rows = list((await db.scalars(stmt)).all())
+            if not rows:
+                return 0
+            now = utcnow_iso()
+            for row in rows:
+                row.status = "resolved"
+                row.resolved_at = now
+            await db.commit()
+            return len(rows)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"auto resolve misconceptions failed: {e}")
+        return 0
+
+
+def trigger_misconception_auto_resolve(source_type: str, source_id: str) -> None:
+    """非阻塞触发盲区自动关闭（来源题作答通过后调用）。"""
+    try:
+        loop = asyncio.get_running_loop()
+        task = loop.create_task(auto_resolve_misconceptions(source_type, source_id))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+    except RuntimeError:
+        pass
+
+
+class _MisconceptionMergeGroup(BaseModel):
+    keep_id: str = ""
+    resolve_ids: list[str] = []
+    merged_topic: str = ""
+    merged_tag: str = "理解偏差"
+
+
+class _MisconceptionMergePlan(BaseModel):
+    groups: list[_MisconceptionMergeGroup] = []
+
+
+async def maybe_consolidate_misconceptions(*, threshold: int = CONSOLIDATE_THRESHOLD) -> int:
+    """活跃盲区超过阈值时，后台用 LLM 合并同类项并归档冗余行。
+
+    LLM 仅输出合并方案；落库前逐组校验 id 合法且互相独立，防幻觉误删。
+    返回归并关闭的行数；未配 LLM 或低于阈值时为 0。
+    """
+    async with async_session_factory() as db:
+        active = list(
+            (
+                await db.scalars(
+                    select(LearnerMisconception)
+                    .where(LearnerMisconception.status == "active")
+                    .order_by(LearnerMisconception.created_at.asc())
+                )
+            ).all()
+        )
+        if len(active) <= threshold:
+            return 0
+        items = "\n".join(
+            f"- id={m.id} | 学科={m.scope} | 标签={m.tag} | 盲区={m.topic}" for m in active
+        )
+        prompt = render_prompt("profile_consolidate", MISCONCEPTIONS=items)
+        try:
+            adapter = await create_adapter_from_settings(db, scene="task")
+        except Exception:  # noqa: BLE001  未配置 LLM 时静默跳过
+            return 0
+        try:
+            plan = await adapter.chat_json([{"role": "user", "content": prompt}], _MisconceptionMergePlan)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"misconception consolidate LLM failed: {e}")
+            return 0
+
+        valid_ids = {m.id for m in active}
+        applied = 0
+        for group in plan.groups[:10]:
+            keep_id = str(group.keep_id or "")
+            resolve_ids = [str(r) for r in (group.resolve_ids or []) if str(r) != keep_id]
+            if keep_id not in valid_ids or not resolve_ids or not group.merged_topic.strip():
+                continue
+            if any(rid not in valid_ids for rid in resolve_ids):
+                continue
+            keep_row = await db.get(LearnerMisconception, keep_id)
+            if keep_row is None or keep_row.status != "active":
+                continue
+            keep_row.topic = group.merged_topic.strip()[:100]
+            keep_row.tag = (group.merged_tag.strip() or "理解偏差")[:100]
+            for rid in resolve_ids:
+                row = await db.get(LearnerMisconception, rid)
+                if row is not None and row.status == "active":
+                    row.status = "resolved"
+                    row.resolved_at = utcnow_iso()
+                    applied += 1
+        if applied:
+            await db.commit()
+            logger.info("盲区归并完成：%s 条冗余盲区已归档", applied)
+        return applied

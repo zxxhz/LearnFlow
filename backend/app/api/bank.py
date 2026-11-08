@@ -44,7 +44,10 @@ from app.services.bank import BankParseError
 from app.services.llm import create_adapter_from_settings
 from app.services.prompt import render_prompt
 from app.services.profile import (
+    MISCONCEPTION_SOURCE_BANK_QUESTION,
+    discipline_for_text,
     format_profile_for_prompt,
+    trigger_misconception_auto_resolve,
     trigger_profile_evolution,
 )
 from app.services.llm.errors import LLMError
@@ -415,6 +418,10 @@ async def submit_attempt(
             await db.rollback()
             raise HTTPException(status_code=404, detail="题目已被更新或删除")
 
+    # 盲区证据闭环：独立做对（未存疑）时自动关闭挂在该题上的盲区
+    if passed and not body.is_doubtful:
+        trigger_misconception_auto_resolve(MISCONCEPTION_SOURCE_BANK_QUESTION, q.id)
+
     return BankAttemptResult(
         attempt_id=attempt.id,
         passed=passed,
@@ -500,7 +507,9 @@ async def ai_explain_question(
     if q is None:
         raise HTTPException(status_code=404, detail="题目不存在")
     bank = await _bank_or_404(db, q.bank_id)
-    profile_text = await format_profile_for_prompt(db)
+    # 按题库名称判定学科域：盲区注入按学科过滤 + 证据溯源盖章
+    bank_scope = discipline_for_text(bank.name)
+    profile_text = await format_profile_for_prompt(db, scope=bank_scope)
     messages = bank_service.build_explain_messages(
         bank, q, body.picked, profile_text=profile_text
     )
@@ -539,11 +548,14 @@ async def ai_explain_question(
             except Exception as se:
                 logger.warning(f"Failed to persist question ai_explanation: {se}")
 
-            # 异步提炼错题特征到学习者画像
+            # 异步提炼错题特征到学习者画像（盖章学科域与证据来源）
             question_context = f"题库：{bank.name}；题目：{q.title}；错误作答：{'、'.join(body.picked)}"
             trigger_profile_evolution(
                 context=question_context,
                 interaction=f"AI 解析重点：{full_text[:300]}",
+                scope=bank_scope,
+                source_type=MISCONCEPTION_SOURCE_BANK_QUESTION,
+                source_id=question_id,
             )
 
         yield f"data: {json.dumps({'type': 'done'}, ensure_ascii=False)}\n\n"

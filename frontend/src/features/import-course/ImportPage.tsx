@@ -1,4 +1,4 @@
-// 导入课程：两种方式——📄 上传 Markdown 原文导入 / 📸 拍照导入（视觉 AI 转写+解释扩充）
+// 导入课程：三种方式——📄 上传 Markdown 原文导入 / 📑 轻量 PDF 导入 / 📸 拍照导入（视觉 AI 转写+解释扩充）
 // 共用后续链路：章节切分确认 → 原文/转写稿入库 → 知识点提取（PRD 实现备注 12）
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -13,13 +13,15 @@ interface EditableChapter extends ImportChapter {
 
 const MAX_PHOTOS = 8;
 const MAX_PHOTO_MB = 10;
+const MAX_PDFS = 3;
+const MAX_PDF_MB = 5;
 
 export default function ImportPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  // ===== 共用：分析/确认状态（文件与拍照两条路径汇合到这里） =====
-  const [tab, setTab] = useState<"file" | "photo">("file");
+  // ===== 共用：分析/确认状态（文件/拍照/PDF 三条路径汇合到这里） =====
+  const [tab, setTab] = useState<"file" | "photo" | "pdf">("file");
   const [files, setFiles] = useState<File[] | null>(null);
   const [analysis, setAnalysis] = useState<ImportAnalysis | null>(null);
   const [title, setTitle] = useState("");
@@ -84,6 +86,7 @@ export default function ImportPage() {
     revokeAllPreviews();
     setPhotos([]);
     setPreviews([]);
+    setPdfFiles([]);
     setTranscribed("");
     setTranscribeErr("");
     if (fileRef.current) fileRef.current.value = "";
@@ -192,6 +195,50 @@ export default function ImportPage() {
     if (albumRef.current) albumRef.current.value = "";
   };
 
+  // ===== 轻量 PDF 导入（文本层直取零消耗；扫描版走视觉转写） =====
+  const pdfRef = useRef<HTMLInputElement>(null);
+  const [pdfFiles, setPdfFiles] = useState<File[]>([]);
+
+  const pickPdfs = (list: FileList | null) => {
+    if (!list || list.length === 0) return;
+    setTranscribeErr("");
+    const incoming: File[] = [];
+    for (const f of Array.from(list)) {
+      if (!f.name.toLowerCase().endsWith(".pdf")) {
+        setTranscribeErr(`「${f.name}」不是 PDF 文件`);
+        return;
+      }
+      if (f.size > MAX_PDF_MB * 1024 * 1024) {
+        setTranscribeErr(`「${f.name}」超过 ${MAX_PDF_MB}MB 上限`);
+        return;
+      }
+      incoming.push(f);
+    }
+    const merged = [...pdfFiles, ...incoming].slice(0, MAX_PDFS);
+    setPdfFiles(merged);
+    if (pdfFiles.length + incoming.length > MAX_PDFS) {
+      setTranscribeErr(`最多导入 ${MAX_PDFS} 个 PDF，多余的已忽略`);
+    }
+    if (pdfRef.current) pdfRef.current.value = "";
+  };
+
+  const pdfTranscribe = useMutation({
+    mutationFn: () => api.courses.pdfTranscribe(pdfFiles, hint),
+    onSuccess: (res) => {
+      setTranscribed(res.content);
+      setTranscribeErr("");
+    },
+    onError: (e) => setTranscribeErr((e as Error).message),
+  });
+
+  // 把 PDF 转写稿合成虚拟 Markdown 文件，走与文件导入完全相同的切章/确认/入库链路
+  const proceedPdfToChapters = () => {
+    const text = transcribed.trim();
+    if (!text) return;
+    const virtualFile = new File([text], "PDF导入.md", { type: "text/markdown" });
+    startAnalyze([virtualFile]);
+  };
+
   return (
     <div className="mx-auto max-w-5xl p-8">
       <Link to="/" className="text-sm text-gray-500 dark:text-gray-400 hover:text-brand-600">
@@ -212,6 +259,17 @@ export default function ImportPage() {
             }`}
           >
             📄 上传 Markdown
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab("pdf")}
+            className={`pb-2 px-4 text-sm font-semibold transition border-b-2 -mb-px ${
+              tab === "pdf"
+                ? "border-brand-600 text-brand-600 dark:border-brand-400 dark:text-brand-400"
+                : "border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            }`}
+          >
+            📑 PDF 导入
           </button>
           <button
             type="button"
@@ -267,6 +325,126 @@ export default function ImportPage() {
             </div>
           )}
           {analyzeErr && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{analyzeErr}</p>}
+        </>
+      )}
+
+      {/* ===== 轻量 PDF 导入 ===== */}
+      {tab === "pdf" && !analysis && (
+        <>
+          <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">
+            选择 PDF 教材或讲义：有文字层的 PDF 直接抽取全文（不消耗 AI）；扫描版/图片型 PDF 自动逐页视觉转写（≤16 页，需配置多模态模型）。
+          </p>
+          <div
+            className="mt-6 cursor-pointer rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 p-8 text-center transition hover:border-brand-500"
+            onClick={() => pdfRef.current?.click()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              pickPdfs(e.dataTransfer.files);
+            }}
+          >
+            <input
+              ref={pdfRef}
+              type="file"
+              multiple
+              accept=".pdf,application/pdf"
+              className="hidden"
+              onChange={(e) => pickPdfs(e.target.files)}
+            />
+            <div className="text-3xl">📑</div>
+            <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+              点击选择或拖入 PDF 文件（可多选，单文件 ≤ 5MB，最多 {MAX_PDFS} 个）
+            </p>
+            {pdfFiles.length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+                {pdfFiles.map((f, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-2.5 py-1 text-xs text-gray-600 dark:text-gray-300"
+                  >
+                    {f.name}
+                    <button
+                      type="button"
+                      className="text-gray-400 hover:text-red-500"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setPdfFiles(pdfFiles.filter((_, k) => k !== i));
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+                <button
+                  type="button"
+                  className="text-xs text-brand-600 dark:text-brand-400 hover:underline"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPdfFiles([]);
+                  }}
+                >
+                  清空
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="mt-4">
+            <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+              处理方式说明（可选，扫描版转写时使用）
+            </label>
+            <Input
+              value={hint}
+              onChange={(e) => setHint(e.target.value)}
+              placeholder="如：忠实复刻原文 / 这是高数讲义，重点保留公式与推导"
+              className="text-xs"
+            />
+          </div>
+
+          {transcribeErr && <p className="mt-3 text-sm text-red-600 dark:text-red-400">{transcribeErr}</p>}
+
+          {!transcribed && (
+            <Button
+              className="mt-4 w-full"
+              disabled={pdfFiles.length === 0 || pdfTranscribe.isPending}
+              onClick={() => pdfTranscribe.mutate()}
+            >
+              {pdfTranscribe.isPending ? (
+                <>
+                  <Spinner className="border-white/40" /> 正在提取/转写 PDF（扫描版约 20~60 秒/文件）…
+                </>
+              ) : (
+                `📑 提取为学习材料${pdfFiles.length ? `（${pdfFiles.length} 个 PDF）` : ""}`
+              )}
+            </Button>
+          )}
+
+          {transcribed && (
+            <div className="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                  ✅ 提取完成（可手动修正后再切章）
+                </span>
+                <Button
+                  variant="ghost"
+                  className="text-xs"
+                  disabled={pdfTranscribe.isPending || pdfFiles.length === 0}
+                  onClick={() => pdfTranscribe.mutate()}
+                >
+                  ↻ 重新提取
+                </Button>
+              </div>
+              <Textarea
+                rows={14}
+                value={transcribed}
+                onChange={(e) => setTranscribed(e.target.value)}
+                className="font-mono text-xs"
+              />
+              <Button className="mt-3 w-full" disabled={!transcribed.trim()} onClick={proceedPdfToChapters}>
+                下一步：切章确认 →
+              </Button>
+            </div>
+          )}
         </>
       )}
 
@@ -445,8 +623,7 @@ export default function ImportPage() {
               </span>
               <Button variant="ghost" className="text-xs" onClick={resetAll}>
                 {tab === "photo" ? "重新拍照/选图" : "重选文件"}
-              </Button>
-            </div>
+              </Button>            </div>
             <div className="space-y-2">
               {chapters.map((c, i) => (
                 <div

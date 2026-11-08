@@ -82,6 +82,12 @@ async def init_db() -> None:
             # v0.4.59 思维导图来源标记与课程关联（课程一键生成导图）
             "ALTER TABLE mind_maps ADD COLUMN source VARCHAR(20) DEFAULT 'manual'",
             "ALTER TABLE mind_maps ADD COLUMN course_id VARCHAR(32)",
+            # v0.4.69 认知画像分学科隔离与证据链回溯（吸收 DeepTutor L1/L2/L3 记忆分层）
+            "ALTER TABLE learner_misconceptions ADD COLUMN scope VARCHAR(20) DEFAULT 'general'",
+            "ALTER TABLE learner_misconceptions ADD COLUMN source_type VARCHAR(20) DEFAULT ''",
+            "ALTER TABLE learner_misconceptions ADD COLUMN source_id VARCHAR(64) DEFAULT ''",
+            # v0.4.69 出题落库前沙箱自验结果（0 存量未验 / 1 已实测 / 2 输出已校准）
+            "ALTER TABLE exercises ADD COLUMN self_verified INTEGER DEFAULT 0",
         ]
         for ddl in migrations:
             try:

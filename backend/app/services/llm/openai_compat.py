@@ -242,7 +242,7 @@ class OpenAICompatAdapter(LLMAdapter):
                 logger.debug("stream close exception: %s", close_err)
 
 
-SCENES = ("generation", "chat")
+SCENES = ("generation", "chat", "task")
 
 
 async def create_adapter_from_settings(
@@ -250,8 +250,8 @@ async def create_adapter_from_settings(
 ) -> OpenAICompatAdapter:
     """从 app_settings 读取配置并构建适配器。
 
-    scene ∈ {generation, chat}：场景槽位里非空的字段覆盖主配置，
-    空字段回落主配置（PRD §5.7：便宜模型做生成）。未配置时抛友好错误。
+    scene ∈ {generation, chat, task}：场景槽位里非空的字段覆盖主配置，
+    空字段回落主配置（PRD §5.7：便宜模型做生成；task 供画像演进等后台静默任务）。未配置时抛友好错误。
     request_timeout：可选的短超时（如设置页"测试连接"传 15s，避免不可达网关卡住几分钟）。
     """
     row = await db.get(AppSetting, "local")

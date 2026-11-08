@@ -185,6 +185,64 @@ class MisconceptionOut(BaseModel):
     tag: str
     evidence: str
     created_at: str
+    scope: str = "general"
+    source_type: str = ""
+    source_id: str = ""
+    # 证据溯源：人类可读出处描述 + 前端跳转路由（取不到留空）
+    source_label: str = ""
+    source_href: str = ""
+
+
+async def _misconception_outs(db: AsyncSession, misconceptions) -> list[MisconceptionOut]:
+    """盲区出参装配：附带学科域与证据出处（练习/题库/划线对话的回溯信息）。"""
+    outs: list[MisconceptionOut] = []
+    for m in misconceptions:
+        label, href = "", ""
+        try:
+            if m.source_type == "exercise" and m.source_id:
+                from app.models import Document, Exercise
+
+                ex = await db.get(Exercise, m.source_id)
+                if ex is not None:
+                    label = f"闯关练习：{ex.title[:40]}"
+                    doc = await db.get(Document, ex.document_id) if ex.document_id else None
+                    if doc is not None:
+                        href = f"/courses/{doc.course_id}"
+            elif m.source_type == "bank_question" and m.source_id:
+                from app.models.bank import BankQuestion
+
+                bq = await db.get(BankQuestion, m.source_id)
+                if bq is not None:
+                    label = f"题库题目：{bq.title[:40]}"
+                    href = f"/bank/{bq.bank_id}"
+            elif m.source_type == "conversation" and m.source_id:
+                from app.models import Annotation, Conversation
+
+                conv = await db.get(Conversation, m.source_id)
+                if conv is not None:
+                    label = "划线问答"
+                    if conv.annotation_id:
+                        ann = await db.get(Annotation, conv.annotation_id)
+                        if ann is not None:
+                            label = f"划线问答：{ann.exact[:40]}"
+                            href = f"/read/{ann.document_id}"
+        except Exception:  # noqa: BLE001  溯源信息缺失不阻断画像读取
+            label, href = "", ""
+        outs.append(
+            MisconceptionOut(
+                id=m.id,
+                topic=m.topic,
+                tag=m.tag,
+                evidence=m.evidence or "",
+                created_at=m.created_at,
+                scope=m.scope or "general",
+                source_type=m.source_type or "",
+                source_id=m.source_id or "",
+                source_label=label,
+                source_href=href,
+            )
+        )
+    return outs
 
 
 class LearnerProfileOut(BaseModel):
@@ -213,16 +271,7 @@ async def get_profile(db: AsyncSession = Depends(get_db)):
         background_summary=profile.background_summary or "",
         socratic_mode=profile.socratic_mode,
         updated_at=profile.updated_at,
-        misconceptions=[
-            MisconceptionOut(
-                id=m.id,
-                topic=m.topic,
-                tag=m.tag,
-                evidence=m.evidence or "",
-                created_at=m.created_at,
-            )
-            for m in misconceptions
-        ],
+        misconceptions=await _misconception_outs(db, misconceptions),
     )
 
 
@@ -247,16 +296,7 @@ async def update_profile(body: UpdateProfileIn, db: AsyncSession = Depends(get_d
         background_summary=profile.background_summary or "",
         socratic_mode=profile.socratic_mode,
         updated_at=profile.updated_at,
-        misconceptions=[
-            MisconceptionOut(
-                id=m.id,
-                topic=m.topic,
-                tag=m.tag,
-                evidence=m.evidence or "",
-                created_at=m.created_at,
-            )
-            for m in misconceptions
-        ],
+        misconceptions=await _misconception_outs(db, misconceptions),
     )
 
 

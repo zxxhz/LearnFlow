@@ -118,11 +118,34 @@ export default function MarkdownLite({
           }
         })
         .catch((err: unknown) => {
-          if (canvas.isConnected) {
-            // 错误消息可能携带后端回显的 LLM 可控表达式文本，插入 innerHTML 前必须转义
-            const msg = md.utils.escapeHtml((err as Error).message || "表达式解析异常");
-            canvas.innerHTML = `<div class="text-xs text-red-500 py-2">⚠️ 函数图像生成失败：${msg}</div>`;
-          }
+          if (!canvas.isConnected) return;
+          // 错误消息可能携带后端回显的 LLM 可控表达式文本，插入 innerHTML 前必须转义
+          const msg = md.utils.escapeHtml((err as Error).message || "表达式解析异常");
+          canvas.innerHTML = `<div class="text-xs text-red-500 py-2 flex flex-wrap items-center gap-2"><span>⚠️ 函数图像生成失败：${msg}</span></div>`;
+          // 一键 AI 自修：把原表达式与报错交给后端修正，成功即换缓存重绘（DOM 按钮避免 innerHTML 注入）
+          const fixBtn = document.createElement("button");
+          fixBtn.type = "button";
+          fixBtn.textContent = "🤖 AI 修正";
+          fixBtn.className =
+            "shrink-0 rounded-md border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/40 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300 transition hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-50";
+          fixBtn.title = "让 AI 根据报错自动修正函数表达式并重绘";
+          fixBtn.onclick = async () => {
+            fixBtn.disabled = true;
+            fixBtn.textContent = "🤖 AI 修正中…";
+            try {
+              const fixed = await api.math.fix({ expressions, error: (err as Error).message || "" });
+              const clean = cachePlotSvg(fixed.expressions, fixed.svg);
+              if (canvas.isConnected) {
+                canvas.innerHTML = `<div class="plot-svg w-full [&_svg]:h-auto [&_svg]:max-w-full">${clean}</div>`;
+              }
+            } catch (fixErr: unknown) {
+              if (canvas.isConnected) {
+                const fixMsg = md.utils.escapeHtml((fixErr as Error).message || "AI 修正失败");
+                canvas.innerHTML = `<div class="text-xs text-red-500 py-2">⚠️ AI 修正失败：${fixMsg}</div>`;
+              }
+            }
+          };
+          canvas.appendChild(fixBtn);
         });
     });
   }, [html, deferMath]);

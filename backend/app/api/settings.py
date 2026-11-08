@@ -119,7 +119,7 @@ async def update_settings(body: SettingsUpdate, db: AsyncSession = Depends(get_d
         scenes_old = current.get("scenes") or {}
         current["scenes"] = {
             name: _blank_inherit(scenes_old.get(name) or {}, scenes_new.get(name) or {})
-            for name in ("generation", "chat")
+            for name in ("generation", "chat", "task")
         }
     if body.preferences is not None:
         row.preferences = json.dumps(body.preferences.model_dump())

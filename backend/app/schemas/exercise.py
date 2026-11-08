@@ -117,6 +117,8 @@ class ExerciseOut(ORMModel):
     order_index: int = 0
     is_hard_bone: bool = False
     parent_exercise_id: str = ""
+    # 落库前沙箱自验结果：0 存量未验 / 1 已实测 / 2 输出已校准
+    self_verified: int = 0
     hints: list[str] = []
     created_at: str
     # 闯关状态：同一知识点内前一关通过后才可作答（小测题/非代码题恒为可作答）

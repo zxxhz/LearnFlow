@@ -18,6 +18,10 @@ hiddenimports = [
     # 拍照导入/拍照解题（services/images.py）：图片缩放压缩
     "PIL",
     "PIL.ImageOps",
+    # 轻量 PDF 导入（services/pdf_extract.py 函数内 import）：pdfium 二进制随包分发
+    "pypdfium2",
+    "pypdfium2.raw",
+    "pypdfium2_raw",
     "anyio._backends._asyncio",
     # Windows 原生证书信任链注入，消除 GitHub API SSL 校验失败
     "truststore",

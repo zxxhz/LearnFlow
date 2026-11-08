@@ -1,8 +1,19 @@
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../../lib/api";
-import type { LearnerProfile } from "../../lib/types";
+import type { LearnerProfile, LearnerMisconception } from "../../lib/types";
+
+const SCOPE_META: Record<string, { label: string; cls: string }> = {
+  coding: { label: "💻 编程", cls: "bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-400 border-sky-200/60 dark:border-sky-800/60" },
+  math: { label: "∑ 数理", cls: "bg-violet-50 dark:bg-violet-950/60 text-violet-700 dark:text-violet-400 border-violet-200/60 dark:border-violet-800/60" },
+  theory: { label: "📖 理论", cls: "bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border-emerald-200/60 dark:border-emerald-800/60" },
+  general: { label: "🌐 通用", cls: "bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200/60 dark:border-gray-700/60" },
+};
+
+const scopeMeta = (scope?: string | null) => SCOPE_META[scope || "general"] || SCOPE_META.general;
 
 export const LearnerProfileSection: React.FC = () => {
+  const navigate = useNavigate();
   const [profile, setProfile] = useState<LearnerProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -279,40 +290,66 @@ export const LearnerProfileSection: React.FC = () => {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {profile.misconceptions.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex flex-col justify-between p-3.5 rounded-xl border border-gray-200/80 dark:border-gray-800 bg-white dark:bg-gray-900/60 shadow-xs hover:border-brand-300 dark:hover:border-brand-700/60 transition group"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-gray-800 dark:text-gray-100 line-clamp-1">
-                          {item.topic}
-                        </span>
-                        {item.tag && (
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800/60 shrink-0">
-                            {item.tag}
+                {profile.misconceptions.map((item: LearnerMisconception) => {
+                  const scope = scopeMeta(item.scope);
+                  return (
+                    <div
+                      key={item.id}
+                      className="flex flex-col justify-between p-3.5 rounded-xl border border-gray-200/80 dark:border-gray-800 bg-white dark:bg-gray-900/60 shadow-xs hover:border-brand-300 dark:hover:border-brand-700/60 transition group"
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-gray-800 dark:text-gray-100 line-clamp-1">
+                            {item.topic}
                           </span>
+                          <span className="flex items-center gap-1 shrink-0">
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${scope.cls}`}>
+                              {scope.label}
+                            </span>
+                            {item.tag && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800/60">
+                                {item.tag}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        {item.evidence && (
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5 line-clamp-2 leading-relaxed">
+                            {item.evidence}
+                          </p>
                         )}
                       </div>
-                      {item.evidence && (
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5 line-clamp-2 leading-relaxed">
-                          {item.evidence}
-                        </p>
-                      )}
-                    </div>
 
-                    <div className="mt-3 pt-2.5 border-t border-gray-100 dark:border-gray-800/80 flex items-center justify-end">
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteMisconception(item.id, item.topic)}
-                        className="text-[11px] text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300 flex items-center gap-1 font-medium transition"
-                      >
-                        <span>✓</span> 已掌握，移除
-                      </button>
+                      <div className="mt-3 pt-2.5 border-t border-gray-100 dark:border-gray-800/80 flex items-center justify-between gap-2">
+                        <span className="min-w-0 flex-1">
+                          {item.source_label ? (
+                            item.source_href ? (
+                              <button
+                                type="button"
+                                onClick={() => navigate(item.source_href!)}
+                                title="点击回溯到当时的原始作答或划线对话"
+                                className="text-[11px] text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 truncate max-w-full block text-left transition"
+                              >
+                                🔍 {item.source_label}
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-gray-400 truncate max-w-full block">
+                                🔍 {item.source_label}
+                              </span>
+                            )
+                          ) : null}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteMisconception(item.id, item.topic)}
+                          className="text-[11px] text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300 flex items-center gap-1 font-medium transition shrink-0"
+                        >
+                          <span>✓</span> 已掌握，移除
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

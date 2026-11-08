@@ -51,7 +51,12 @@ class LearnerProfile(Base):
 
 
 class LearnerMisconception(UUIDPk, CreatedAt, Base):
-    """学习者认知漏洞与高频易错标签（用于伴学出题与针对性导学）。"""
+    """学习者认知漏洞与高频易错标签（用于伴学出题与针对性导学）。
+
+    scope：所属学科（coding/math/theory/general），Prompt 注入时按学科过滤防串味；
+    source_type/source_id：证据来源（exercise/bank_question/conversation + 对象 id），
+    支持从盲区一键回溯到当时的原始作答或对话。
+    """
 
     __tablename__ = "learner_misconceptions"
 
@@ -60,4 +65,7 @@ class LearnerMisconception(UUIDPk, CreatedAt, Base):
     evidence: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(20), default="active")
     resolved_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    scope: Mapped[str] = mapped_column(String(20), default="general")
+    source_type: Mapped[str] = mapped_column(String(20), default="")
+    source_id: Mapped[str] = mapped_column(String(64), default="")
 

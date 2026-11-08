@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import re
+from typing import Any
 from pydantic import BaseModel
 
 from sqlalchemy import func, or_, select
@@ -21,16 +22,21 @@ from app.models.exercise import (
     EXERCISE_CONCEPT,
     EXERCISE_FILL,
     EXERCISE_MATH,
+    SELF_VERIFIED_CALIBRATED,
+    SELF_VERIFIED_NONE,
+    SELF_VERIFIED_PASSED,
 )
 from app.schemas.exercise import (
 
     ConceptGrade,
     ExerciseAttemptOut,
+    ExerciseDraftItem,
     ExerciseDraftSet,
     ExerciseOut,
 )
 from app.services.execution.runner import run_code
 from app.services.llm import create_adapter_from_settings
+from app.services.profile import MISCONCEPTION_SOURCE_EXERCISE, trigger_misconception_auto_resolve
 from app.services.prompt import render_prompt
 from app.services.prefs import get_preferences
 from app.services.sections_text import get_section_text
@@ -170,6 +176,137 @@ def check_math_equality(user_expr_str: str, expected_expr_str: str) -> bool:
         return "".join(u_str.split()).lower() == "".join(e_str.split()).lower()
 
 
+# ---------------- 出题落库前沙箱自验（吸收 DeepTutor Critic-Guided 出题验证） ----------------
+
+
+class _SelfFixOutput(BaseModel):
+    """自验失败时 LLM 的修正输出（code 题用 reference_code/expected_output，math 题用后两个）。"""
+
+    reference_code: str = ""
+    expected_output: str = ""
+    reference_answer: str = ""
+
+
+def _math_expr_parseable(expr: str) -> bool:
+    """数学答案表达式能否被安全解析（与判题同口径：白名单预检 + sympify）。"""
+    import sympy as sp
+
+    from app.services.expr_guard import assert_math_expr_safe
+
+    t = (expr or "").strip()
+    if not t:
+        return False
+    try:
+        norm = t.replace("^", "**")
+        assert_math_expr_safe(norm)
+        symbols_dict = {name: sp.Symbol(name) for name in "xyztabcn"}
+        sp.sympify(norm, locals=symbols_dict)
+        return True
+    except Exception:
+        return False
+
+
+async def _selfverify_code(
+    lang: str,
+    code: str,
+    expected: str,
+    fixer=None,
+) -> tuple[str, str, int] | None:
+    """沙箱实测参考代码与预期输出的一致性。
+
+    返回 (code, expected, self_verified)；无法修复（编译/运行失败且修正后仍失败）
+    返回 None，调用方丢弃该题，绝不让坏题卡死学习者。
+    fixer：LLM 修正回调 (problem) -> dict | None；None 表示无 LLM 可用（纯确定性兜底）。
+    """
+    code = (code or "").strip()
+    expected = expected or ""
+    if not code:
+        return None
+    result = await run_code(lang, code)
+    if result.get("status") == "success":
+        actual = normalize_output(result.get("stdout", ""))
+        if actual == normalize_output(expected):
+            return code, expected, SELF_VERIFIED_PASSED
+        if fixer is not None:
+            try:
+                fixed = await fixer(
+                    "参考代码运行成功，但实际输出与预期输出不一致。\n"
+                    f"[实际输出]\n{actual[:2000]}\n[预期输出]\n{normalize_output(expected)[:2000]}\n"
+                    "请修正参考代码或预期输出，使二者严格一致。",
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("exercise self-fix failed: %s", e)
+                fixed = None
+            if fixed:
+                f_code = fixed.get("reference_code", "").strip()
+                f_expected = fixed.get("expected_output", "").strip() or expected
+                if f_code:
+                    r2 = await run_code(lang, f_code)
+                    if r2.get("status") == "success":
+                        a2 = normalize_output(r2.get("stdout", ""))
+                        if a2 == normalize_output(f_expected):
+                            return f_code, f_expected, SELF_VERIFIED_PASSED
+                        # 修正后仍不一致：执行结果是确定性事实，按实际输出校准
+                        return f_code, r2.get("stdout", ""), SELF_VERIFIED_CALIBRATED
+        # 无 LLM 或修正无效：直接按实际输出校准（保证题目可判、代码可复现）
+        return code, result.get("stdout", ""), SELF_VERIFIED_CALIBRATED
+    # 运行失败：LLM 带 stderr 修正一次；仍失败丢弃
+    if fixer is not None:
+        try:
+            fixed = await fixer(
+                f"参考代码无法通过编译或运行（状态：{result.get('status')}）。\n"
+                f"[报错信息]\n{(result.get('stderr') or '')[:2000]}\n"
+                "请修复参考代码，使其成功运行并输出预期结果。",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("exercise self-fix failed: %s", e)
+            fixed = None
+        if fixed:
+            f_code = fixed.get("reference_code", "").strip()
+            f_expected = fixed.get("expected_output", "").strip() or expected
+            if f_code:
+                r2 = await run_code(lang, f_code)
+                if r2.get("status") == "success" and normalize_output(
+                    r2.get("stdout", "")
+                ) == normalize_output(f_expected):
+                    return f_code, f_expected, SELF_VERIFIED_PASSED
+    return None
+
+
+async def _selfverify_math(
+    expected: str,
+    reference_answer: str,
+    fixer=None,
+) -> tuple[str, str, int] | None:
+    """数学关草稿自验：期望答案与参考答案表达式必须可被 SymPy 安全解析。
+
+    返回 (expected, reference_answer, self_verified)；无法修复返回 None。
+    """
+    expected = (expected or "").strip() or (reference_answer or "").strip()
+    ref = (reference_answer or "").strip()
+    if not expected:
+        return None
+    candidates = [expected] + ([ref] if ref and ref != expected else [])
+    if all(_math_expr_parseable(c) for c in candidates):
+        return expected, ref, SELF_VERIFIED_PASSED
+    if fixer is not None:
+        try:
+            fixed = await fixer(
+                f"数学答案表达式无法被 SymPy 解析或不符合安全白名单：{expected[:500]}",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("exercise self-fix failed: %s", e)
+            fixed = None
+        if fixed:
+            f_expected = fixed.get("expected_output", "").strip() or fixed.get(
+                "reference_answer", ""
+            ).strip()
+            f_ref = fixed.get("reference_answer", "").strip()
+            if f_expected and _math_expr_parseable(f_expected):
+                return f_expected, f_ref, SELF_VERIFIED_PASSED
+    return None
+
+
 async def _kp_context(db: AsyncSession, kp: KnowledgePoint) -> tuple[Document, list[str]]:
 
     document = await db.get(Document, kp.document_id)
@@ -280,15 +417,67 @@ async def generate_for_kp(
         ExerciseDraftSet,
     )
 
+    # —— 落库前沙箱自验（吸收 DeepTutor Critic-Guided 验证）：code/math 草稿先实测再入库，
+    # 修不好的直接丢弃，绝不让"预期输出算错/代码跑不通"的坏题卡死学习者 ——
+    verified: list[tuple[ExerciseDraftItem, int]] = []
+    for item in drafts.exercises:
+        if not item.is_complete():
+            logger.warning("skip incomplete exercise draft: kind=%s title=%s", item.kind, item.title)
+            continue
+
+        async def _fixer(problem: str, _item=item) -> dict[str, str] | None:
+            try:
+                prompt = render_prompt(
+                    "exercise_selffix",
+                    KIND=_item.kind,
+                    TASK=_item.task[:6000],
+                    LANGUAGE=_item.language or language or "python",
+                    REFERENCE_CODE=_item.reference_code or "（无）",
+                    EXPECTED_OUTPUT=_item.expected_output or "（无）",
+                    REFERENCE_ANSWER=(getattr(_item, "reference_answer", "") or "（无）"),
+                    PROBLEM=problem,
+                )
+                out = await adapter.chat_json(
+                    [{"role": "user", "content": prompt}], _SelfFixOutput
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("exercise self-fix LLM failed: %s", e)
+                return None
+            return {
+                "reference_code": out.reference_code,
+                "expected_output": out.expected_output,
+                "reference_answer": out.reference_answer,
+            }
+
+        flag = SELF_VERIFIED_NONE
+        if item.kind == EXERCISE_CODE:
+            res = await _selfverify_code(
+                item.resolved_language(language), item.reference_code, item.expected_output, _fixer
+            )
+            if res is None:
+                logger.warning("exercise draft dropped by self-verify: kind=code title=%s", item.title)
+                continue
+            code2, exp2, flag = res
+            item = item.model_copy(update={"reference_code": code2, "expected_output": exp2})
+        elif item.kind == EXERCISE_MATH:
+            res = await _selfverify_math(item.expected_output, item.reference_answer, _fixer)
+            if res is None:
+                logger.warning("exercise draft dropped by self-verify: kind=math title=%s", item.title)
+                continue
+            exp2, ref2, flag = res
+            item = item.model_copy(update={"expected_output": exp2, "reference_answer": ref2})
+        verified.append((item, flag))
+
+    if not verified:
+        raise ValueError("生成的练习题均未通过落库前自验，请重试")
+
+    # 旧练习的删除必须放在自验通过之后：生成/自验失败时不能误删学习者已有的关卡与作答
     affected_quiz_ids = await delete_kp_exercises(db, [kp.id])
     if affected_quiz_ids:
         from app.services.quiz import cleanup_empty_quizzes
         await cleanup_empty_quizzes(db, affected_quiz_ids)
     saved: list[Exercise] = []
-    for idx, item in enumerate(drafts.exercises):
-        if not item.is_complete():
-            logger.warning("skip incomplete exercise draft: kind=%s title=%s", item.kind, item.title)
-            continue
+    for idx, (item, vflag) in enumerate(verified):
         row = Exercise(
             knowledge_point_id=kp.id,
             document_id=kp.document_id,
@@ -319,11 +508,10 @@ async def generate_for_kp(
             ),
             options=json.dumps(item.options, ensure_ascii=False) if item.kind == EXERCISE_CHOICE else "",
             answer=item.stored_answer(),
+            self_verified=vflag,
         )
         db.add(row)
         saved.append(row)
-    if not saved:
-        raise ValueError("生成的练习题不完整，请重试")
     await db.commit()
     return saved
 
@@ -338,6 +526,46 @@ async def list_for_document(db: AsyncSession, document_id: str) -> list[Exercise
         )
     ).all()
     return await _attach_meta(db, exercises)
+
+
+async def summarize_section_practice_impact(
+    db: AsyncSession, document_id: str, section_id: str
+) -> list[dict[str, Any]]:
+    """讲义单段修订后，汇总挂在该段上的知识点与练习（修订一致性提醒）。
+
+    返回 [{kp_id, kp_title, exercise_count, language}]；按 KnowledgePoint.section_ids
+    （JSON 数组）匹配段落。这些练习的口径可能因段落修订而过期，由前端提示重新生成。
+    """
+    kps = (
+        await db.scalars(
+            select(KnowledgePoint).where(KnowledgePoint.document_id == document_id)
+        )
+    ).all()
+    affected: list[dict[str, Any]] = []
+    for kp in kps:
+        try:
+            sids = json.loads(kp.section_ids) if kp.section_ids else []
+        except (json.JSONDecodeError, TypeError):
+            sids = []
+        if section_id not in sids:
+            continue
+        exs = (
+            await db.scalars(
+                select(Exercise).where(
+                    Exercise.knowledge_point_id == kp.id, Exercise.quiz_id == ""
+                )
+            )
+        ).all()
+        lang = next((e.language for e in exs if e.language), "python")
+        affected.append(
+            {
+                "kp_id": kp.id,
+                "kp_title": kp.title,
+                "exercise_count": len(exs),
+                "language": lang,
+            }
+        )
+    return affected
 
 
 async def _attach_meta(db: AsyncSession, exercises: list[Exercise]) -> list[ExerciseOut]:
@@ -560,6 +788,9 @@ async def submit(
 
     db.add(attempt)
     await db.commit()
+    # 盲区证据闭环：独立做对（未存疑）时自动关闭挂在该题上的盲区
+    if passed and not is_doubtful:
+        trigger_misconception_auto_resolve(MISCONCEPTION_SOURCE_EXERCISE, exercise.id)
     return attempt
 
 
@@ -701,7 +932,51 @@ async def generate_bridge_exercises(db: AsyncSession, exercise_id: str) -> list[
         schema=BridgeExercisesOutput,
     )
 
-    # 生成前先清掉该父题下的旧搭桥小题（含作答），避免反复生成无限叠加
+    # —— 落库前沙箱自验：搭桥小题全部为代码关，实测修正后再替换旧小题 ——
+    verified_bridges: list[tuple[BridgeItem, int]] = []
+    for item in result.bridge_exercises:
+        # 题面/目标输出缺失的小题无法判题，直接跳过
+        if not item.task.strip() or not item.expected_output.strip():
+            logger.warning("skip incomplete bridge exercise draft: title=%s", item.title)
+            continue
+
+        async def _bridge_fixer(problem: str, _item=item) -> dict[str, str] | None:
+            try:
+                fix_prompt = render_prompt(
+                    "exercise_selffix",
+                    KIND="code",
+                    TASK=_item.task[:6000],
+                    LANGUAGE=_item.language or ex.language or "python",
+                    REFERENCE_CODE=_item.reference_code or "（无）",
+                    EXPECTED_OUTPUT=_item.expected_output or "（无）",
+                    REFERENCE_ANSWER="（无）",
+                    PROBLEM=problem,
+                )
+                out = await adapter.chat_json(
+                    [{"role": "user", "content": fix_prompt}], _SelfFixOutput
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning("bridge self-fix LLM failed: %s", e)
+                return None
+            return {"reference_code": out.reference_code, "expected_output": out.expected_output}
+
+        res = await _selfverify_code(
+            item.language or ex.language or "python",
+            item.reference_code,
+            item.expected_output,
+            _bridge_fixer,
+        )
+        if res is None:
+            logger.warning("bridge draft dropped by self-verify: title=%s", item.title)
+            continue
+        code2, exp2, flag = res
+        item = item.model_copy(update={"reference_code": code2, "expected_output": exp2})
+        verified_bridges.append((item, flag))
+
+    if not verified_bridges:
+        raise ValueError("生成的搭桥小题均未通过落库前自验，请重试")
+
+    # 自验通过后才清掉该父题下的旧搭桥小题（含作答），避免反复生成无限叠加
     old_bridges = (
         await db.scalars(select(Exercise).where(Exercise.parent_exercise_id == ex.id))
     ).all()
@@ -716,11 +991,7 @@ async def generate_bridge_exercises(db: AsyncSession, exercise_id: str) -> list[
         )
 
     created: list[Exercise] = []
-    for i, item in enumerate(result.bridge_exercises, 1):
-        # 题面/目标输出缺失的小题无法判题，直接跳过
-        if not item.task.strip() or not item.expected_output.strip():
-            logger.warning("skip incomplete bridge exercise draft: title=%s", item.title)
-            continue
+    for i, (item, vflag) in enumerate(verified_bridges, 1):
         bridge_ex = Exercise(
             knowledge_point_id=ex.knowledge_point_id,
             document_id=ex.document_id,
@@ -734,12 +1005,11 @@ async def generate_bridge_exercises(db: AsyncSession, exercise_id: str) -> list[
             hints=json.dumps([h for h in item.hints if str(h).strip()][:3], ensure_ascii=False),
             order_index=ex.order_index,
             parent_exercise_id=ex.id,
+            self_verified=vflag,
         )
         db.add(bridge_ex)
         created.append(bridge_ex)
 
-    if not created:
-        raise ValueError("未生成有效的搭桥小题，请重试")
     await db.commit()
     return created
 

@@ -418,6 +418,16 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
           {attempt?.is_doubtful && <Badge color="amber">🤔 存疑作答</Badge>}
           {exercise.is_hard_bone && <Badge color="amber">🦴 硬骨头暂存</Badge>}
           {exercise.parent_exercise_id && <Badge color="purple">🧱 支线阶梯</Badge>}
+          {exercise.self_verified === 1 && (
+            <Badge color="green" title="出题时已通过沙箱实测：参考实现与目标输出严格一致">
+              🧪 已实测
+            </Badge>
+          )}
+          {exercise.self_verified === 2 && (
+            <Badge color="amber" title="出题时模型给出的目标输出与实际运行结果不符，已按实际运行输出自动校准">
+              🧪 输出已校准
+            </Badge>
+          )}
           {attempt && isCode && STATUS_BADGE[attempt.status] && (
             <Badge color={STATUS_BADGE[attempt.status].color}>{STATUS_BADGE[attempt.status].label}</Badge>
           )}

@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Annotation, Conversation, Course, Document, Message, Section
-from app.services.profile import format_profile_for_prompt
+from app.services.profile import discipline_for_course, format_profile_for_prompt
 from app.services.prompt import render_prompt
 from app.services.sections_text import get_section_text
 
@@ -44,7 +44,8 @@ async def build_annotation_messages(
             label = "上一章" if offset == -1 else "下一章"
             neighbors.append(f"{label}《{n.title}》摘要：{n.summary}")
 
-    profile_text = await format_profile_for_prompt(db)
+    # 按课程学科域过滤盲区注入，防止跨学科串味（如 C++ 盲区混进高数答疑）
+    profile_text = await format_profile_for_prompt(db, scope=discipline_for_course(course))
     system = render_prompt(
         "annotation_qa",
         COURSE_TITLE=course.title,

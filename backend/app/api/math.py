@@ -171,3 +171,79 @@ async def render(body: PlotRequest):
         logger.exception("math render failed")
         raise HTTPException(status_code=400, detail="绘图失败，请稍后重试")
     return {"svg": svg}
+
+
+class PlotFixRequest(BaseModel):
+    """绘图失败后的一键 AI 自修请求（吸收 DeepTutor Visual Repair 闭环思路）。"""
+
+    expressions: str
+    error: str
+    x_min: float = -10.0
+    x_max: float = 10.0
+
+    @field_validator("expressions")
+    @classmethod
+    def _non_empty_expr(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("表达式为空")
+        if len(v) > 4000:
+            raise ValueError("表达式过长")
+        return v
+
+    @field_validator("error")
+    @classmethod
+    def _bound_error(cls, v: str) -> str:
+        return (v or "")[:1000]
+
+
+class PlotFixOutput(BaseModel):
+    expressions: str
+
+    @field_validator("expressions")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("模型未返回修正后的表达式")
+        if len(v) > 4000:
+            raise ValueError("修正后的表达式过长")
+        return v
+
+
+@router.post("/fix")
+async def fix_plot(body: PlotFixRequest):
+    """根据渲染报错让 LLM 只修正函数表达式，并当场验证可渲染后返回 SVG。"""
+    from app.core.db import async_session_factory
+    from app.services.llm import create_adapter_from_settings
+    from app.services.llm.errors import LLMError, LLMNotConfiguredError
+    from app.services.prompt import render_prompt
+
+    prompt = render_prompt(
+        "plot_fix",
+        ORIGINAL_EXPRESSIONS=body.expressions[:4000],
+        ERROR_MESSAGE=body.error[:1000],
+    )
+    # 仅用短会话读配置构建适配器，LLM 调用不占用数据库连接
+    async with async_session_factory() as db:
+        adapter = await create_adapter_from_settings(db, scene="chat")
+    try:
+        fixed: PlotFixOutput = await adapter.chat_json(
+            [{"role": "user", "content": prompt}], PlotFixOutput
+        )
+    except LLMNotConfiguredError:
+        raise HTTPException(status_code=400, detail="尚未配置 LLM 服务，无法自动修正表达式")
+    except LLMError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+    # 修正结果必须先过与 /render 完全相同的解析渲染路径，修不好就带着原因返回
+    try:
+        svg = await asyncio.wait_for(
+            asyncio.to_thread(render_sync, fixed.expressions, body.x_min, body.x_max),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=400, detail="修正后的表达式计算超时，请手动简化")
+    except HTTPException as e:
+        raise HTTPException(status_code=400, detail=f"AI 修正后仍无法绘图：{e.detail}")
+    except (OverflowError, TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="AI 修正后的表达式数值计算溢出或无效")
+    return {"expressions": fixed.expressions, "svg": svg}

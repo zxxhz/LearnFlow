@@ -707,6 +707,140 @@ def main() -> None:
         check("Agent 工具集（沙箱/绘图/查题）独立调用正常", asyncio.run(_test_agent_tools()))
 
 
+    # 6.63 认知画像分学科隔离 + 证据链回溯 + 盲区自动闭环（v0.4.69）
+    async def _test_profile_scope_and_evidence():
+        from app.core.db import async_session_factory as _db_factory
+        from sqlalchemy import select as _select
+
+        from app.models import Exercise as _Exercise
+        from app.models.study import LearnerMisconception
+        from app.services.profile import format_profile_for_prompt
+
+        async with _db_factory() as db:
+            # 用 API 视角取一道真实存在的代码题作为证据来源（不依赖前段局部变量）
+            code_ex = (
+                await db.scalars(
+                    _select(_Exercise).where(
+                        _Exercise.document_id == document_id,
+                        _Exercise.kind == "code",
+                        _Exercise.quiz_id == "",
+                        _Exercise.parent_exercise_id == "",
+                    )
+                )
+            ).first()
+            misc_code = LearnerMisconception(
+                topic="C++ 指针算术步长", tag="概念混淆", evidence="冒烟测试用",
+                status="active", scope="coding",
+                source_type="exercise", source_id=code_ex.id,
+            )
+            misc_math = LearnerMisconception(
+                topic="复合函数链式法则", tag="公式条件误用", evidence="冒烟测试用",
+                status="active", scope="math",
+            )
+            db.add_all([misc_code, misc_math])
+            await db.commit()
+            coding_text = await format_profile_for_prompt(db, scope="coding")
+            math_text = await format_profile_for_prompt(db, scope="math")
+            all_text = await format_profile_for_prompt(db)
+            return misc_code.id, code_ex.id, (
+                "指针算术步长" in coding_text and "链式法则" not in coding_text
+                and "链式法则" in math_text and "指针算术步长" not in math_text
+                and "指针算术步长" in all_text and "链式法则" in all_text
+            )
+
+    misc_code_id, misc_src_ex_id, scope_ok = asyncio.run(_test_profile_scope_and_evidence())
+    check("画像盲区分学科注入过滤（coding/math 互不串味，全量兼容）", scope_ok)
+    s, p_body = call(base, "/api/study/profile", "GET")
+    scoped = next((m for m in p_body.get("misconceptions", []) if m["id"] == misc_code_id), None)
+    check(
+        "画像 API 回显 scope 与证据出处（练习溯源）",
+        s == 200 and scoped is not None and scoped.get("scope") == "coding"
+        and "闯关练习" in (scoped.get("source_label") or ""),
+        json.dumps(scoped, ensure_ascii=False)[:200] if scoped else str(s),
+    )
+    # 盲区证据闭环：来源题独立做对（未存疑）→ 盲区自动 resolved
+    s, body = call(base, f"/api/exercises/{misc_src_ex_id}/submit", "POST", {"content": "print('2 + 3 =', 2 + 3)"})
+    check("来源题独立做对（自动闭环前置）", s == 200 and body.get("passed") is True, str(body)[:150])
+    auto_ok = False
+    for _ in range(20):
+        s, p_body = call(base, "/api/study/profile", "GET")
+        if all(m["id"] != misc_code_id for m in p_body.get("misconceptions", [])):
+            auto_ok = True
+            break
+        time.sleep(0.3)
+    check("独立做对后盲区自动 resolved（证据闭环）", auto_ok)
+
+    # 6.64 出题落库前沙箱自验（v0.4.69，fixer=None 纯确定性路径）
+    async def _test_selfverify():
+        from app.services.exercise import _selfverify_code, _selfverify_math
+
+        r1 = await _selfverify_code("python", "print('hello')", "hello")
+        r2 = await _selfverify_code("python", "print('hello')", "world")
+        r3 = await _selfverify_code("python", "def broken(:\n", "x")
+        m1 = await _selfverify_math("x**2 + 2*x + 1", "(x+1)**2")
+        m2 = await _selfverify_math("这不是数学(((", "")
+        return r1, r2, r3, m1, m2
+
+    r1, r2, r3, m1, m2 = asyncio.run(_test_selfverify())
+    check("自验：代码实测一致 → verified=1", r1 is not None and r1[2] == 1, str(r1))
+    check(
+        "自验：输出不符且无 LLM → 按实际输出校准 verified=2",
+        r2 is not None and r2[2] == 2 and "hello" in (r2[1] or ""),
+        str(r2),
+    )
+    check("自验：编译失败且无 LLM → 丢弃", r3 is None, str(r3))
+    check("自验：数学表达式可解析 → verified=1", m1 is not None and m1[2] == 1, str(m1))
+    check("自验：非法数学表达式 → 丢弃", m2 is None, str(m2))
+
+    # 6.645 讲义单段修订 → 下游练习一致性提醒（v0.4.69）
+    async def _link_kp_to_paragraph_section() -> str:
+        from app.core.db import async_session_factory as _db_factory
+        from sqlalchemy import select as _select
+
+        from app.models import KnowledgePoint, Section
+
+        async with _db_factory() as db:
+            sec = (
+                await db.scalars(
+                    _select(Section)
+                    .where(Section.document_id == document_id, Section.block_type == "paragraph")
+                    .order_by(Section.order_index)
+                )
+            ).first()
+            kp_row = await db.get(KnowledgePoint, kp_id)
+            kp_row.section_ids = json.dumps([sec.id])
+            await db.commit()
+            return sec.id
+
+    _rev_sec_id = asyncio.run(_link_kp_to_paragraph_section())
+    s, body = call(
+        base,
+        f"/api/documents/{document_id}/sections/{_rev_sec_id}/revise",
+        "POST",
+        {"instruction": "冒烟测试修订", "apply": True, "revised_markdown": "修订后的段落：指针是存放内存地址的变量，冒烟测试专用表述。"},
+    )
+    check(
+        "讲义修订 apply 成功且返回 affected_practice（命中 1 个 KP / 5 道练习）",
+        s == 200 and body.get("applied") is True
+        and len(body.get("affected_practice") or []) == 1
+        and body["affected_practice"][0]["exercise_count"] == 5,
+        json.dumps(body.get("affected_practice"), ensure_ascii=False)[:200],
+    )
+
+    # 6.646 场景槽位第三槽 task（v0.4.69）：写入 + 留空继承
+    s, body = call(base, "/api/settings", "PUT", {"scenes": {"task": {"base_url": "https://task.example.com/v1", "api_key": "task-key-12345678", "model": "task-model-x"}}})
+    check("task 场景槽位写入", s == 200 and body["scenes"]["task"]["model"] == "task-model-x", str(body)[:150])
+    s, body = call(base, "/api/settings", "PUT", {"scenes": {"task": {"model": ""}}})
+    check(
+        "task 槽位 model 留空回落主配置（api_key 继承不丢）",
+        s == 200 and body["scenes"]["task"]["model"] == "" and (body["scenes"]["task"]["api_key"] or "") != "",
+        str(body)[:150],
+    )
+
+    # 6.647 绘图 AI 自修端点（v0.4.69）：未配 LLM → 400 友好提示
+    s, body = call(base, "/api/math/fix", "POST", {"expressions": "sin(x", "error": "无法解析"})
+    check("绘图 AI 自修未配 LLM → 400", s == 400 and "LLM" in str(body.get("detail", "")), str(body)[:150])
+
     # 6.65 课程改名（PATCH title）
     s, orig_course = call(base, f"/api/courses/{course_id}")
     s, body = call(base, f"/api/courses/{course_id}", "PATCH", {"title": "指针入门（已改名）"})
@@ -812,6 +946,51 @@ def main() -> None:
     check(
         "非法表达式 → 400 中文提示",
         s == 400 and ("无法解析" in str(body.get("detail", "")) or "未知符号" in str(body.get("detail", ""))),
+        str(body)[:150],
+    )
+
+    # 9.5 轻量 PDF 导入（v0.4.69）：文本层直取零 LLM / 扫描版未配 LLM 友好 400
+    def _make_smoke_pdf(with_text: bool) -> bytes:
+        """手工拼装带 xref 的最小合法 PDF（不引第三方构造依赖）。"""
+        if with_text:
+            lines = [f"LearnFlow PDF smoke line {i}: pointer and memory basics" for i in range(12)]
+            stream = "BT /F1 12 Tf 40 750 Td 14 TL\n" + "".join(f"({l}) Tj T*\n" for l in lines) + "ET"
+        else:
+            stream = ""
+        objs = [
+            b"<</Type/Catalog/Pages 2 0 R>>",
+            b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+            b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>",
+            f"<</Length {len(stream)}>>stream\n{stream}\nendstream".encode("utf-8"),
+            b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+        ]
+        out = bytearray(b"%PDF-1.4\n")
+        offsets = []
+        for i, body_bytes in enumerate(objs, start=1):
+            offsets.append(len(out))
+            out += f"{i} 0 obj".encode() + body_bytes + b"endobj\n"
+        xref_pos = len(out)
+        out += f"xref\n0 {len(objs) + 1}\n".encode()
+        out += b"0000000000 65535 f \n"
+        for off in offsets:
+            out += f"{off:010d} 00000 n \n".encode()
+        out += (
+            f"trailer<</Size {len(objs) + 1}/Root 1 0 R>>\nstartxref\n{xref_pos}\n%%EOF".encode()
+        )
+        return bytes(out)
+
+    s, body = call_multipart(base, "/api/courses/import/pdf-transcribe", {}, [("files", "smoke.pdf", _make_smoke_pdf(True))])
+    check(
+        "PDF 文本层直取（零 LLM）",
+        s == 200 and "LearnFlow PDF smoke line" in body.get("content", ""),
+        str(body)[:150],
+    )
+    s, body = call_multipart(base, "/api/courses/import/pdf-transcribe", {}, [("files", "not_pdf.txt", b"hello")])
+    check("PDF 导入非 PDF 文件 → 400", s == 400, str(body)[:120])
+    s, body = call_multipart(base, "/api/courses/import/pdf-transcribe", {}, [("files", "scan.pdf", _make_smoke_pdf(False))])
+    check(
+        "扫描版 PDF 未配 LLM → 400 友好提示",
+        s == 400 and "LLM" in str(body.get("detail", "")),
         str(body)[:150],
     )
 

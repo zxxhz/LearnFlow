@@ -3,6 +3,7 @@
 POST /api/courses/import/analyze  上传 md → 章节切分预览（+LLM 修饰课程标题）
 POST /api/courses/import          按确认的切片创建课程（原文归档 + 知识点提取 + 自动出卡）
 POST /api/courses/import/photo-transcribe  拍照/上传图片 → 视觉 LLM 转写为 Markdown 学习材料
+POST /api/courses/import/pdf-transcribe    轻量 PDF → Markdown（文本层直取；扫描版走视觉转写）
 """
 import asyncio
 import json
@@ -32,6 +33,12 @@ from app.services.imports import (
     detect_chapters,
     safe_filename,
     slice_text,
+)
+from app.services.pdf_extract import (
+    MAX_OCR_PAGES,
+    extract_pdf_text,
+    pdf_needs_ocr,
+    rasterize_pdf_to_data_urls,
 )
 from app.services.llm import (
     OpenAICompatAdapter,
@@ -152,23 +159,14 @@ async def _extract_kp(
         return None
 
 
-@router.post("/courses/import/photo-transcribe")
-async def import_photo_transcribe(
-    images: list[UploadFile] = File(...),
-    hint: str = Form(""),
-    db: AsyncSession = Depends(get_db),
-):
-    """拍照/上传书籍页面图片 → 视觉 LLM 转写为 Markdown 学习材料（解释扩充 + 例题补解答）。
-
-    返回 {content}；前端将其合成 File 复用现有 analyze/confirm 建课链路。
-    """
-    # Pillow 解码/缩放是秒级 CPU 活：放线程池跑，避免冻结事件循环（SSE/心跳全停）
-    data_urls = await asyncio.to_thread(compress_to_data_urls, images, MAX_PHOTO_IMAGES)
-    hint = (hint or "").strip()[:2_000]
+async def _vision_transcribe_markdown(
+    db: AsyncSession, data_urls: list[str], hint: str, source_label: str
+) -> str:
+    """把一组页面图片经视觉 LLM 转写为 Markdown 学习材料（拍照导入与 PDF 扫描版共用）。"""
     try:
         adapter = await create_adapter_from_settings(db, scene="generation")
     except Exception as e:  # noqa: BLE001
-        logger.info("photo transcribe adapter unavailable: %r", e)
+        logger.info("vision transcribe adapter unavailable: %r", e)
         raise HTTPException(
             status_code=400,
             detail="尚未配置 LLM 服务，请先到「设置」页填写 base_url、API Key 和模型名",
@@ -176,12 +174,12 @@ async def import_photo_transcribe(
 
     system_prompt = render_prompt("import_transcribe", HINT=hint.strip() or "（未填写）")
     instruction = (
-        f"请将以下 {len(data_urls)} 张书籍页面照片转写为 Markdown 学习材料，"
+        f"请将以下 {len(data_urls)} 张{source_label}转写为 Markdown 学习材料，"
         "按系统规则处理（忠实转写 + 概念通俗解释扩充 + 例题补全解题过程）。"
     )
     messages = build_vision_messages(system_prompt, instruction, data_urls)
     try:
-        # 改用流式聚合：防止 8 张照片长转写在静默生成期触发 httpx 180s read-timeout 挂断
+        # 流式聚合：防止长转写在静默生成期触发 httpx 180s read-timeout 挂断
         chunks: list[str] = []
         deltas = await adapter.chat(messages, stream=True)
         try:
@@ -197,7 +195,7 @@ async def import_photo_transcribe(
     except HTTPException:
         raise
     except Exception as e:  # noqa: BLE001
-        logger.exception("photo transcribe failed")
+        logger.exception("vision transcribe failed")
         # 常见根因：当前模型不支持 image content part（纯文本模型）
         raise HTTPException(
             status_code=502,
@@ -206,7 +204,82 @@ async def import_photo_transcribe(
 
     content = (content or "").strip()
     if not content:
-        raise HTTPException(status_code=502, detail="AI 未能从图片中转写出内容，请尝试更清晰的照片")
+        raise HTTPException(status_code=502, detail="AI 未能从图片中转写出内容，请尝试更清晰的页面图片")
+    return content
+
+
+@router.post("/courses/import/photo-transcribe")
+async def import_photo_transcribe(
+    images: list[UploadFile] = File(...),
+    hint: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """拍照/上传书籍页面图片 → 视觉 LLM 转写为 Markdown 学习材料（解释扩充 + 例题补解答）。
+
+    返回 {content}；前端将其合成 File 复用现有 analyze/confirm 建课链路。
+    """
+    # Pillow 解码/缩放是秒级 CPU 活：放线程池跑，避免冻结事件循环（SSE/心跳全停）
+    data_urls = await asyncio.to_thread(compress_to_data_urls, images, MAX_PHOTO_IMAGES)
+    content = await _vision_transcribe_markdown(db, data_urls, hint, "书籍页面照片")
+    return {"content": content}
+
+
+@router.post("/courses/import/pdf-transcribe")
+async def import_pdf_transcribe(
+    files: list[UploadFile] = File(...),
+    hint: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """轻量 PDF → Markdown 学习材料：有文本层直接抽取（零 LLM 零消耗），扫描版走视觉转写。
+
+    返回 {content}；前端将其合成虚拟 .md 文件复用现有 analyze/confirm 建课链路。
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="请选择至少一个 PDF 文件")
+    if len(files) > 3:
+        raise HTTPException(status_code=400, detail="一次最多导入 3 个 PDF 文件")
+    hint = (hint or "").strip()[:2_000]
+
+    md_parts: list[str] = []
+    for idx, f in enumerate(files):
+        name = safe_filename(f.filename or f"document_{idx + 1}.pdf")
+        if not name.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail=f"仅支持 PDF 文件，收到：{name}")
+        data = await f.read()
+        if len(data) > MAX_FILE_BYTES:
+            raise HTTPException(status_code=400, detail=f"PDF 过大（上限 5MB）：{name}")
+        if not data:
+            raise HTTPException(status_code=400, detail=f"PDF 文件为空：{name}")
+
+        # pdfium 解析是 CPU 活：放线程池，避免大文档冻结事件循环
+        try:
+            text, page_count = await asyncio.to_thread(extract_pdf_text, data)
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning("pdf text extract failed: %s (%r)", name, e)
+            raise HTTPException(
+                status_code=400, detail=f"PDF 无法解析（{name}）：文件可能已损坏或加密"
+            ) from e
+
+        if not pdf_needs_ocr(text, page_count):
+            # 文本层 route：直接可用，零 LLM 零消耗
+            md_parts.append(text.strip())
+            continue
+
+        # 扫描版/图片型：栅格化成页图走视觉转写（需要已配置 LLM）
+        try:
+            data_urls = await asyncio.to_thread(rasterize_pdf_to_data_urls, data, MAX_OCR_PAGES)
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning("pdf rasterize failed: %s (%r)", name, e)
+            raise HTTPException(status_code=400, detail=f"扫描版 PDF 页面渲染失败（{name}）") from e
+        md_parts.append(await _vision_transcribe_markdown(db, data_urls, hint, f"扫描版 PDF（{name}）页面"))
+
+    content = "\n\n".join(p for p in md_parts if p).strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="未能从 PDF 中提取到任何内容")
     return {"content": content}
 
 

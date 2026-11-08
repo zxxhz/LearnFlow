@@ -273,6 +273,23 @@ export default function BlockView({
     }
   };
 
+  // 绘图失败后的一键 AI 自修：把原表达式与报错交给 LLM 只修正函数行，成功即就地替换
+  const [fixBusy, setFixBusy] = useState(false);
+  const doFixPlot = async () => {
+    if (fixBusy || !plottable) return;
+    setFixBusy(true);
+    setPlotErr("");
+    try {
+      const res = await api.math.fix({ expressions: displayCode, error: plotErr });
+      setDraft(res.expressions);
+      setPlotSvg(res.svg);
+    } catch (e) {
+      setPlotErr((e as Error).message);
+    } finally {
+      setFixBusy(false);
+    }
+  };
+
   // 自动执行初次绘图：利用 IntersectionObserver 在滑到/接近该代码块（300px 提前量）时自动绘制，
   // 学习者滑到此处时，直接就能看到渲染好的漂亮坐标系曲线图，无需手动点击。
   useEffect(() => {
@@ -510,7 +527,20 @@ export default function BlockView({
           </div>
         )}
         {runError && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{runError}</p>}
-        {plotErr && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{plotErr}</p>}
+        {plotErr && (
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <p className="text-xs text-red-600 dark:text-red-400">{plotErr}</p>
+            <button
+              type="button"
+              onClick={doFixPlot}
+              disabled={fixBusy}
+              className="rounded-md border border-violet-300 dark:border-violet-700 bg-violet-50 dark:bg-violet-950/40 px-2 py-0.5 text-[11px] font-medium text-violet-700 dark:text-violet-300 transition hover:bg-violet-100 dark:hover:bg-violet-900/40 disabled:opacity-50"
+              title="让 AI 根据报错自动修正函数表达式并重绘"
+            >
+              {fixBusy ? "🤖 AI 修正中…" : "🤖 AI 修正"}
+            </button>
+          </div>
+        )}
         {plotSvg && (
           <div className="mt-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 shadow-sm">
             <div className="mb-1.5 flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">

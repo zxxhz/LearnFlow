@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.schemas.common import OutlineItem
 from app.schemas.course import CourseCreate
 from app.services.llm import OpenAICompatAdapter
-from app.services.profile import format_profile_for_prompt
+from app.services.profile import discipline_for_text, format_profile_for_prompt
 from app.services.prompt import render_prompt
 
 
@@ -43,7 +43,7 @@ async def generate_outline(
         if req.chapter_count
         else "根据主题规模自定（一般 5-12 章）"
     )
-    profile_text = await format_profile_for_prompt(db)
+    profile_text = await format_profile_for_prompt(db, scope=discipline_for_text(req.topic or ""))
     prompt = render_prompt(
         "outline",
         TOPIC=req.topic or "（未填写）",

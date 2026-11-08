@@ -64,6 +64,15 @@ class SectionReviseRequest(BaseModel):
     revised_markdown: str | None = None
 
 
+class SectionPracticeImpact(BaseModel):
+    """单段修订波及的下游练习（知识点级汇总，供前端一致性提醒）。"""
+
+    kp_id: str
+    kp_title: str
+    exercise_count: int
+    language: str = "python"
+
+
 class SectionReviseResponse(BaseModel):
     section_id: str
     original_markdown: str
@@ -72,3 +81,5 @@ class SectionReviseResponse(BaseModel):
     revised_markdown: str
     applied: bool = False
     updated_full_markdown: str | None = None
+    # apply 成功后返回：该段落挂载的知识点及其练习数量（空 = 无下游练习）
+    affected_practice: list[SectionPracticeImpact] = []

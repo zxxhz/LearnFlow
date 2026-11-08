@@ -6,7 +6,13 @@ import { api } from "../../lib/api";
 import { subscribeSSE } from "../../lib/sse";
 import { alignSections, parseBlocks } from "../../lib/markdown";
 import { anchorFromSelection, type AnchorRange } from "../../lib/anchor";
-import type { Annotation, AnnotationColor, CompareHighlightItem, ProgressSSEEvent } from "../../lib/types";
+import type {
+  Annotation,
+  AnnotationColor,
+  CompareHighlightItem,
+  ProgressSSEEvent,
+  SectionPracticeImpact,
+} from "../../lib/types";
 import { Button, ConfirmDialog, Modal, Spinner, Textarea } from "../../components/ui";
 import BlockView from "./BlockView";
 import SelectionToolbar from "./SelectionToolbar";
@@ -201,6 +207,8 @@ export default function ReaderPage() {
   const [tocOpen, setTocOpen] = useState(false);
   // 待确认删除的标注（替代原生 window.confirm，与全站 ConfirmDialog 风格统一）
   const [annToDelete, setAnnToDelete] = useState<Annotation | null>(null);
+  // 讲义单段修订后波及的下游练习（非空时弹一致性提醒，§11）
+  const [reviseImpact, setReviseImpact] = useState<SectionPracticeImpact[] | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => {
     const saved = safeStorage.get("learnflow-reader-sidebar-open");
     return saved !== null ? saved === "true" : true;
@@ -1238,6 +1246,43 @@ export default function ReaderPage() {
         onCancel={() => setAnnToDelete(null)}
       />
 
+      {/* 讲义单段修订后的下游练习一致性提醒（§11 修订口径联动） */}
+      <ConfirmDialog
+        open={!!reviseImpact}
+        title="本节讲义已修订"
+        message={
+          reviseImpact && reviseImpact.length > 0
+            ? `修订内容涉及 ${reviseImpact.length} 个知识点的 ${reviseImpact.reduce(
+                (n, it) => n + it.exercise_count,
+                0,
+              )} 道关联练习，这些练习的口径可能已过期。是否按新讲义重新生成本节练习？（重新生成将替换现有练习及其作答记录）`
+            : "本节讲义已修订，关联练习可能需要复核口径。"
+        }
+        confirmText={reviseImpact && reviseImpact.length > 0 ? "🔄 重新生成本节练习" : "知道了"}
+        onConfirm={() => {
+          const impacted = reviseImpact;
+          setReviseImpact(null);
+          if (!impacted || impacted.length === 0 || !documentId) return;
+          (async () => {
+            try {
+              for (const it of impacted) {
+                if (it.exercise_count <= 0) continue;
+                await api.exercises.generate({
+                  knowledge_point_id: it.kp_id,
+                  language: it.language || "python",
+                  count: it.exercise_count,
+                });
+              }
+              queryClient.invalidateQueries({ queryKey: ["exercises", documentId] });
+              queryClient.invalidateQueries({ queryKey: ["wrongbook"] });
+            } catch (e) {
+              alert((e as Error)?.message || "重新生成练习失败");
+            }
+          })();
+        }}
+        onCancel={() => setReviseImpact(null)}
+      />
+
       {/* 单段落手术式重写与核验弹窗 */}
       {reviseTarget && documentId && (
         <SectionReviseModal
@@ -1246,13 +1291,17 @@ export default function ReaderPage() {
           documentId={documentId}
           sectionId={reviseTarget.sectionId}
           sectionRaw={reviseTarget.raw}
-          onSuccess={(updatedFullMd) => {
+          onSuccess={(updatedFullMd, affectedPractice) => {
             queryClient.invalidateQueries({ queryKey: ["doc", documentId] });
             invalidate();
             queryClient.invalidateQueries({ queryKey: ["doc-kps", documentId] });
             queryClient.invalidateQueries({ queryKey: ["compare-highlights", documentId] });
             setFlashSection(reviseTarget.sectionId);
             setTimeout(() => setFlashSection(null), 2500);
+            // 下游一致性：该段落挂载了练习时提醒按新讲义重新生成（§11）
+            if (affectedPractice && affectedPractice.length > 0) {
+              setReviseImpact(affectedPractice);
+            }
           }}
         />
       )}

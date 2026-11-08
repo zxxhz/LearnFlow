@@ -18,6 +18,7 @@ from app.schemas.document import (
 )
 from app.services.generation import pipeline
 from app.services.generation.highlight import find_candidate_anchors
+from app.services.exercise import summarize_section_practice_impact
 from app.services.revision import apply_section_revision, review_section_revision
 from app.services.sections_text import load_document_markdown
 
@@ -181,6 +182,8 @@ async def revise_section(
         new_full_md = await apply_section_revision(
             db, doc, sec, revised_text.strip()
         )
+        # 下游一致性：汇总挂在该段上的练习，供前端提示"是否重新生成本节练习"
+        affected_practice = await summarize_section_practice_impact(db, document_id, section_id)
         return SectionReviseResponse(
             section_id=section_id,
             original_markdown="",
@@ -189,6 +192,7 @@ async def revise_section(
             revised_markdown=revised_text.strip(),
             applied=True,
             updated_full_markdown=new_full_md,
+            affected_practice=affected_practice,
         )
 
 

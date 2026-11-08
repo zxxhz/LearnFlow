@@ -18,6 +18,8 @@ class SceneLLMConfig(BaseModel):
 class ScenesConfig(BaseModel):
     generation: SceneLLMConfig = SceneLLMConfig()
     chat: SceneLLMConfig = SceneLLMConfig()
+    # 后台静默任务（画像演进等）：留空自动回落主配置，避免后台长跑烧高价对话模型
+    task: SceneLLMConfig = SceneLLMConfig()
 
 
 class LLMConfig(BaseModel):
@@ -78,6 +80,7 @@ class SettingsOut(BaseModel):
             scenes=ScenesConfig(
                 generation=_mask_scene(scenes.generation),
                 chat=_mask_scene(scenes.chat),
+                task=_mask_scene(scenes.task),
             ),
             preferences=preferences,
         )

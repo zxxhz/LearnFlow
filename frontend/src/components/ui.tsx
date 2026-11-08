@@ -259,12 +259,15 @@ export function ConfirmDialog({
   message,
   onConfirm,
   onCancel,
+  confirmText,
 }: {
   open: boolean;
   title: string;
   message: string;
   onConfirm: () => void;
   onCancel: () => void;
+  /** 确认按钮文案（默认「确认」） */
+  confirmText?: string;
 }) {
   return (
     <Modal open={open} onClose={onCancel} title={title} width="max-w-sm">
@@ -274,7 +277,7 @@ export function ConfirmDialog({
           取消
         </Button>
         <Button variant="danger" onClick={onConfirm}>
-          确认
+          {confirmText || '确认'}
         </Button>
       </div>
     </Modal>

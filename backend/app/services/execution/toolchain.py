@@ -374,6 +374,28 @@ def _ascii_mirror(root: Path) -> Path | None:
         return None
 
 
+def _short_ascii_path(path: str) -> str | None:
+    """Windows 8.3 短路径兜底：GetShortPathNameW 把非 ASCII 路径转成纯 ASCII 短路径。
+
+    镜像不可建（只读盘/沙箱禁写外部目录）时的第二道防线：短路径纯 ASCII，
+    g++/ld 从 argv[0] 派生的库路径同样保持 ASCII，crt 与链接库可正常定位。
+    仅当所在卷启用了 8.3 名（系统盘默认启用）才有返回；只读 API，不改文件系统。
+    """
+    if not _IS_WINDOWS:
+        return None
+    try:
+        import ctypes
+
+        buf = ctypes.create_unicode_buffer(1024)
+        n = ctypes.windll.kernel32.GetShortPathNameW(str(path), buf, 1024)
+        short = buf.value if n else ""
+        if short and _is_ascii(short) and Path(short).exists():
+            return short
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def ascii_compiler(compiler: str) -> str:
     """编译器路径非 ASCII 时返回其 ASCII 硬链接镜像下的等价路径，其余原样返回。"""
     if not _IS_WINDOWS or _is_ascii(compiler):
@@ -382,7 +404,11 @@ def ascii_compiler(compiler: str) -> str:
     mirror = _ascii_mirror(root)
     if mirror and (mirror / "bin" / Path(compiler).name).exists():
         return str(mirror / "bin" / Path(compiler).name)
-    return compiler  # 镜像不可用就原样试（GBK 码页系统本身能跑）
+    # 镜像不可用时尝试 8.3 短路径（只读盘/沙箱禁写等建不了镜像的场景）
+    short = _short_ascii_path(compiler)
+    if short:
+        return short
+    return compiler  # 镜像与短路径都不可用就原样试（GBK 码页系统本身能跑）
 
 
 def ascii_workdir(workdir: str) -> str:
@@ -390,9 +416,13 @@ def ascii_workdir(workdir: str) -> str:
     if _is_ascii(workdir):
         return workdir
     base = _alias_base()
-    if base is None:
-        return workdir
-    return tempfile.mkdtemp(prefix="learnflow-exec-", dir=base)
+    if base is not None:
+        return tempfile.mkdtemp(prefix="learnflow-exec-", dir=base)
+    # 别名基不可用（只读沙箱等）：退 8.3 短路径，编译调用链保持全 ASCII
+    short = _short_ascii_path(workdir)
+    if short:
+        return short
+    return workdir
 
 
 def _probe_version(cmd: list[str], timeout: float = 8.0) -> str:

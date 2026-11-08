@@ -7,13 +7,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory, get_db
-from app.models import Annotation, Conversation, Message
+from app.models import Annotation, Conversation, Document, Message
 from app.models.base import utcnow_iso
 from app.schemas.conversation import MessageCreate, MessageOut
 from app.services.context import build_annotation_messages
 from app.services.llm import create_adapter_from_settings
 from app.services.llm.errors import LLMError
-from app.services.profile import trigger_profile_evolution
+from app.services.profile import (
+    MISCONCEPTION_SOURCE_CONVERSATION,
+    discipline_for_document,
+    trigger_profile_evolution,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +66,9 @@ async def post_message(
     adapter = await create_adapter_from_settings(db, scene="chat")
     deltas = await adapter.chat(messages, stream=True)
     conv_id = conv.id
+    # 划线所在课程学科域：盲区盖章 scope + 证据溯源（在请求会话存活期内解析好）
+    _ann_doc = await db.get(Document, ann.document_id) if ann.document_id else None
+    evolve_scope = await discipline_for_document(db, _ann_doc)
 
     async def gen():
         # 首先立即确认用户消息已保存，供前端快速对齐
@@ -94,10 +101,13 @@ async def post_message(
             await s.commit()
             msg_id = saved.id
 
-        # 异步提炼用户划线问答的认知盲区与提问习惯
+        # 异步提炼用户划线问答的认知盲区与提问习惯（盖章学科域与证据来源）
         trigger_profile_evolution(
             context=f"划线文本：{ann.exact}",
             interaction=f"学生提问：{body.content}\n助教解答：{full_content[:300]}",
+            scope=evolve_scope,
+            source_type=MISCONCEPTION_SOURCE_CONVERSATION,
+            source_id=conv_id,
         )
 
         yield f"data: {json.dumps({'type': 'done', 'message_id': msg_id, 'content': full_content}, ensure_ascii=False)}\n\n"

@@ -14,6 +14,8 @@ from app.services.exercise import normalize_output
 from app.services.llm.base import LLMAdapter
 from app.services.llm.errors import LLMError
 from app.services.profile import (
+    MISCONCEPTION_SOURCE_EXERCISE,
+    discipline_for_document,
     format_profile_for_prompt,
     trigger_profile_evolution,
 )
@@ -39,6 +41,13 @@ async def stream_exercise_diagnosis(
     kp = await db.get(KnowledgePoint, exercise.knowledge_point_id) if exercise.knowledge_point_id else None
     kp_title = kp.title if kp else "（通用知识点）"
     kp_summary = (kp.summary if kp else "") or "（无摘要）"
+
+    # 按练习所属课程的学科域过滤盲区注入（防跨学科串味），并作为证据溯源的 scope
+    scope = "general"
+    if kp is not None and kp.document_id:
+        from app.models import Document
+
+        scope = await discipline_for_document(db, await db.get(Document, kp.document_id))
 
     if exercise.kind == EXERCISE_CODE:
         run_res = await run_code(exercise.language, content)
@@ -73,7 +82,7 @@ async def stream_exercise_diagnosis(
             "指出核心思维卡点，并抛出 1 个关键反问或反例，引导学生自己推导出修复方案。"
         )
 
-    profile_text = await format_profile_for_prompt(db)
+    profile_text = await format_profile_for_prompt(db, scope=scope)
     system = render_prompt(
         "exercise_tutor",
         KP_TITLE=kp_title,
@@ -118,10 +127,13 @@ async def stream_exercise_diagnosis(
         except Exception:
             pass
 
-    # 助教伴学指导结束后，异步提炼学生的练习理解盲区
+    # 助教伴学指导结束后，异步提炼学生的练习理解盲区（盖章学科域与证据来源）
     reply_summary = "".join(tutor_replies)[:300]
     trigger_profile_evolution(
         context=f"练习题：{exercise.title}；知识点：{kp_title}；学生作答片段：{content[:200]}",
         interaction=f"学生提问：{question}\n助教启发指导：{reply_summary}",
+        scope=scope,
+        source_type=MISCONCEPTION_SOURCE_EXERCISE,
+        source_id=exercise.id,
     )
 

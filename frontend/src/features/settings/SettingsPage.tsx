@@ -24,6 +24,7 @@ const PROVIDER_PRESETS: { label: string; base_url: string; model: string }[] = [
 const SCENE_META: { name: SceneName; label: string; hint: string }[] = [
   { name: "generation", label: "生成模型", hint: "章节生成、导入知识点提取——建议用便宜量大的模型" },
   { name: "chat", label: "答疑模型", hint: "划线提问对话——建议用响应快的模型" },
+  { name: "task", label: "后台轻模型", hint: "画像演进等静默后台任务——留空自动用主模型，可指定轻量快速模型省 Token" },
 ];
 
 const EMPTY_SCENE: SceneLLMConfig = { base_url: "", api_key: "", model: "" };
@@ -33,10 +34,9 @@ export default function SettingsPage() {
   const { data: settings, isLoading } = useQuery({ queryKey: ["settings"], queryFn: api.settings.get });
 
   const [llm, setLlm] = useState<LLMConfig>({ base_url: "", api_key: "", model: "" });
-  const [scenes, setScenes] = useState<Record<SceneName, SceneLLMConfig>>({
-    generation: { ...EMPTY_SCENE },
-    chat: { ...EMPTY_SCENE },
-  });
+  const emptyScenes = () =>
+    Object.fromEntries(SCENE_META.map(({ name }) => [name, { ...EMPTY_SCENE }])) as Record<SceneName, SceneLLMConfig>;
+  const [scenes, setScenes] = useState<Record<SceneName, SceneLLMConfig>>(emptyScenes());
   const [prefs, setPrefs] = useState<Preferences>({
     chapter_length: 3000,
     exercises_per_kp: 3,
@@ -52,10 +52,14 @@ export default function SettingsPage() {
   useEffect(() => {
     if (settings) {
       setLlm({ ...settings.llm, api_key: "" }); // key 留空 = 不修改
-      setScenes({
-        generation: { ...EMPTY_SCENE, ...settings.scenes?.generation, api_key: "" },
-        chat: { ...EMPTY_SCENE, ...settings.scenes?.chat, api_key: "" },
-      });
+      setScenes(
+        Object.fromEntries(
+          SCENE_META.map(({ name }) => [
+            name,
+            { ...EMPTY_SCENE, ...settings.scenes[name], api_key: "" },
+          ]),
+        ) as Record<SceneName, SceneLLMConfig>,
+      );
       setPrefs({ auto_highlight: false, ...settings.preferences });
     }
   }, [settings]);
@@ -68,13 +72,12 @@ export default function SettingsPage() {
           model: llm.model,
           ...(llm.api_key ? { api_key: llm.api_key } : {}),
         },
-        scenes: {
-          generation: {
-            ...scenes.generation,
-            ...(scenes.generation.api_key ? {} : { api_key: undefined }),
-          },
-          chat: { ...scenes.chat, ...(scenes.chat.api_key ? {} : { api_key: undefined }) },
-        },
+        scenes: Object.fromEntries(
+          SCENE_META.map(({ name }) => {
+            const scene = scenes[name];
+            return [name, { ...scene, ...(scene.api_key ? {} : { api_key: undefined }) }];
+          }),
+        ) as Record<SceneName, SceneLLMConfig>,
       }),
     onSuccess: () => {
       setSaveErr("");

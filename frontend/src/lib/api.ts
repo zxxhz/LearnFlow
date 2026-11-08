@@ -405,6 +405,9 @@ export const api = {
   math: {
     render: (body: { expressions: string; x_min?: number; x_max?: number }) =>
       request<{ svg: string }>("/math/render", { method: "POST", ...jsonBody(body) }),
+    // 绘图失败后的一键 AI 自修：返回修正后的表达式与重绘 SVG
+    fix: (body: { expressions: string; error: string; x_min?: number; x_max?: number }) =>
+      request<{ expressions: string; svg: string }>("/math/fix", { method: "POST", ...jsonBody(body) }),
   },
   update: {
     version: () => request<{ version: string }>("/version"),
@@ -505,6 +508,15 @@ export const api = {
       images.forEach((f) => fd.append("images", f));
       if (hint.trim()) fd.append("hint", hint.trim());
       return request<{ content: string }>("/courses/import/photo-transcribe", {
+        method: "POST",
+        body: fd,
+      });
+    },
+    pdfTranscribe: (files: File[], hint: string) => {
+      const fd = new FormData();
+      files.forEach((f) => fd.append("files", f));
+      if (hint.trim()) fd.append("hint", hint.trim());
+      return request<{ content: string }>("/courses/import/pdf-transcribe", {
         method: "POST",
         body: fd,
       });

@@ -70,6 +70,13 @@ export interface SectionReviseRequest {
   revised_markdown?: string | null;
 }
 
+export interface SectionPracticeImpact {
+  kp_id: string;
+  kp_title: string;
+  exercise_count: number;
+  language: string;
+}
+
 export interface SectionReviseResponse {
   section_id: string;
   original_markdown: string;
@@ -78,6 +85,8 @@ export interface SectionReviseResponse {
   revised_markdown: string;
   applied: boolean;
   updated_full_markdown?: string | null;
+  /** apply 成功后返回：该段落挂载的知识点及其练习数量（空 = 无下游练习） */
+  affected_practice?: SectionPracticeImpact[];
 }
 
 export interface CourseDetail extends Course {
@@ -173,11 +182,12 @@ export interface SceneLLMConfig {
   model: string;
 }
 
-export type SceneName = "generation" | "chat";
+export type SceneName = "generation" | "chat" | "task";
 
 export interface ScenesConfig {
   generation: SceneLLMConfig;
   chat: SceneLLMConfig;
+  task: SceneLLMConfig;
 }
 
 export interface SettingsData {
@@ -239,6 +249,8 @@ export interface Exercise {
   hints: string[];
   is_hard_bone?: boolean;
   parent_exercise_id?: string;
+  /** 落库前沙箱自验结果：0 存量未验 / 1 已实测 / 2 输出已校准 */
+  self_verified?: number;
   created_at: string;
   /** 闯关：同一知识点内前一关通过后才可作答（小测题/非代码题恒为 true） */
   unlocked: boolean;
@@ -656,6 +668,11 @@ export interface LearnerMisconception {
   evidence?: string | null;
   status: string;
   created_at?: string;
+  scope?: string | null;
+  source_type?: string | null;
+  source_id?: string | null;
+  source_label?: string | null;
+  source_href?: string | null;
 }
 
 export interface LearnerProfile {

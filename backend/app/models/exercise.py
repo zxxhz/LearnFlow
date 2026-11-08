@@ -13,6 +13,11 @@ EXERCISE_MATH = "math"  # 数学代数计算关，SymPy 等价性自动判定
 
 ATTEMPT_GRADED = "graded"  # 概念题作答完成评分
 
+# self_verified 取值：落库前沙箱自验结果（吸收 DeepTutor Critic-Guided 出题验证）
+SELF_VERIFIED_NONE = 0  # 存量数据 / 非实测题型（choice/fill/concept）
+SELF_VERIFIED_PASSED = 1  # 参考实现经沙箱实测与目标输出一致
+SELF_VERIFIED_CALIBRATED = 2  # 模型给出的目标输出与实际运行不符，已按实际输出校准
+
 
 
 class Exercise(UUIDPk, UserIdMixin, CreatedAt, Base):
@@ -47,6 +52,8 @@ class Exercise(UUIDPk, UserIdMixin, CreatedAt, Base):
     is_hard_bone: Mapped[bool] = mapped_column(Boolean, default=False)
     # 支线搭桥小题关联的主题 ID（非空 = 某道难题的支线小题）
     parent_exercise_id: Mapped[str] = mapped_column(String(32), default="", index=True)
+    # 落库前自验结果（见 SELF_VERIFIED_* 常量）
+    self_verified: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class ExerciseAttempt(UUIDPk, UserIdMixin, CreatedAt, Base):

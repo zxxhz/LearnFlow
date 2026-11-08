@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Modal, Button, Textarea, Spinner } from "../../components/ui";
 import { api } from "../../lib/api";
-import type { SectionReviseResponse } from "../../lib/types";
+import type { SectionPracticeImpact, SectionReviseResponse } from "../../lib/types";
 
 interface SectionReviseModalProps {
   isOpen: boolean;
@@ -9,7 +9,7 @@ interface SectionReviseModalProps {
   documentId: string;
   sectionId: string;
   sectionRaw: string;
-  onSuccess: (updatedMarkdown?: string | null) => void;
+  onSuccess: (updatedMarkdown?: string | null, affectedPractice?: SectionPracticeImpact[]) => void;
 }
 
 const QUICK_CHIPS = [
@@ -68,7 +68,7 @@ export function SectionReviseModal({
         apply: true,
         revised_markdown: editedMarkdown.trim(),
       });
-      onSuccess(res.updated_full_markdown);
+      onSuccess(res.updated_full_markdown, res.affected_practice || []);
       onClose();
     } catch (e) {
       setErrorMsg((e as Error).message);
