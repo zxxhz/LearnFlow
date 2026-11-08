@@ -568,6 +568,9 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
             else:
                 last_error = "下载文件不完整，正在切换备用节点重试…"
                 logger.warning(last_error)
+                # 半截文件必须立刻删除：留到 1 小时惰性清理会被用户误双击，
+                # NSIS 解包到一半读 EOF 报"Error writing temporary file"极具迷惑性
+                installer_path.unlink(missing_ok=True)
         except Exception as e:
             last_error = str(e)
             installer_path.unlink(missing_ok=True)  # 超限/中断的半截文件不留
@@ -575,6 +578,7 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
             yield f"data: {json.dumps({'type': 'retry', 'message': '当前线路响应较慢，正在切换下一个下载源…'}, ensure_ascii=False)}\n\n"
 
     if not success:
+        installer_path.unlink(missing_ok=True)  # 兜底：任何失败路径都不给 Temp 留半截 exe
         yield f"data: {json.dumps({'type': 'error', 'detail': f'安装包下载失败：{last_error}'}, ensure_ascii=False)}\n\n"
         return
 
