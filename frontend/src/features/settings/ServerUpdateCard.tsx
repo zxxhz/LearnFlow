@@ -134,6 +134,7 @@ export default function ServerUpdateCard() {
             <div>
               <div className="text-xs text-gray-400 dark:text-gray-500">更新执行驱动</div>
               <div className="text-sm text-gray-600 dark:text-gray-300 mt-0.5 flex items-center gap-1.5">
+                {versionInfo.update_driver === "watchtower" && "⚡ Watchtower 安全隔离代理"}
                 {versionInfo.update_driver === "docker_socket" && "🐳 Docker Socket 直连"}
                 {versionInfo.update_driver === "command" && "⚙️ 自定义指令"}
                 {versionInfo.update_driver === "manual" && "📋 手动更新"}

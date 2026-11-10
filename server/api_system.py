@@ -127,14 +127,19 @@ async def get_version_info():
     repo = settings.github_repo
     in_container = _is_running_in_container()
     docker_sock = _get_docker_socket_path()
+    watchtower_url = getattr(settings, "watchtower_url", "http://watchtower:8080/v1/update")
+    watchtower_token = getattr(settings, "watchtower_token", "learnflow_update_secret")
 
     can_auto_update = False
     update_driver = "manual"
 
-    # 判断可用自动更新机制：以挂载的 Docker Socket 直连为主力标准
+    # 判断可用自动更新机制：优先安全隔离的 Watchtower 代理更新
     if os.getenv("UPDATE_COMMAND"):
         can_auto_update = True
         update_driver = "command"
+    elif watchtower_token or "watchtower" in watchtower_url:
+        can_auto_update = True
+        update_driver = "watchtower"
     elif docker_sock and (os.access(docker_sock, os.W_OK) or os.name == "nt"):
         can_auto_update = True
         update_driver = "docker_socket"
@@ -190,7 +195,34 @@ async def trigger_system_update(_: bool = Depends(require_token)):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"执行自定义更新命令失败: {e}")
 
-    # 2. 核心标准：通过挂载的 Docker Socket 直连 Docker 引擎拉取最新镜像并重启
+    # 2. 安全隔离主力标准：通过 Docker 内网请求独立的 Watchtower HTTP API 触发容器更新
+    watchtower_url = getattr(settings, "watchtower_url", "http://watchtower:8080/v1/update")
+    watchtower_token = getattr(settings, "watchtower_token", "learnflow_update_secret")
+    if watchtower_token or "watchtower" in watchtower_url:
+        headers = {}
+        if watchtower_token:
+            headers["Authorization"] = f"Bearer {watchtower_token}"
+        req = urllib.request.Request(watchtower_url, data=b"", headers=headers, method="POST")
+
+        def _call_watchtower():
+            try:
+                with urllib.request.urlopen(req, timeout=10.0) as resp:
+                    return resp.status in (200, 204)
+            except Exception as e:
+                logger.warning("请求 Watchtower API 异常: %s", e)
+                return False
+
+        success = await asyncio.to_thread(_call_watchtower)
+        if success:
+            logger.info("Watchtower 更新触发成功！")
+            return UpdateTriggerResponse(
+                status="triggered",
+                message="已通知 Watchtower 自动拉取最新镜像并重启服务，预计 15 秒内重新就绪",
+                driver="watchtower",
+                estimated_seconds=15,
+            )
+
+    # 3. 备选方案：若用户挂载了 Docker Socket 则走 Socket 直连
     docker_sock = _get_docker_socket_path()
     if docker_sock:
         # 发起异步任务，避免阻塞本次 HTTP 响应返回给前端

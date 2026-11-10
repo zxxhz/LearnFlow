@@ -110,15 +110,15 @@ uvicorn server.main:app --host 0.0.0.0 --port 8421
 
 ## 🔄 在线热更新机制 (Web 界面一键更新 & 开机自拉取)
 
-本系统支持无需 SSH 登录服务器的高频在线平滑更新：
+本系统采用安全隔离的双容器架构支持无需 SSH 登录的高频在线平滑热更新：
 
 1. **开机自拉取最新镜像 (`pull_policy: always`)**：
    在 `docker-compose.yml` 中默认配置了 `pull_policy: always`，任何时候重启容器，Docker 都会自动检测并拉取 GitHub Packages 上的最新前后端一体化镜像。
-2. **Web 页面一键更新 (Docker Socket 直连)**：
+2. **Web 页面一键更新 (Watchtower 安全隔离代理)**：
    在 LearnFlow 网页端或电脑桌面端「设置」页面下方的 **「云端服务端在线更新」** 卡片中：
    - 自动检测 GitHub 最新 Release 版本与更新日志；
-   - 点击 **【🚀 立即在线更新服务端】**，后端直接通过挂载的 `/var/run/docker.sock` 通知宿主机 Docker 引擎在后台拉取最新镜像并平滑重启自身；
-   - 页面自动启动 15 秒倒计时，并在重启就绪后自动刷新载入全新版本，无需额外运行任何辅助更新容器。
+   - 点击 **【🚀 立即在线更新服务端】**，业务容器向内部局域网专职运维的 Watchtower 发起安全调用；
+   - **安全红线**：业务容器 `learnflow-relay` 绝不挂载宿主机 `docker.sock`（杜绝特权逃逸），仅由隔离的 Watchtower 负责拉取新镜像并热重启，15 秒倒计时后页面自动刷新就绪。
 
 ---
 

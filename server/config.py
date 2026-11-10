@@ -64,9 +64,11 @@ try:
         server_llm_api_key: str = os.getenv("SERVER_LLM_API_KEY", os.getenv("LLM_API_KEY", "")).strip()
         server_llm_model: str = os.getenv("SERVER_LLM_MODEL", os.getenv("LLM_MODEL", "deepseek-chat")).strip()
 
-        # 系统与在线更新配置（固定官方仓库与现行版本，无需外部环境变量配置）
+        # 系统与在线更新配置（固定官方仓库与现行版本，支持安全隔离的 Watchtower 代理更新）
         server_version: str = "0.4.70"
         github_repo: str = "zxxhz/LearnFlow"
+        watchtower_url: str = os.getenv("WATCHTOWER_URL", "http://watchtower:8080/v1/update").strip()
+        watchtower_token: str = os.getenv("WATCHTOWER_TOKEN", os.getenv("WATCHTOWER_HTTP_API_TOKEN", "learnflow_update_secret")).strip()
         update_command: str = os.getenv("UPDATE_COMMAND", "").strip()
 
         def is_auth_enabled(self) -> bool:
@@ -121,6 +123,12 @@ except ImportError:
         )
         server_version: str = "0.4.70"
         github_repo: str = "zxxhz/LearnFlow"
+        watchtower_url: str = Field(
+            default_factory=lambda: os.getenv("WATCHTOWER_URL", "http://watchtower:8080/v1/update").strip()
+        )
+        watchtower_token: str = Field(
+            default_factory=lambda: os.getenv("WATCHTOWER_TOKEN", os.getenv("WATCHTOWER_HTTP_API_TOKEN", "learnflow_update_secret")).strip()
+        )
         update_command: str = Field(
             default_factory=lambda: os.getenv("UPDATE_COMMAND", "").strip()
         )

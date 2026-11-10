@@ -140,6 +140,7 @@
 version: "3.8"
 
 services:
+  # 1. 业务容器：对外暴露 Web 界面，不挂载宿主机 docker.sock，安全隔离
   learnflow-relay:
     image: ghcr.io/zxxhz/learnflow-server:latest
     container_name: learnflow-relay
@@ -152,11 +153,25 @@ services:
       - RELAY_SERVER_TOKEN=your_secure_token_here # 访问密码，留空则免密开放
       - RELAY_AUTH_REQUIRED=true
       - AI_MODE=auto                              # 智能模式：本地在线走本地，离线走云端
-      # 提示：大模型 API（Base URL / Key / Model）直接在 Web 网页或电脑桌面端「设置」中配置，
-      # 会自动持久化到挂载的 ./data 卷中，无需在此硬编码。
+      - WATCHTOWER_URL=http://watchtower:8080/v1/update
     volumes:
       - ./data:/app/data                          # 持久化存储 SQLite 数据库与讲义缓存
-      - /var/run/docker.sock:/var/run/docker.sock # 挂载后支持在网页端一键在线热更新
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # 2. 运维容器：由独立的 Watchtower 持有 docker.sock，仅内网响应热更新触发
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: learnflow-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_LABEL_ENABLE=true
+      - WATCHTOWER_HTTP_API_UPDATE=true
+      - WATCHTOWER_HTTP_API_TOKEN=learnflow_update_secret
+      - WATCHTOWER_POLL_INTERVAL=86400
 ```
 
 #### 2. 启动服务

@@ -2,41 +2,53 @@ version: "3.8"
 
 services:
   # ========================================================
-  # LearnFlow 云端中转服务端 (含完整 Web SPA 前端界面)
+  # 1. LearnFlow 云端中转服务端 (对外 Web 界面与 API 业务容器)
+  #    【安全设计】：不挂载宿主机 docker.sock，杜绝特权逃逸风险！
   # ========================================================
   learnflow-relay:
-    # 默认从 GitHub Packages (GHCR) 拉取自动构建的一体化镜像
     image: ghcr.io/zxxhz/learnflow-server:latest
     container_name: learnflow-relay
     restart: unless-stopped
-    # 核心：启动或重启时自动拉取最新镜像（实现开机即最新）
     pull_policy: always
-    # 如需在本地源码重新编译，可解开下三行注释：
-    # build:
-    #   context: ..
-    #   dockerfile: server/Dockerfile
     ports:
       - "${SERVER_PORT:-8421}:8421"
     environment:
       - SERVER_PORT=8421
-      # 访问安全 Token（建议外网部署配置复杂密码；若为空且 RELAY_AUTH_REQUIRED=false 则开放免密）
+      # 安全访问密码（建议配置复杂密码；留空且 RELAY_AUTH_REQUIRED=false 则免密开放）
       - RELAY_SERVER_TOKEN=${RELAY_SERVER_TOKEN:-}
-      # 是否强制启用 Token 鉴权（true / false，默认 false）
       - RELAY_AUTH_REQUIRED=${RELAY_AUTH_REQUIRED:-false}
-      # AI 执行模式: auto (默认，本地在线走本地，离线走云端) | cloud (强制云端) | local (强制本地)
       - AI_MODE=${AI_MODE:-auto}
-      # 提示：大模型 API（Base URL / Key / Model）直接在 Web 网页端或电脑桌面端「设置」中随时在线修改，
-      # 会自动持久化保存到挂载的 ./data 卷中，无需在 compose 中硬编码密钥。
+      # 安全更新通信：通过 Docker 内部虚拟网络向独立的 Watchtower 触发热更新
+      - WATCHTOWER_URL=http://watchtower:8080/v1/update
+      - WATCHTOWER_TOKEN=${WATCHTOWER_TOKEN:-learnflow_update_secret}
       - DATA_DIR=/app/data
       - STATIC_DIR=/app/static
     volumes:
-      # 持久化存储云端 SQLite 数据库、错题/讲义缓存及大模型配置 (server_config.json)
+      # 持久化存储 SQLite 数据库、讲义缓存及云端大模型配置 (server_config.json)
       - ./data:/app/data
-      # 核心：直接挂载宿主机 Docker 通信管道，服务端直连 Docker 引擎完成在线一键热更新
-      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8421/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 5s
+
+  # ========================================================
+  # 2. Watchtower 安全更新运维容器 (内部专用，不暴露公网端口)
+  #    【安全设计】：由专职运维容器持有 docker.sock，且仅响应内网带 Token 的 API 触发
+  # ========================================================
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: learnflow-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true         # 更新后自动清理无用旧镜像，释放磁盘空间
+      - WATCHTOWER_LABEL_ENABLE=true    # 仅更新带有 enable=true 标签的容器，不干扰宿主机其他服务
+      - WATCHTOWER_HTTP_API_UPDATE=true # 开启内网 HTTP API 触发模式，供网页/桌面端点击一键更新
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_TOKEN:-learnflow_update_secret}
+      # 默认巡检间隔设为 1 天（主要依靠 Web 端点击触发更新，如需自动轮询可改为 300 即 5分钟）
+      - WATCHTOWER_POLL_INTERVAL=86400

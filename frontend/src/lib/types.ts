@@ -881,7 +881,7 @@ export interface ServerSystemVersion {
   html_url?: string;
   in_container: boolean;
   can_auto_update: boolean;
-  update_driver: "docker_socket" | "command" | "manual";
+  update_driver: "watchtower" | "docker_socket" | "command" | "manual";
   check_error?: string | null;
 }
 
