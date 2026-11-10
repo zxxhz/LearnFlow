@@ -232,7 +232,7 @@ cd backend && uv run python -m app.main
 
 - **后端**：Python 3.11+ / FastAPI / SQLAlchemy 2.0 (Async) / SQLite (WAL) / SymPy (代数化简与等价判题) / Matplotlib (矢量 SVG 绘图) / pypdfium2 (PDF 处理) / PyInstaller
 - **前端**：React 18 / TypeScript / Vite / TailwindCSS / Lucide Icons
-- **云端中转与容器**：Docker (Multi-stage Build) / Docker Compose / GitHub Packages (GHCR) / GitHub Actions / Watchtower / WebSocket 反向长连接隧道
+- **云端中转与容器**：Docker (Multi-stage Build) / Docker Compose / GitHub Packages (GHCR) / GitHub Actions / Docker Engine API (Socket 直连热更新) / WebSocket 反向长连接隧道
 - **解析与排版**：markdown-it / KaTeX / Shiki 代码高亮 / diff-match-patch (划线模糊容错重锚定)
 - **桌面与移动端**：Tauri v2 (Rust) / NSIS / PWA (Service Worker + Web App Manifest)
 - **AI 架构**：OpenAI 兼容协议客户端 / Server-Sent Events (SSE) 毫秒级打字机流式输出 / Agent Tool Calling 闭环 / 双算力平滑调度引擎

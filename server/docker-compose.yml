@@ -29,37 +29,16 @@ services:
       # 会自动持久化保存到挂载的 ./data 卷中，无需在 compose 中硬编码密钥。
       # 系统在线更新配置
       - GITHUB_REPO=zxxhz/LearnFlow
-      - WATCHTOWER_URL=http://watchtower:8080/v1/update
-      - WATCHTOWER_TOKEN=${WATCHTOWER_TOKEN:-learnflow_update_secret}
       - DATA_DIR=/app/data
       - STATIC_DIR=/app/static
     volumes:
-      # 持久化存储云端 SQLite 数据库与错题/讲义缓存
+      # 持久化存储云端 SQLite 数据库、错题/讲义缓存及大模型配置 (server_config.json)
       - ./data:/app/data
-      # 挂载宿主机 Docker 通信管道，支持在 Web 界面一键触发在线更新
+      # 核心：直接挂载宿主机 Docker 通信管道，服务端直连 Docker 引擎完成在线一键热更新
       - /var/run/docker.sock:/var/run/docker.sock
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8421/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 5s
-
-  # ========================================================
-  # Watchtower 在线更新控制器（配合 Web 端一键更新）
-  # ========================================================
-  watchtower:
-    image: containrrr/watchtower:latest
-    container_name: learnflow-watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - WATCHTOWER_CLEANUP=true         # 更新后自动清理老旧镜像，释放磁盘空间
-      - WATCHTOWER_LABEL_ENABLE=true    # 仅更新标记了 enable=true 的容器，不干扰宿主机其他容器
-      - WATCHTOWER_HTTP_API_UPDATE=true # 开启 HTTP API 模式，支持 Web 端按钮手动触发
-      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_TOKEN:-learnflow_update_secret}
-      # 检查间隔：默认设为 86400 秒（主要依靠 Web 端手动点击），如需全自动轮询可改为 300 (5分钟)
-      - WATCHTOWER_POLL_INTERVAL=86400

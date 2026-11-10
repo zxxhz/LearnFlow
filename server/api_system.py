@@ -123,24 +123,19 @@ async def _fetch_github_latest_release(repo: str) -> dict[str, Any]:
 @router.get("/version")
 async def get_version_info():
     """获取当前服务端版本与 GitHub 最新版本信息。"""
-    current_ver = getattr(settings, "server_version", os.getenv("SERVER_VERSION", "0.4.69"))
-    repo = getattr(settings, "github_repo", os.getenv("GITHUB_REPO", "Emoing/learnflow"))
+    current_ver = getattr(settings, "server_version", os.getenv("SERVER_VERSION", "0.4.70"))
+    repo = getattr(settings, "github_repo", os.getenv("GITHUB_REPO", "zxxhz/LearnFlow"))
     in_container = _is_running_in_container()
     docker_sock = _get_docker_socket_path()
-    watchtower_url = getattr(settings, "watchtower_url", os.getenv("WATCHTOWER_URL", "http://watchtower:8080/v1/update"))
-    watchtower_token = getattr(settings, "watchtower_token", os.getenv("WATCHTOWER_TOKEN", ""))
 
     can_auto_update = False
     update_driver = "manual"
 
-    # 判断可用自动更新机制
+    # 判断可用自动更新机制：以挂载的 Docker Socket 直连为主力标准
     if os.getenv("UPDATE_COMMAND"):
         can_auto_update = True
         update_driver = "command"
-    elif watchtower_token or os.getenv("WATCHTOWER_HTTP_API_TOKEN") or os.getenv("ENABLE_WATCHTOWER_UPDATE", "false").lower() in ("1", "true", "yes"):
-        can_auto_update = True
-        update_driver = "watchtower"
-    elif docker_sock and os.access(docker_sock, os.W_OK):
+    elif docker_sock and (os.access(docker_sock, os.W_OK) or os.name == "nt"):
         can_auto_update = True
         update_driver = "docker_socket"
 
@@ -195,40 +190,13 @@ async def trigger_system_update(_: bool = Depends(require_token)):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"执行自定义更新命令失败: {e}")
 
-    # 2. 尝试通过 Watchtower HTTP API 触发
-    watchtower_url = getattr(settings, "watchtower_url", os.getenv("WATCHTOWER_URL", "http://watchtower:8080/v1/update"))
-    watchtower_token = getattr(settings, "watchtower_token", os.getenv("WATCHTOWER_TOKEN", os.getenv("WATCHTOWER_HTTP_API_TOKEN", "")))
-    if watchtower_token or "watchtower" in watchtower_url:
-        headers = {}
-        if watchtower_token:
-            headers["Authorization"] = f"Bearer {watchtower_token}"
-        req = urllib.request.Request(watchtower_url, data=b"", headers=headers, method="POST")
-
-        def _call_watchtower():
-            try:
-                with urllib.request.urlopen(req, timeout=10.0) as resp:
-                    return resp.status in (200, 204)
-            except Exception as e:
-                logger.warning("请求 Watchtower API 异常: %s", e)
-                return False
-
-        success = await asyncio.to_thread(_call_watchtower)
-        if success:
-            logger.info("Watchtower 更新触发成功！")
-            return UpdateTriggerResponse(
-                status="triggered",
-                message="已通知 Watchtower 自动拉取最新镜像并重启服务，预计 15 秒内重新就绪",
-                driver="watchtower",
-                estimated_seconds=15,
-            )
-
-    # 3. 尝试通过挂载的 Docker Socket 进行更新
+    # 2. 核心标准：通过挂载的 Docker Socket 直连 Docker 引擎拉取最新镜像并重启
     docker_sock = _get_docker_socket_path()
     if docker_sock:
         # 发起异步任务，避免阻塞本次 HTTP 响应返回给前端
         async def _docker_pull_and_restart():
             await asyncio.sleep(1.0)
-            repo = getattr(settings, "github_repo", os.getenv("GITHUB_REPO", "Emoing/learnflow")).lower()
+            repo = getattr(settings, "github_repo", os.getenv("GITHUB_REPO", "zxxhz/LearnFlow")).lower()
             image_name = f"ghcr.io/{repo}-server:latest"
             logger.info("通过 Docker Socket 拉取最新镜像: %s", image_name)
 
@@ -268,10 +236,10 @@ async def trigger_system_update(_: bool = Depends(require_token)):
             estimated_seconds=15,
         )
 
-    # 4. 未挂载 Socket 且无 Watchtower 时的保底友好提示
+    # 3. 未挂载 Socket 时的保底友好提示
     return UpdateTriggerResponse(
         status="manual_required",
-        message="当前未挂载 Docker Socket 或 Watchtower 代理。请在服务器执行: docker compose pull && docker compose up -d",
+        message="当前未挂载 /var/run/docker.sock。请在服务器执行: docker compose pull && docker compose up -d",
         driver="manual",
         estimated_seconds=0,
     )

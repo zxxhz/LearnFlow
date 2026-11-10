@@ -67,8 +67,6 @@ try:
         # 系统与在线更新配置
         server_version: str = os.getenv("SERVER_VERSION", "0.4.70").strip()
         github_repo: str = os.getenv("GITHUB_REPO", "zxxhz/LearnFlow").strip()
-        watchtower_url: str = os.getenv("WATCHTOWER_URL", "http://watchtower:8080/v1/update").strip()
-        watchtower_token: str = os.getenv("WATCHTOWER_TOKEN", os.getenv("WATCHTOWER_HTTP_API_TOKEN", "")).strip()
         update_command: str = os.getenv("UPDATE_COMMAND", "").strip()
 
         def is_auth_enabled(self) -> bool:
@@ -126,12 +124,6 @@ except ImportError:
         )
         github_repo: str = Field(
             default_factory=lambda: os.getenv("GITHUB_REPO", "zxxhz/LearnFlow").strip()
-        )
-        watchtower_url: str = Field(
-            default_factory=lambda: os.getenv("WATCHTOWER_URL", "http://watchtower:8080/v1/update").strip()
-        )
-        watchtower_token: str = Field(
-            default_factory=lambda: os.getenv("WATCHTOWER_TOKEN", os.getenv("WATCHTOWER_HTTP_API_TOKEN", "")).strip()
         )
         update_command: str = Field(
             default_factory=lambda: os.getenv("UPDATE_COMMAND", "").strip()
