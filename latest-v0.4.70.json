@@ -1,0 +1,12 @@
+{
+  "version": "0.4.70",
+  "notes": "# v0.4.70 自建云端中转 Docker 镜像自动发布与多端在线管理\n\n全面支持云端自建 Relay Server 的一键 Docker 容器化部署、GitHub Actions 自动构建以及免登录服务器的多端在线热更新与大模型配置：\n\n## 1. GitHub Actions 自动编译与 GHCR 容器镜像发布\n- 新增多阶段构建 Dockerfile：Node.js 20 编译打包前端 Web SPA 静态资源，Python 3.12 瘦镜像托管服务端，打造开箱即用的 All-in-One 单体镜像（仅约 180MB）；\n- 配置 .github/workflows/docker-build.yml：发版打标（v*）自动触发构建并推送到 GitHub Packages (ghcr.io/zxxhz/learnflow-server:latest 与对应版本标签)，具备 Buildx 缓存加速。\n\n## 2. Web 与电脑 Desktop 双端在线热更新\n- 服务端新增 /api/relay/system/version 与 /api/relay/system/update 接口，自动检测 GitHub 最新 Release 并支持通过 Watchtower 或 Docker Socket 触发平滑重启更新；\n- 前端设置页新增「云端服务端在线更新」卡片：清晰呈现当前运行版本、云端最新发布与发布说明，提供「一键更新服务端」与 15 秒倒计时自动刷新；\n- 本地 Desktop 桌面端增加透明代理路由，在本地电脑桌面端即可直接查看远端 VPS 运行状态并一键触发升级。\n\n## 3. 云端服务端内置大模型 API 在线修改与测试\n- 设置页「自建云端中转服务器」卡片新增「云端服务端大模型 API 配置」模块，支持在网页端与电脑端随时在线修改 VPS 的大模型 Base URL、API Key 与 Model 名称；\n- 提供 DeepSeek、智谱 GLM、OpenAI、Moonshot、Ollama 等常用大模型快捷预设；\n- 支持在线测试大模型连通性与网络往返延迟（ms）；\n- 配置自动持久化写入 /app/data/server_config.json，容器重启、拉取新镜像永不丢失。\n\n## 4. 架构与工程规范演进\n- 从 Git 远程仓库中解耦 .zcode 文件夹跟踪，保证开源仓库轻量干净，本地持久化与工作流正常保留；\n- 生产级 docker-compose.yml 预置 pull_policy: always（开机或重启自动拉取最新镜像）与 Watchtower 自动更新代理支持。",
+  "pub_date": "2026-11-10T12:50:13Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRRzM0NjVIK01UajdRSmJ2VkVrZlRya0dFKzJqSFR4VGZLT0gzQ0N2Wm1BdkF3Z2ljMElBT3VaaWVpaHM0TjhpMjgwV2dKalgrMm1EdXc3UnlQc0RHbTlZYk4vc093UGdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0MzE1MDEzCWZpbGU6TGVhcm5GbG93XzAuNC43MF94NjQtc2V0dXAuZXhlCXZlcnNpb246MC40LjcwCnV2N1BnYUkvVG0vcU1iRG9wZFNCWjY0TDhNeUtNTGwrSlRkZ3R1U3kxYXRPOE1xRDdQVnZvT3pkYU96aXEyWHdKMmxJZ1l1eG5WYkhuQlJhVndPY0N3PT0K",
+      "sha256": "250858bf67b45ce837717ffdab2019b86683f12a10bfb553a95fe89f92665175",
+      "url": "https://github.com/zxxhz/LearnFlow/releases/download/v0.4.70/LearnFlow_0.4.70_x64-setup.exe"
+    }
+  }
+}
