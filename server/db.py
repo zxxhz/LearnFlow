@@ -605,7 +605,11 @@ class RelayDatabase:
                 FROM documents WHERE course_id = ? ORDER BY chapter_index ASC
             """, (course_id,))
             d_rows = cursor.fetchall()
-            documents = [dict(r) for r in d_rows]
+            # 与桌面端 ChapterProgress 字段对齐：前端课程详情页读 document_id 渲染阅读链接
+            documents = [
+                {**dict(r), "document_id": r["id"]}
+                for r in d_rows
+            ]
 
             outline = None
             if c_row["outline"]:
@@ -655,6 +659,7 @@ class RelayDatabase:
                 "content": d["content"],
                 "summary": d["summary"],
                 "status": d["status"],
+                "source": d["source"] if "source" in d.keys() else "generated",
                 "created_at": d["created_at"],
                 "updated_at": d["updated_at"],
             }

@@ -142,14 +142,28 @@ async def get_course_detail(course_id: str):
 
 @app.get("/api/documents/{doc_id}/content")
 async def get_document_content(doc_id: str):
-    """获取文档正文讲义内容。"""
+    """获取文档正文讲义内容。
+
+    返回结构与桌面端 DocumentContentOut 严格对齐：
+    { document: {...}, markdown: str, blocks: [] }，
+    否则纯 Web 阅读器读 document.* / blocks.length 会直接崩溃。
+    """
     doc = await relay_db.get_document(doc_id)
     if doc and doc.get("content"):
         return {
-            "content": doc["content"],
-            "title": doc["title"],
-            "version": doc["version"],
-            "status": doc["status"],
+            "document": {
+                "id": doc["id"],
+                "course_id": doc.get("course_id", ""),
+                "chapter_index": doc.get("chapter_index", 0),
+                "title": doc.get("title", ""),
+                "version": doc.get("version", 1),
+                "status": doc.get("status", "done"),
+                "source": doc.get("source", "generated"),
+                "summary": doc.get("summary"),
+                "updated_at": doc.get("updated_at", ""),
+            },
+            "markdown": doc["content"],
+            "blocks": [],  # 云端未存逐段索引，阅读器按整篇 markdown 渲染
         }
     if tunnel_manager.is_worker_online():
         try:
