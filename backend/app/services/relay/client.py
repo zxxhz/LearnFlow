@@ -147,6 +147,7 @@ class RelayClient:
                     ping_interval=25.0,
                     ping_timeout=20.0,
                     close_timeout=5.0,
+                    proxy=None,  # 直连 VPS，绕过本地系统代理（避免代理拦截返回 502）
                 ) as ws:
                     self._current_ws = ws
                     self.status = "connected"
@@ -301,6 +302,7 @@ async def test_relay_connection(server_url: str, server_token: str = "") -> dict
             additional_headers=headers if headers else None,
             open_timeout=6.0,
             close_timeout=3.0,
+            proxy=None,  # 直连 VPS，绕过本地系统代理（避免代理拦截返回 502）
         ) as ws:
             latency = max(1, int((time.time() - start_time) * 1000))
             # 发送一次轻量 ping
@@ -316,6 +318,13 @@ async def test_relay_connection(server_url: str, server_token: str = "") -> dict
         err_msg = str(exc)
         if "401" in err_msg or "403" in err_msg:
             detail = "连接被拒绝：Token 认证失败，请检查 Server Token 配置"
+        elif "502" in err_msg or "504" in err_msg:
+            detail = (
+                "网关返回 502/504：通常是本地代理软件拦截了连接，请关闭系统代理或将该服务器地址加入直连规则；"
+                "若服务器配置了 Nginx 反代，请检查其 upstream 端口与容器实际监听端口是否一致"
+            )
+        elif "503" in err_msg:
+            detail = "服务端返回 503：云端服务正在维护或本地 Worker 未连接，请稍后重试"
         elif "refused" in err_msg.lower() or "10061" in err_msg:
             detail = f"无法连接到服务器 {server_url}：连接被拒绝，请确认服务端已启动并在指定端口监听"
         else:
