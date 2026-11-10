@@ -46,5 +46,5 @@ RUN mkdir -p /app/data
 VOLUME ["/app/data"]
 EXPOSE 8421
 
-# 启动服务 (默认监听 0.0.0.0:8421)
-CMD ["uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8421"]
+# 启动服务 (通过 python -m server.main 动态读取环境变量 SERVER_PORT，默认 8421)
+CMD ["python", "-m", "server.main"]

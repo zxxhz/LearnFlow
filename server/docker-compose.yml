@@ -11,9 +11,11 @@ services:
     restart: unless-stopped
     pull_policy: always
     ports:
-      - "${SERVER_PORT:-8421}:8421"
+      # 格式为 "宿主机端口:容器内端口"，支持通过 SERVER_PORT 环境变量同时动态指定两端端口
+      - "${SERVER_PORT:-8421}:${SERVER_PORT:-8421}"
     environment:
-      - SERVER_PORT=8421
+      # 服务监听端口（改动此处会同时生效于容器内部 Uvicorn 与端口映射）
+      - SERVER_PORT=${SERVER_PORT:-8421}
       # 安全访问密码（建议配置复杂密码；留空且 RELAY_AUTH_REQUIRED=false 则免密开放）
       - RELAY_SERVER_TOKEN=${RELAY_SERVER_TOKEN:-}
       - RELAY_AUTH_REQUIRED=${RELAY_AUTH_REQUIRED:-false}
@@ -29,7 +31,8 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8421/health"]
+      # 动态健康检查，自动适配 SERVER_PORT
+      test: ["CMD", "python", "-c", "import os, urllib.request; p=os.getenv('SERVER_PORT','8421'); urllib.request.urlopen(f'http://127.0.0.1:{p}/health')"]
       interval: 30s
       timeout: 5s
       retries: 3

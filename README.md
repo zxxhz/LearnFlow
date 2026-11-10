@@ -147,9 +147,9 @@ services:
     restart: unless-stopped
     pull_policy: always # 核心：启动/重启时自动拉取最新前后端一体化镜像
     ports:
-      - "8421:8421"
+      - "${SERVER_PORT:-8421}:${SERVER_PORT:-8421}"
     environment:
-      - SERVER_PORT=8421
+      - SERVER_PORT=${SERVER_PORT:-8421}
       - RELAY_SERVER_TOKEN=your_secure_token_here # 访问密码，留空则免密开放
       - RELAY_AUTH_REQUIRED=true
       - AI_MODE=auto                              # 智能模式：本地在线走本地，离线走云端
