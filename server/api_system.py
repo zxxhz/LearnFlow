@@ -123,8 +123,8 @@ async def _fetch_github_latest_release(repo: str) -> dict[str, Any]:
 @router.get("/version")
 async def get_version_info():
     """获取当前服务端版本与 GitHub 最新版本信息。"""
-    current_ver = getattr(settings, "server_version", os.getenv("SERVER_VERSION", "0.4.70"))
-    repo = getattr(settings, "github_repo", os.getenv("GITHUB_REPO", "zxxhz/LearnFlow"))
+    current_ver = settings.server_version
+    repo = settings.github_repo
     in_container = _is_running_in_container()
     docker_sock = _get_docker_socket_path()
 
@@ -196,8 +196,7 @@ async def trigger_system_update(_: bool = Depends(require_token)):
         # 发起异步任务，避免阻塞本次 HTTP 响应返回给前端
         async def _docker_pull_and_restart():
             await asyncio.sleep(1.0)
-            repo = getattr(settings, "github_repo", os.getenv("GITHUB_REPO", "zxxhz/LearnFlow")).lower()
-            image_name = f"ghcr.io/{repo}-server:latest"
+            image_name = "ghcr.io/zxxhz/learnflow-server:latest"
             logger.info("通过 Docker Socket 拉取最新镜像: %s", image_name)
 
             # 使用 curl --unix-socket 调用 Docker Engine API 拉取镜像

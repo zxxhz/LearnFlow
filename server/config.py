@@ -64,9 +64,9 @@ try:
         server_llm_api_key: str = os.getenv("SERVER_LLM_API_KEY", os.getenv("LLM_API_KEY", "")).strip()
         server_llm_model: str = os.getenv("SERVER_LLM_MODEL", os.getenv("LLM_MODEL", "deepseek-chat")).strip()
 
-        # 系统与在线更新配置
-        server_version: str = os.getenv("SERVER_VERSION", "0.4.70").strip()
-        github_repo: str = os.getenv("GITHUB_REPO", "zxxhz/LearnFlow").strip()
+        # 系统与在线更新配置（固定官方仓库与现行版本，无需外部环境变量配置）
+        server_version: str = "0.4.70"
+        github_repo: str = "zxxhz/LearnFlow"
         update_command: str = os.getenv("UPDATE_COMMAND", "").strip()
 
         def is_auth_enabled(self) -> bool:
@@ -119,12 +119,8 @@ except ImportError:
         server_llm_model: str = Field(
             default_factory=lambda: os.getenv("SERVER_LLM_MODEL", os.getenv("LLM_MODEL", "deepseek-chat")).strip()
         )
-        server_version: str = Field(
-            default_factory=lambda: os.getenv("SERVER_VERSION", "0.4.70").strip()
-        )
-        github_repo: str = Field(
-            default_factory=lambda: os.getenv("GITHUB_REPO", "zxxhz/LearnFlow").strip()
-        )
+        server_version: str = "0.4.70"
+        github_repo: str = "zxxhz/LearnFlow"
         update_command: str = Field(
             default_factory=lambda: os.getenv("UPDATE_COMMAND", "").strip()
         )

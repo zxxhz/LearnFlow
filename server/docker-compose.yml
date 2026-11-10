@@ -27,8 +27,6 @@ services:
       - AI_MODE=${AI_MODE:-auto}
       # 提示：大模型 API（Base URL / Key / Model）直接在 Web 网页端或电脑桌面端「设置」中随时在线修改，
       # 会自动持久化保存到挂载的 ./data 卷中，无需在 compose 中硬编码密钥。
-      # 系统在线更新配置
-      - GITHUB_REPO=zxxhz/LearnFlow
       - DATA_DIR=/app/data
       - STATIC_DIR=/app/static
     volumes:
