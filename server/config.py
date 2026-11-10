@@ -47,9 +47,9 @@ try:
         )
 
         host: str = os.getenv("SERVER_HOST", "0.0.0.0")
-        port: int = int(os.getenv("SERVER_PORT", os.getenv("RELAY_PORT", os.getenv("PORT", "8421"))))
-        relay_auth_required: bool = _get_bool_env("RELAY_AUTH_REQUIRED", False)
-        relay_server_token: str = os.getenv("RELAY_SERVER_TOKEN", os.getenv("RELAY_TOKEN", os.getenv("SERVER_TOKEN", ""))).strip()
+        port: int = int(os.getenv("SERVER_PORT", os.getenv("PORT", "8421")))
+        relay_auth_required: bool = _get_bool_env("RELAY_AUTH_REQUIRED", True)
+        relay_server_token: str = os.getenv("RELAY_SERVER_TOKEN", os.getenv("SERVER_TOKEN", "")).strip()
         static_dir: Path = _resolve_default_static_dir()
         data_dir: Path = Path(os.getenv("DATA_DIR", str(Path(__file__).resolve().parent / "data"))).resolve()
 
@@ -95,13 +95,13 @@ except ImportError:
     class Settings(BaseModel):
         host: str = Field(default_factory=lambda: os.getenv("SERVER_HOST", "0.0.0.0"))
         port: int = Field(
-            default_factory=lambda: int(os.getenv("SERVER_PORT", os.getenv("RELAY_PORT", os.getenv("PORT", "8421"))))
+            default_factory=lambda: int(os.getenv("SERVER_PORT", os.getenv("PORT", "8421")))
         )
         relay_auth_required: bool = Field(
-            default_factory=lambda: _get_bool_env("RELAY_AUTH_REQUIRED", False)
+            default_factory=lambda: _get_bool_env("RELAY_AUTH_REQUIRED", True)
         )
         relay_server_token: str = Field(
-            default_factory=lambda: os.getenv("RELAY_SERVER_TOKEN", os.getenv("RELAY_TOKEN", os.getenv("SERVER_TOKEN", ""))).strip()
+            default_factory=lambda: os.getenv("RELAY_SERVER_TOKEN", os.getenv("SERVER_TOKEN", "")).strip()
         )
         static_dir: Path = Field(default_factory=_resolve_default_static_dir)
         data_dir: Path = Field(

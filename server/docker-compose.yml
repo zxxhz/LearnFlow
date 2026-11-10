@@ -16,9 +16,10 @@ services:
     environment:
       # 服务监听端口（改动此处会同时生效于容器内部 Uvicorn 与端口映射）
       - SERVER_PORT=${SERVER_PORT:-8421}
-      # 安全访问密码（建议配置复杂密码；留空且 RELAY_AUTH_REQUIRED=false 则免密开放）
+      # 安全访问密码（建议设置复杂密码；若设为 false 且此处留空才免密开放）
       - RELAY_SERVER_TOKEN=${RELAY_SERVER_TOKEN:-}
-      - RELAY_AUTH_REQUIRED=${RELAY_AUTH_REQUIRED:-false}
+      # 是否强制启用 Token 鉴权（默认 true 强制开启，保护公网接口安全）
+      - RELAY_AUTH_REQUIRED=${RELAY_AUTH_REQUIRED:-true}
       - AI_MODE=${AI_MODE:-auto}
       # 安全更新通信：通过 Docker 内部虚拟网络向独立的 Watchtower 触发热更新
       - WATCHTOWER_URL=http://watchtower:8080/v1/update
