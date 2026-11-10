@@ -8,9 +8,9 @@ WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm install
 
-# 拷贝前端源码并执行全量打包 (tsc --noEmit && vite build)
+# 拷贝前端源码并执行全量打包，显式输出到 dist 目录供阶段 2 复制
 COPY frontend/ ./
-RUN npm run build
+RUN npm run build -- --outDir dist
 
 # ========================================================
 # 阶段 2：服务端运行时 (Python 3.12-slim)
