@@ -40,3 +40,7 @@ backend/data-smoke*/
 
 # 会话内构建临时目录（esbuild/工具链 TEMP 指向点，不入库）
 .tmp/
+
+# 发版临时更新元数据草稿（不入库）
+latest*.json
+
