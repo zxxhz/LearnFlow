@@ -46,6 +46,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
+      # 显式声明 Docker API 协议版本，解决高版本 Docker Daemon 报 client version 1.25 is too old
+      - DOCKER_API_VERSION=1.44
       - WATCHTOWER_CLEANUP=true         # 更新后自动清理无用旧镜像，释放磁盘空间
       - WATCHTOWER_LABEL_ENABLE=true    # 仅更新带有 enable=true 标签的容器，不干扰宿主机其他服务
       - WATCHTOWER_HTTP_API_UPDATE=true # 开启内网 HTTP API 触发模式，供网页/桌面端点击一键更新

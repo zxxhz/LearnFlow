@@ -167,6 +167,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
+      - DOCKER_API_VERSION=1.44         # 解决高版本 Docker Daemon 报 client version 1.25 is too old
       - WATCHTOWER_CLEANUP=true
       - WATCHTOWER_LABEL_ENABLE=true
       - WATCHTOWER_HTTP_API_UPDATE=true
