@@ -9,6 +9,9 @@ import {
   syncBothRelayData,
   testRelayConnection,
   updateRelayConfig,
+  getServerLLMConfig,
+  updateServerLLMConfig,
+  testServerLLMConnection,
 } from "../../lib/api";
 import type {
   RelayAiMode,
@@ -16,9 +19,19 @@ import type {
   RelayConnectionState,
   RelayStatus,
   RelaySyncResult,
+  ServerLLMConfig,
+  ServerLLMTestResult,
 } from "../../lib/types";
 import { Button, Input, Spinner } from "../../components/ui";
 import { showToast } from "../../lib/toast";
+
+const SERVER_PROVIDER_PRESETS = [
+  { label: "DeepSeek", base_url: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { label: "智谱 GLM", base_url: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
+  { label: "OpenAI", base_url: "https://api.openai.com/v1", model: "gpt-4o-mini" },
+  { label: "Moonshot", base_url: "https://api.moonshot.cn/v1", model: "moonshot-v1-8k" },
+  { label: "Ollama 本地", base_url: "http://localhost:11434/v1", model: "qwen2.5:7b" },
+];
 
 export default function RelaySettingsCard() {
   const qc = useQueryClient();
@@ -62,6 +75,77 @@ export default function RelaySettingsCard() {
   const [saveMsg, setSaveMsg] = useState("");
   const [saveErr, setSaveErr] = useState("");
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+
+  // 云端服务端内置大模型配置状态 (VPS 端 API)
+  const [serverLlmBaseUrl, setServerLlmBaseUrl] = useState("");
+  const [serverLlmApiKey, setServerLlmApiKey] = useState("");
+  const [serverLlmModel, setServerLlmModel] = useState("");
+  const [showServerKey, setShowServerKey] = useState(false);
+  const [serverLlmMaskedKey, setServerLlmMaskedKey] = useState("");
+  const [serverLlmTesting, setServerLlmTesting] = useState(false);
+  const [serverLlmTestResult, setServerLlmTestResult] = useState<ServerLLMTestResult | null>(null);
+  const [serverLlmSaving, setServerLlmSaving] = useState(false);
+  const [serverLlmSaveMsg, setServerLlmSaveMsg] = useState("");
+  const [serverLlmOpen, setServerLlmOpen] = useState(false);
+
+  // 查询云端大模型配置
+  const { data: serverLlmConfig, refetch: refetchServerLlm } = useQuery<ServerLLMConfig>({
+    queryKey: ["server-llm-config"],
+    queryFn: getServerLLMConfig,
+    enabled: enabled || (typeof window !== "undefined" && !(window as any).__TAURI_INTERNALS__),
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (serverLlmConfig) {
+      if (serverLlmConfig.server_llm_base_url) setServerLlmBaseUrl(serverLlmConfig.server_llm_base_url);
+      if (serverLlmConfig.server_llm_model) setServerLlmModel(serverLlmConfig.server_llm_model);
+      if (serverLlmConfig.server_llm_api_key_masked) setServerLlmMaskedKey(serverLlmConfig.server_llm_api_key_masked);
+    }
+  }, [serverLlmConfig]);
+
+  const handleTestServerLlm = async () => {
+    setServerLlmTesting(true);
+    setServerLlmTestResult(null);
+    try {
+      const res = await testServerLLMConnection({
+        server_llm_base_url: serverLlmBaseUrl.trim(),
+        server_llm_api_key: serverLlmApiKey.trim() || undefined,
+        server_llm_model: serverLlmModel.trim(),
+      });
+      setServerLlmTestResult(res);
+      if (res.ok) {
+        showToast(`✅ 云端 API 测试成功 (${res.latency_ms}ms)`);
+      } else {
+        showToast(`❌ 云端 API 测试失败: ${res.message}`);
+      }
+    } catch (e: any) {
+      setServerLlmTestResult({ ok: false, message: e.message || "测试请求失败" });
+      showToast(`❌ 云端 API 测试失败: ${e.message}`);
+    } finally {
+      setServerLlmTesting(false);
+    }
+  };
+
+  const handleSaveServerLlm = async () => {
+    setServerLlmSaving(true);
+    setServerLlmSaveMsg("");
+    try {
+      await updateServerLLMConfig({
+        server_llm_base_url: serverLlmBaseUrl.trim(),
+        server_llm_api_key: serverLlmApiKey.trim() || undefined,
+        server_llm_model: serverLlmModel.trim(),
+      });
+      setServerLlmSaveMsg("✅ 云端大模型配置已保存并持久化！");
+      showToast("✅ 云端大模型配置已更新");
+      refetchServerLlm();
+      setTimeout(() => setServerLlmSaveMsg(""), 3000);
+    } catch (e: any) {
+      showToast(`❌ 保存失败: ${e.message}`);
+    } finally {
+      setServerLlmSaving(false);
+    }
+  };
 
   // 初始化填充
   useEffect(() => {
@@ -484,6 +568,154 @@ export default function RelaySettingsCard() {
                 </div>
               </div>
             </div>
+          </div>
+
+          {/* 云端服务端内置大模型 API 配置 (VPS 端 API) */}
+          <div className="rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50/70 dark:bg-gray-850/80 p-4 space-y-3">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between text-left"
+              onClick={() => setServerLlmOpen(!serverLlmOpen)}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-base">⚡</span>
+                <div>
+                  <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    云端服务端大模型 API 配置 (VPS 端)
+                  </span>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                    在云端模式或本地离线自动回退时由 VPS 直连该大模型；支持在线修改并永久保存。
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs text-brand-600 dark:text-brand-400 font-medium">
+                {serverLlmOpen ? "收起 ▾" : "修改 API ▸"}
+              </span>
+            </button>
+
+            {serverLlmOpen && (
+              <div className="mt-3 space-y-3 pt-3 border-t border-gray-200/60 dark:border-gray-800">
+                {/* 快捷预设 */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-gray-500 dark:text-gray-400">快捷预设:</span>
+                  {SERVER_PROVIDER_PRESETS.map((p) => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => {
+                        setServerLlmBaseUrl(p.base_url);
+                        setServerLlmModel(p.model);
+                      }}
+                      className="rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-2 py-1 text-xs text-gray-700 dark:text-gray-300 hover:border-brand-500 hover:text-brand-600 transition"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Base URL
+                    </label>
+                    <Input
+                      type="text"
+                      value={serverLlmBaseUrl}
+                      onChange={(e) => setServerLlmBaseUrl(e.target.value)}
+                      placeholder="https://api.deepseek.com/v1"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      API Key
+                    </label>
+                    <div className="relative">
+                      <Input
+                        type={showServerKey ? "text" : "password"}
+                        value={serverLlmApiKey}
+                        onChange={(e) => setServerLlmApiKey(e.target.value)}
+                        placeholder={
+                          serverLlmMaskedKey ? `已配置: ${serverLlmMaskedKey}` : "sk-..."
+                        }
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowServerKey(!showServerKey)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition text-xs"
+                      >
+                        {showServerKey ? "隐藏" : "显示"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Model 名称
+                    </label>
+                    <Input
+                      type="text"
+                      value={serverLlmModel}
+                      onChange={(e) => setServerLlmModel(e.target.value)}
+                      placeholder="deepseek-chat 或 gpt-4o-mini"
+                    />
+                  </div>
+                </div>
+
+                {/* 连通性测试结果面板 */}
+                {serverLlmTestResult && (
+                  <div
+                    className={`rounded-lg p-2.5 text-xs border flex items-start gap-2 ${
+                      serverLlmTestResult.ok
+                        ? "bg-green-50 dark:bg-green-950/30 border-green-200 dark:border-green-900/50 text-green-700 dark:text-green-300"
+                        : "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900/50 text-red-700 dark:text-red-300"
+                    }`}
+                  >
+                    <span>{serverLlmTestResult.ok ? "✅" : "❌"}</span>
+                    <div>
+                      <div className="font-medium">{serverLlmTestResult.message}</div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between pt-1">
+                  <Button
+                    variant="secondary"
+                    disabled={serverLlmTesting || !serverLlmBaseUrl.trim() || !serverLlmModel.trim()}
+                    onClick={handleTestServerLlm}
+                    className="text-xs px-3 py-1.5"
+                  >
+                    {serverLlmTesting ? (
+                      <>
+                        <Spinner className="h-3 w-3" /> 测试连接中…
+                      </>
+                    ) : (
+                      "⚡ 测试云端 API"
+                    )}
+                  </Button>
+
+                  <div className="flex items-center gap-2">
+                    {serverLlmSaveMsg && (
+                      <span className="text-xs text-green-600 dark:text-green-400">{serverLlmSaveMsg}</span>
+                    )}
+                    <Button
+                      disabled={serverLlmSaving}
+                      onClick={handleSaveServerLlm}
+                      className="text-xs px-3.5 py-1.5"
+                    >
+                      {serverLlmSaving ? (
+                        <>
+                          <Spinner className="h-3 w-3" /> 保存中…
+                        </>
+                      ) : (
+                        "保存云端 API 配置"
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 自动同步选项 */}

@@ -33,6 +33,60 @@ class ServerLLMService:
             self._client = httpx.AsyncClient(timeout=120.0)
         return self._client
 
+    async def test_connection(
+        self,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """在线测试指定（或当前保存）大模型配置连通性与往返延迟。"""
+        import time
+
+        target_base_url = (base_url or settings.server_llm_base_url).rstrip("/")
+        target_api_key = api_key if api_key is not None else settings.server_llm_api_key
+        target_model = (model or settings.server_llm_model).strip()
+
+        if not target_base_url:
+            return {"ok": False, "message": "Base URL 不能为空"}
+        if not target_model:
+            return {"ok": False, "message": "Model 名称不能为空"}
+
+        url = f"{target_base_url}/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        if target_api_key:
+            headers["Authorization"] = f"Bearer {target_api_key}"
+
+        payload = {
+            "model": target_model,
+            "messages": [{"role": "user", "content": "Hello! Reply with 'OK'."}],
+            "max_tokens": 10,
+        }
+
+        start_time = time.time()
+        client = self._get_client()
+        try:
+            resp = await client.post(url, headers=headers, json=payload, timeout=15.0)
+            latency_ms = int((time.time() - start_time) * 1000)
+            if resp.status_code == 200:
+                data = resp.json()
+                reply = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip() or "OK"
+                return {
+                    "ok": True,
+                    "message": f"连接正常 · 模型回复「{reply}」· 延迟 {latency_ms}ms",
+                    "latency_ms": latency_ms,
+                    "model_reply": reply,
+                }
+            else:
+                return {
+                    "ok": False,
+                    "message": f"上游接口返回 HTTP {resp.status_code}: {resp.text[:120]}",
+                    "latency_ms": latency_ms,
+                }
+        except httpx.TimeoutException:
+            return {"ok": False, "message": "连接超时（15 秒未响应），请检查 Base URL 是否可达"}
+        except Exception as e:
+            return {"ok": False, "message": f"请求失败: {e}"}
+
     async def stream_chat(
         self,
         messages: list[dict[str, str]],

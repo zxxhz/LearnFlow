@@ -15,8 +15,9 @@ from fastapi import APIRouter, Body, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from server.auth import require_token
-from server.config import settings
+from server.config import save_persisted_config, settings
 from server.db import relay_db
+from server.llm import server_llm_service
 from server.tunnel import tunnel_manager
 
 router = APIRouter(prefix="/api/relay", tags=["relay"])
@@ -86,6 +87,20 @@ async def sync_pull(_: bool = Depends(require_token)):
         )
 
 
+def _mask_key(key: str) -> str:
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return "******"
+    return f"{key[:3]}****{key[-4:]}"
+
+
+class AiModeTestRequest(BaseModel):
+    server_llm_base_url: Optional[str] = None
+    server_llm_api_key: Optional[str] = None
+    server_llm_model: Optional[str] = None
+
+
 @router.get("/ai-mode")
 async def get_ai_mode():
     """获取当前服务端 AI 执行模式与内置大模型状态。"""
@@ -94,6 +109,7 @@ async def get_ai_mode():
         "server_llm_configured": settings.is_server_llm_configured(),
         "server_llm_model": settings.server_llm_model,
         "server_llm_base_url": settings.server_llm_base_url,
+        "server_llm_api_key_masked": _mask_key(settings.server_llm_api_key),
         "worker_online": tunnel_manager.is_worker_online(),
     }
 
@@ -103,24 +119,46 @@ async def update_ai_mode(
     req: AiModeUpdateRequest,
     _: bool = Depends(require_token),
 ):
-    """更新服务端 AI 执行模式与大模型配置。"""
+    """更新服务端 AI 执行模式与大模型配置，并持久化到 data/server_config.json。"""
+    updates = {}
     if req.ai_mode is not None:
-        settings.ai_mode = req.ai_mode
+        updates["ai_mode"] = req.ai_mode
     if req.server_llm_base_url is not None:
-        settings.server_llm_base_url = req.server_llm_base_url.rstrip("/")
+        updates["server_llm_base_url"] = req.server_llm_base_url.rstrip("/")
     if req.server_llm_api_key is not None:
-        settings.server_llm_api_key = req.server_llm_api_key.strip()
+        updates["server_llm_api_key"] = req.server_llm_api_key.strip()
     if req.server_llm_model is not None:
-        settings.server_llm_model = req.server_llm_model.strip()
+        updates["server_llm_model"] = req.server_llm_model.strip()
+
+    save_persisted_config(updates)
 
     return {
         "ok": True,
-        "message": f"AI 模式已切换为 {settings.ai_mode}",
+        "message": f"AI 配置已更新并持久化保存 (当前模式: {settings.ai_mode})",
         "ai_mode": settings.ai_mode,
         "server_llm_configured": settings.is_server_llm_configured(),
         "server_llm_model": settings.server_llm_model,
         "server_llm_base_url": settings.server_llm_base_url,
+        "server_llm_api_key_masked": _mask_key(settings.server_llm_api_key),
     }
+
+
+@router.post("/ai-mode/test")
+async def test_server_llm_connection(
+    req: AiModeTestRequest,
+    _: bool = Depends(require_token),
+):
+    """在线测试服务端内置大模型的连通性与延迟。"""
+    target_base = req.server_llm_base_url or settings.server_llm_base_url
+    target_key = req.server_llm_api_key if req.server_llm_api_key is not None else settings.server_llm_api_key
+    target_model = req.server_llm_model or settings.server_llm_model
+
+    result = await server_llm_service.test_connection(
+        base_url=target_base,
+        api_key=target_key,
+        model=target_model,
+    )
+    return result
 
 
 @router.get("/status")

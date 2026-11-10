@@ -23,9 +23,8 @@ backend/app/static/
 backend/dist/
 backend/build/
 
-# ZCode 本地会话产物与 Agent 技能（保留工作流配置）
-.zcode/*
-!.zcode/workflows/
+# ZCode 本地开发环境与工作流（不入库）
+.zcode/
 .agents/
 
 # 其他

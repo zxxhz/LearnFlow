@@ -101,8 +101,26 @@ uvicorn server.main:app --host 0.0.0.0 --port 8421
 | `SERVER_LLM_MODEL` | string | `gpt-4o-mini` | 服务端大模型模型名称（如 `qwen-plus`, `deepseek-chat`） |
 | `STATIC_DIR` | path | 自动探测 | 前端静态资源目录（默认自动查找 `../frontend/dist` 或 `../backend/app/static`） |
 | `DATA_DIR` | path | `server/data/` | 云端 SQLite 数据库与持久化数据存储目录 |
+| `SERVER_VERSION` | string | `0.4.69` | 当前服务端版本标识 |
+| `GITHUB_REPO` | string | `Emoing/learnflow` | 对应的 GitHub 仓库（用于版本检查与更新） |
+| `WATCHTOWER_URL` | string | `http://watchtower:8080/v1/update` | Watchtower 更新端点 |
+| `WATCHTOWER_TOKEN` | string | `learnflow_update_secret` | Watchtower API 触发密钥 |
 
 > **提示**：若希望启用 Token 鉴权，只需设置 `RELAY_SERVER_TOKEN=你的强密码` 并根据需要设置 `RELAY_AUTH_REQUIRED=true`。
+
+---
+
+## 🔄 在线热更新机制 (Web 界面一键更新 & 开机自拉取)
+
+本系统支持无需 SSH 登录服务器的高频在线平滑更新：
+
+1. **开机自拉取最新镜像 (`pull_policy: always`)**：
+   在 `docker-compose.yml` 中默认配置了 `pull_policy: always`，任何时候重启容器，Docker 都会自动检测并拉取 GitHub Packages 上的最新前后端一体化镜像。
+2. **Web 页面一键更新 (配合 Watchtower 或 Docker Socket)**：
+   在 LearnFlow 网页端「设置」页面下方的 **「云端服务端在线更新」** 卡片中：
+   - 自动检测 GitHub 最新 Release 版本与更新日志；
+   - 点击 **【🚀 立即在线更新服务端】**，后端将通知 Watchtower 或 Docker 引擎在后台拉取最新镜像并重启自身；
+   - 页面自动启动 15 秒倒计时，并在重启就绪后自动刷新载入全新版本。
 
 ---
 
@@ -112,6 +130,8 @@ uvicorn server.main:app --host 0.0.0.0 --port 8421
 | :--- | :---: | :---: | :--- |
 | `/` | `GET` | 按配置 | 前端 SPA 主页或服务在线说明页 |
 | `/health` | `GET` | 免除 | 轻量探针与心跳检测接口 |
+| `/api/relay/system/version` | `GET` | 免除 | 查询服务端当前版本、云端最新版本及发布说明 |
+| `/api/relay/system/update` | `POST` | 需鉴权 | 触发服务端在线更新并优雅重启容器 |
 | `/ws/relay` | `WebSocket` | 按配置 | 本地客户端反向隧道长连接接入点 |
 | `/api/relay/status` | `GET` | 免除 | 查询中转服务状态、Worker 在线状态、统计信息 |
 | `/api/relay/ai-mode` | `GET`/`POST` | 按配置 | 查询或动态切换 AI 模式（cloud/local/auto）及热更新大模型配置 |

@@ -5,6 +5,7 @@ import { api } from "../../lib/api";
 import type { AnnotationColor, AdhdMode, LLMConfig, Preferences, SceneLLMConfig, SceneName, SettingsData } from "../../lib/types";
 import DataSafetySection from "./DataSafetySection";
 import RelaySettingsCard from "./RelaySettingsCard";
+import ServerUpdateCard from "./ServerUpdateCard";
 import { Button, Input, Select, Spinner } from "../../components/ui";
 import { HL_COLOR_KEYS, HL_DEFAULTS, HL_LABELS } from "../reader/colors";
 import RuntimeEnvSection from "./RuntimeEnvSection";
@@ -562,6 +563,9 @@ export default function SettingsPage() {
 
       {/* 自建云端中转服务器配置 */}
       <RelaySettingsCard />
+
+      {/* 云端服务端在线更新 */}
+      <ServerUpdateCard />
 
       {/* 下载源测速与智能路由 */}
       <DownloadMirrorsSection />

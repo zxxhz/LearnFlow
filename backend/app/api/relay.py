@@ -183,3 +183,167 @@ async def test_connection(body: TestConnectionRequest | None = None) -> dict[str
         }
 
     return await test_relay_connection(target_url, effective_token or "")
+
+
+@router.get("/system/version")
+async def proxy_relay_system_version() -> dict[str, Any]:
+    """本地客户端透传获取云端服务端的版本信息。"""
+    cfg = get_relay_config()
+    if not cfg.enabled or not cfg.server_url:
+        return {
+            "current_version": "未连接",
+            "latest_version": "",
+            "has_update": False,
+            "in_container": False,
+            "can_auto_update": False,
+            "update_driver": "manual",
+            "check_error": "本地中转服务未启用或未配置服务器地址",
+        }
+
+    target = cfg.server_url.rstrip("/") + "/api/relay/system/version"
+    headers = {}
+    if cfg.server_token:
+        headers["x-server-token"] = cfg.server_token
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(target, headers=headers)
+            if resp.status_code == 200:
+                return resp.json()
+            return {
+                "current_version": "未知",
+                "latest_version": "",
+                "has_update": False,
+                "in_container": False,
+                "can_auto_update": False,
+                "update_driver": "manual",
+                "check_error": f"云端服务返回状态码 {resp.status_code}",
+            }
+    except Exception as e:
+        return {
+            "current_version": "无法连接",
+            "latest_version": "",
+            "has_update": False,
+            "in_container": False,
+            "can_auto_update": False,
+            "update_driver": "manual",
+            "check_error": f"连接云端服务端失败: {e}",
+        }
+
+
+@router.post("/system/update")
+async def proxy_relay_system_update() -> dict[str, Any]:
+    """本地客户端透传向云端服务端触发在线更新。"""
+    cfg = get_relay_config()
+    if not cfg.enabled or not cfg.server_url:
+        return {
+            "status": "error",
+            "message": "请先在本地配置并启用云端中转服务器",
+            "driver": "manual",
+            "estimated_seconds": 0,
+        }
+
+    target = cfg.server_url.rstrip("/") + "/api/relay/system/update"
+    headers = {}
+    if cfg.server_token:
+        headers["x-server-token"] = cfg.server_token
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(target, headers=headers)
+            if resp.status_code == 200:
+                return resp.json()
+            return {
+                "status": "error",
+                "message": f"云端更新接口响应错误 ({resp.status_code})",
+                "driver": "manual",
+                "estimated_seconds": 0,
+            }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"透传触发云端更新失败: {e}",
+            "driver": "manual",
+            "estimated_seconds": 0,
+        }
+
+
+@router.get("/server-llm")
+async def proxy_get_server_llm() -> dict[str, Any]:
+    """本地客户端透传获取 VPS 云端服务端的大模型配置。"""
+    cfg = get_relay_config()
+    if not cfg.enabled or not cfg.server_url:
+        return {
+            "ok": False,
+            "message": "中转服务未启用或未配置地址",
+            "ai_mode": "auto",
+            "server_llm_configured": False,
+            "server_llm_model": "",
+            "server_llm_base_url": "",
+            "server_llm_api_key_masked": "",
+        }
+
+    target = cfg.server_url.rstrip("/") + "/api/relay/ai-mode"
+    headers = {}
+    if cfg.server_token:
+        headers["x-server-token"] = cfg.server_token
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(target, headers=headers)
+            if resp.status_code == 200:
+                return {"ok": True, **resp.json()}
+            return {"ok": False, "message": f"云端服务返回 HTTP {resp.status_code}"}
+    except Exception as e:
+        return {"ok": False, "message": f"获取云端大模型配置失败: {e}"}
+
+
+@router.post("/server-llm")
+async def proxy_update_server_llm(body: dict[str, Any]) -> dict[str, Any]:
+    """本地客户端透传更新 VPS 云端服务端的大模型配置（并持久化）。"""
+    cfg = get_relay_config()
+    if not cfg.enabled or not cfg.server_url:
+        return {"ok": False, "message": "中转服务未启用或未配置地址"}
+
+    target = cfg.server_url.rstrip("/") + "/api/relay/ai-mode"
+    headers = {}
+    if cfg.server_token:
+        headers["x-server-token"] = cfg.server_token
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(target, headers=headers, json=body)
+            if resp.status_code == 200:
+                return resp.json()
+            return {"ok": False, "message": f"云端更新失败 HTTP {resp.status_code}: {resp.text[:120]}"}
+    except Exception as e:
+        return {"ok": False, "message": f"连接云端服务端失败: {e}"}
+
+
+@router.post("/server-llm/test")
+async def proxy_test_server_llm(body: dict[str, Any]) -> dict[str, Any]:
+    """本地客户端透传在线测试 VPS 云端服务端的大模型连通性。"""
+    cfg = get_relay_config()
+    if not cfg.enabled or not cfg.server_url:
+        return {"ok": False, "message": "中转服务未启用或未配置地址"}
+
+    target = cfg.server_url.rstrip("/") + "/api/relay/ai-mode/test"
+    headers = {}
+    if cfg.server_token:
+        headers["x-server-token"] = cfg.server_token
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(target, headers=headers, json=body)
+            if resp.status_code == 200:
+                return resp.json()
+            return {"ok": False, "message": f"测试失败 HTTP {resp.status_code}: {resp.text[:120]}"}
+    except Exception as e:
+        return {"ok": False, "message": f"连接云端服务端失败: {e}"}
+
+

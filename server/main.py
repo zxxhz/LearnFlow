@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
 from server.api_sync import router as sync_router
+from server.api_system import router as system_router
 from server.auth import RelayAuthMiddleware
 from server.config import settings
 from server.db import relay_db
@@ -79,6 +80,7 @@ app.add_middleware(RelayAuthMiddleware)
 
 # 挂载数据同步与状态 API 路由
 app.include_router(sync_router)
+app.include_router(system_router)
 
 
 # ----------------------------------------------------

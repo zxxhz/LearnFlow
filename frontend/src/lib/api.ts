@@ -69,6 +69,10 @@ import type {
   RelaySyncResult,
   RelayAiMode,
   RelayAiModeResult,
+  ServerSystemVersion,
+  ServerUpdateTriggerResult,
+  ServerLLMConfig,
+  ServerLLMTestResult,
 } from "./types";
 import { streamSSE, subscribeSSE } from "./sse";
 import { showToast } from "./toast";
@@ -373,6 +377,63 @@ export async function setRelayAiMode(mode: RelayAiMode): Promise<RelayAiModeResu
 
 export async function getRelayStatus(): Promise<RelayStatus> {
   return request<RelayStatus>("/relay/status");
+}
+
+export async function getServerSystemVersion(): Promise<ServerSystemVersion> {
+  return request<ServerSystemVersion>("/relay/system/version");
+}
+
+export async function triggerServerUpdate(): Promise<ServerUpdateTriggerResult> {
+  return request<ServerUpdateTriggerResult>("/relay/system/update", {
+    method: "POST",
+  });
+}
+
+export async function getServerLLMConfig(): Promise<ServerLLMConfig> {
+  try {
+    const res = await request<any>("/relay/server-llm");
+    if (res && res.ok !== false) return res;
+  } catch {
+    /* fallback to direct /relay/ai-mode */
+  }
+  return request<ServerLLMConfig>("/relay/ai-mode");
+}
+
+export async function updateServerLLMConfig(data: {
+  ai_mode?: RelayAiMode;
+  server_llm_base_url?: string;
+  server_llm_api_key?: string;
+  server_llm_model?: string;
+}): Promise<any> {
+  try {
+    return await request<any>("/relay/server-llm", {
+      method: "POST",
+      ...jsonBody(data),
+    });
+  } catch {
+    return await request<any>("/relay/ai-mode", {
+      method: "POST",
+      ...jsonBody(data),
+    });
+  }
+}
+
+export async function testServerLLMConnection(data: {
+  server_llm_base_url?: string;
+  server_llm_api_key?: string;
+  server_llm_model?: string;
+}): Promise<ServerLLMTestResult> {
+  try {
+    return await request<ServerLLMTestResult>("/relay/server-llm/test", {
+      method: "POST",
+      ...jsonBody(data),
+    });
+  } catch {
+    return await request<ServerLLMTestResult>("/relay/ai-mode/test", {
+      method: "POST",
+      ...jsonBody(data),
+    });
+  }
 }
 
 export const api = {
@@ -804,6 +865,11 @@ export const api = {
     getAiMode: getRelayAiMode,
     setAiMode: setRelayAiMode,
     getStatus: getRelayStatus,
+    getServerVersion: getServerSystemVersion,
+    triggerServerUpdate: triggerServerUpdate,
+    getServerLLMConfig: getServerLLMConfig,
+    updateServerLLMConfig: updateServerLLMConfig,
+    testServerLLMConnection: testServerLLMConnection,
   },
 };
 

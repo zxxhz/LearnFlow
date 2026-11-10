@@ -871,4 +871,41 @@ export interface RelayAiModeResult {
   message?: string;
 }
 
+export interface ServerSystemVersion {
+  current_version: string;
+  latest_version: string;
+  has_update: boolean;
+  release_title?: string;
+  release_notes?: string;
+  published_at?: string;
+  html_url?: string;
+  in_container: boolean;
+  can_auto_update: boolean;
+  update_driver: "watchtower" | "docker_socket" | "command" | "manual";
+  check_error?: string | null;
+}
+
+export interface ServerUpdateTriggerResult {
+  status: string;
+  message: string;
+  driver: string;
+  estimated_seconds: number;
+}
+
+export interface ServerLLMConfig {
+  ai_mode: RelayAiMode;
+  server_llm_configured: boolean;
+  server_llm_model: string;
+  server_llm_base_url: string;
+  server_llm_api_key_masked?: string;
+  worker_online?: boolean;
+}
+
+export interface ServerLLMTestResult {
+  ok: boolean;
+  message: string;
+  latency_ms?: number;
+  model_reply?: string;
+}
+
 

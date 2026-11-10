@@ -1,37 +1,67 @@
 version: "3.8"
 
 services:
-  relay-server:
-    build:
-      context: ..
-      dockerfile: server/Dockerfile
-    image: learnflow-relay:latest
+  # ========================================================
+  # LearnFlow 云端中转服务端 (含完整 Web SPA 前端界面)
+  # ========================================================
+  learnflow-relay:
+    # 默认从 GitHub Packages (GHCR) 拉取自动构建的一体化镜像
+    image: ghcr.io/emoing/learnflow-server:latest
     container_name: learnflow-relay
     restart: unless-stopped
+    # 核心：启动或重启时自动拉取最新镜像（实现开机即最新）
+    pull_policy: always
+    # 如需在本地源码重新编译，可解开下三行注释：
+    # build:
+    #   context: ..
+    #   dockerfile: server/Dockerfile
     ports:
       - "${SERVER_PORT:-8421}:8421"
     environment:
       - SERVER_PORT=8421
+      # 访问安全 Token（建议外网部署配置复杂密码；若为空且 RELAY_AUTH_REQUIRED=false 则开放免密）
+      - RELAY_SERVER_TOKEN=${RELAY_SERVER_TOKEN:-}
       # 是否强制启用 Token 鉴权（true / false，默认 false）
       - RELAY_AUTH_REQUIRED=${RELAY_AUTH_REQUIRED:-false}
-      # 访问安全 Token（若 RELAY_AUTH_REQUIRED=false 且此处为空，则开放免密访问）
-      - RELAY_SERVER_TOKEN=${RELAY_SERVER_TOKEN:-}
-      # AI 执行模式: auto (默认) | cloud (云端大模型) | local (本地Worker)
+      # AI 执行模式: auto (默认，本地在线走本地，离线走云端) | cloud (强制云端) | local (强制本地)
       - AI_MODE=${AI_MODE:-auto}
       # 云端内置大模型配置（用于 cloud 模式或 auto 离线回退）
       - SERVER_LLM_BASE_URL=${SERVER_LLM_BASE_URL:-https://api.openai.com/v1}
       - SERVER_LLM_API_KEY=${SERVER_LLM_API_KEY:-}
       - SERVER_LLM_MODEL=${SERVER_LLM_MODEL:-gpt-4o-mini}
+      # 系统在线更新配置
+      - GITHUB_REPO=Emoing/learnflow
+      - WATCHTOWER_URL=http://watchtower:8080/v1/update
+      - WATCHTOWER_TOKEN=${WATCHTOWER_TOKEN:-learnflow_update_secret}
       - DATA_DIR=/app/data
       - STATIC_DIR=/app/static
     volumes:
-      # 持久化存储云端 SQLite 数据库与缓存
+      # 持久化存储云端 SQLite 数据库与错题/讲义缓存
       - ./data:/app/data
-      # 可选：将构建出的前端产物映射进容器供 Web 访问
-      - ../frontend/dist:/app/static:ro
+      # 挂载宿主机 Docker 通信管道，支持在 Web 界面一键触发在线更新
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8421/health')"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8421/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 5s
+
+  # ========================================================
+  # Watchtower 在线更新控制器（配合 Web 端一键更新）
+  # ========================================================
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: learnflow-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true         # 更新后自动清理老旧镜像，释放磁盘空间
+      - WATCHTOWER_LABEL_ENABLE=true    # 仅更新标记了 enable=true 的容器，不干扰宿主机其他容器
+      - WATCHTOWER_HTTP_API_UPDATE=true # 开启 HTTP API 模式，支持 Web 端按钮手动触发
+      - WATCHTOWER_HTTP_API_TOKEN=${WATCHTOWER_TOKEN:-learnflow_update_secret}
+      # 检查间隔：默认设为 86400 秒（主要依靠 Web 端手动点击），如需全自动轮询可改为 300 (5分钟)
+      - WATCHTOWER_POLL_INTERVAL=86400

@@ -418,9 +418,64 @@ def test_cloud_ai_and_sync():
     print("✅ 云端 AI 模式与全量数据 Pull 测试全部通过！")
 
 
+# 5. 测试系统版本检测与在线更新接口
+def test_system_version_and_update():
+    print(">>> 正在测试 server.api_system 模块...")
+    from server.main import app
+
+    client = TestClient(app)
+
+    # 1. 测试版本查询端点
+    r = client.get("/api/relay/system/version")
+    assert r.status_code == 200
+    data = r.json()
+    assert "current_version" in data
+    assert "latest_version" in data
+    assert "in_container" in data
+    assert "can_auto_update" in data
+    assert "update_driver" in data
+
+    # 2. 测试在线更新触发端点 (未鉴权拦截)
+    # 当有 token 限制时
+    from server.config import settings
+    old_token = settings.relay_server_token
+    settings.relay_server_token = "test-update-secret"
+    try:
+        r_unauth = client.post("/api/relay/system/update")
+        assert r_unauth.status_code == 401
+
+        # 携带 token 鉴权成功
+        r_auth = client.post(
+            "/api/relay/system/update",
+            headers={"x-server-token": "test-update-secret"}
+        )
+        assert r_auth.status_code == 200
+        res = r_auth.json()
+        assert "status" in res
+        assert "message" in res
+        assert "driver" in res
+    finally:
+        settings.relay_server_token = old_token
+
+    # 3. 测试在线大模型连通性测试接口
+    r_test = client.post(
+        "/api/relay/ai-mode/test",
+        json={
+            "server_llm_base_url": "http://invalid-test-url.local",
+            "server_llm_api_key": "sk-test",
+            "server_llm_model": "test-model",
+        },
+    )
+    assert r_test.status_code == 200
+    assert r_test.json()["ok"] is False  # invalid url 应优雅返回 ok: False 而不是 500
+
+    print("✅ server.api_system 系统版本与在线更新测试全部通过！")
+
+
 if __name__ == "__main__":
     test_database()
     test_auth_and_api()
     test_tunnel()
     test_cloud_ai_and_sync()
+    test_system_version_and_update()
     print("\n🎉🎉🎉 全部模块自动化测试验证成功！")
