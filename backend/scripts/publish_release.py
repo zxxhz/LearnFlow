@@ -203,17 +203,26 @@ def main() -> int:
 
     pat = get_pat()
     auth_url = f"https://{pat}@github.com/{OWNER}/{REPO_NAME}.git"
+    headers = {"Authorization": f"Bearer {pat}", "Accept": "application/vnd.github+json"}
+
+    # 查询远程 Release 是否已存在
+    existing_release = None
+    try:
+        with httpx.Client(follow_redirects=False) as client:
+            r_chk = client.get(f"{API}/repos/{OWNER}/{REPO_NAME}/releases/tags/{tag}", headers=headers, timeout=20)
+            if r_chk.status_code == 200:
+                existing_release = r_chk.json()
+    except Exception as e:
+        print(f"  ⚠️ 查询 Release 状态失败，将尝试继续发布: {e}")
+
+    if existing_release and not args.dry_run:
+        assets = existing_release.get("assets", [])
+        if any(a.get("name") == exe.name for a in assets):
+            print(f"❌ 远程已存在 Release {tag} 且包含安装包，拒绝重复发布")
+            return 1
+        print(f"  ℹ️ 远程存在标签/Release {tag} 但资产不全，将继续上传补充资产...")
 
     with github_direct_proxy() as proxy_url:
-        # 远程标签已存在则拒绝（防重复发布）；dry-run 不落盘，仅提示
-        ls = run(["git", "-c", "http.sslbackend=openssl", "-c", f"http.proxy={proxy_url}", "ls-remote", "--tags", auth_url, f"refs/tags/{tag}"])
-        if ls.returncode == 0 and ls.stdout.strip():
-            if args.dry_run:
-                print(f"  ⚠️ 远程已存在标签 {tag}（dry-run 不受影响，真实发布会拒绝）")
-            else:
-                print(f"❌ 远程已存在标签 {tag}，拒绝重复发布")
-                return 1
-
         if args.dry_run:
             print("=== DRY-RUN 模式：以下操作将被跳过（git add/commit/tag/push、创建 Release、上传资产） ===")
             print(f"  ✅ GitHub PAT 可用（长度 {len(pat)}）")
@@ -247,26 +256,46 @@ def main() -> int:
         else:
             print(f"  ℹ️ 本地标签已就绪：{tag}")
 
-        must(["git", "-c", "http.sslbackend=openssl", "-c", f"http.proxy={proxy_url}", "push", auth_url, "main", "--tags"], "git push")
+        # 尝试推送代码与标签，先直连，失败回落
+        push_ok = False
+        for push_cmd in [
+            ["git", "-c", "http.sslbackend=schannel", "push", auth_url, "main", "--tags"],
+            ["git", "-c", "http.sslbackend=openssl", "push", auth_url, "main", "--tags"],
+            ["git", "-c", "http.sslbackend=openssl", "-c", f"http.proxy={proxy_url}", "push", auth_url, "main", "--tags"],
+        ]:
+            p = run(push_cmd)
+            if p.returncode == 0 or "Everything up-to-date" in p.stdout or "Everything up-to-date" in p.stderr:
+                push_ok = True
+                break
+        if not push_ok:
+            chk = run(["git", "ls-remote", "--tags", auth_url, f"refs/tags/{tag}"])
+            if chk.returncode == 0 and chk.stdout.strip():
+                push_ok = True
+        if not push_ok:
+            print("❌ git push 最终失败")
+            return 1
         print("  ✅ 已推送 origin main --tags")
 
     # 2. GitHub API
-    headers = {"Authorization": f"Bearer {pat}", "Accept": "application/vnd.github+json"}
-
     with httpx.Client(follow_redirects=False) as client:
-        r = client.post(
-            f"{API}/repos/{OWNER}/{REPO_NAME}/releases",
-            headers=headers,
-            json={"tag_name": tag, "name": tag, "body": notes, "draft": False, "prerelease": False},
-            timeout=60,
-        )
-        if r.status_code not in (200, 201):
-            print(f"❌ 创建 Release 失败：HTTP {r.status_code}\n{r.text[:500]}")
-            return 1
-        release = r.json()
-        release_id = release["id"]
-        html_url = release["html_url"]
-        print(f"  ✅ Release 已创建：{html_url}")
+        if existing_release:
+            release_id = existing_release["id"]
+            html_url = existing_release["html_url"]
+            print(f"  ℹ️ 复用已存在 Release：{html_url}")
+        else:
+            r = client.post(
+                f"{API}/repos/{OWNER}/{REPO_NAME}/releases",
+                headers=headers,
+                json={"tag_name": tag, "name": tag, "body": notes, "draft": False, "prerelease": False},
+                timeout=60,
+            )
+            if r.status_code not in (200, 201):
+                print(f"❌ 创建 Release 失败：HTTP {r.status_code}\n{r.text[:500]}")
+                return 1
+            release = r.json()
+            release_id = release["id"]
+            html_url = release["html_url"]
+            print(f"  ✅ Release 已创建：{html_url}")
 
         upload_base = f"{UPLOAD}/repos/{OWNER}/{REPO_NAME}/releases/{release_id}/assets"
         upload_with_retry(client, headers, upload_base, exe.name, exe.read_bytes(), "application/octet-stream")
