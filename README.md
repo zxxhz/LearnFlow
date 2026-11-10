@@ -152,9 +152,8 @@ services:
       - RELAY_SERVER_TOKEN=your_secure_token_here # 访问密码，留空则免密开放
       - RELAY_AUTH_REQUIRED=true
       - AI_MODE=auto                              # 智能模式：本地在线走本地，离线走云端
-      - SERVER_LLM_BASE_URL=https://api.deepseek.com/v1 # 云端内置大模型
-      - SERVER_LLM_API_KEY=sk-xxxx
-      - SERVER_LLM_MODEL=deepseek-chat
+      # 提示：大模型 API（Base URL / Key / Model）直接在 Web 网页或电脑桌面端「设置」中配置，
+      # 会自动持久化到挂载的 ./data 卷中，无需在此硬编码。
     volumes:
       - ./data:/app/data                          # 持久化存储 SQLite 数据库与讲义缓存
       - /var/run/docker.sock:/var/run/docker.sock # 挂载后支持在网页端一键在线热更新

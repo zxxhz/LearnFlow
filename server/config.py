@@ -56,17 +56,17 @@ try:
         # AI 执行模式: "cloud" (走云端服务端LLM) | "local" (反向代理走本地Worker) | "auto" (本地在线走本地，离线平滑降级走云端)
         ai_mode: str = _get_ai_mode_env()
 
-        # 服务端内置 LLM 配置（用于云端模式）
+        # 服务端内置 LLM 配置（默认留空，由用户在 Web 网页或桌面端设置页在线配置并持久化到 data/server_config.json）
         server_llm_base_url: str = os.getenv(
             "SERVER_LLM_BASE_URL",
-            os.getenv("LLM_BASE_URL", "https://api.openai.com/v1"),
+            os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
         ).rstrip("/")
         server_llm_api_key: str = os.getenv("SERVER_LLM_API_KEY", os.getenv("LLM_API_KEY", "")).strip()
-        server_llm_model: str = os.getenv("SERVER_LLM_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")).strip()
+        server_llm_model: str = os.getenv("SERVER_LLM_MODEL", os.getenv("LLM_MODEL", "deepseek-chat")).strip()
 
         # 系统与在线更新配置
-        server_version: str = os.getenv("SERVER_VERSION", "0.4.69").strip()
-        github_repo: str = os.getenv("GITHUB_REPO", "Emoing/learnflow").strip()
+        server_version: str = os.getenv("SERVER_VERSION", "0.4.70").strip()
+        github_repo: str = os.getenv("GITHUB_REPO", "zxxhz/LearnFlow").strip()
         watchtower_url: str = os.getenv("WATCHTOWER_URL", "http://watchtower:8080/v1/update").strip()
         watchtower_token: str = os.getenv("WATCHTOWER_TOKEN", os.getenv("WATCHTOWER_HTTP_API_TOKEN", "")).strip()
         update_command: str = os.getenv("UPDATE_COMMAND", "").strip()
@@ -119,13 +119,13 @@ except ImportError:
             default_factory=lambda: os.getenv("SERVER_LLM_API_KEY", os.getenv("LLM_API_KEY", "")).strip()
         )
         server_llm_model: str = Field(
-            default_factory=lambda: os.getenv("SERVER_LLM_MODEL", os.getenv("LLM_MODEL", "gpt-4o-mini")).strip()
+            default_factory=lambda: os.getenv("SERVER_LLM_MODEL", os.getenv("LLM_MODEL", "deepseek-chat")).strip()
         )
         server_version: str = Field(
-            default_factory=lambda: os.getenv("SERVER_VERSION", "0.4.69").strip()
+            default_factory=lambda: os.getenv("SERVER_VERSION", "0.4.70").strip()
         )
         github_repo: str = Field(
-            default_factory=lambda: os.getenv("GITHUB_REPO", "Emoing/learnflow").strip()
+            default_factory=lambda: os.getenv("GITHUB_REPO", "zxxhz/LearnFlow").strip()
         )
         watchtower_url: str = Field(
             default_factory=lambda: os.getenv("WATCHTOWER_URL", "http://watchtower:8080/v1/update").strip()

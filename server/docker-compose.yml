@@ -6,7 +6,7 @@ services:
   # ========================================================
   learnflow-relay:
     # 默认从 GitHub Packages (GHCR) 拉取自动构建的一体化镜像
-    image: ghcr.io/emoing/learnflow-server:latest
+    image: ghcr.io/zxxhz/learnflow-server:latest
     container_name: learnflow-relay
     restart: unless-stopped
     # 核心：启动或重启时自动拉取最新镜像（实现开机即最新）
@@ -25,12 +25,10 @@ services:
       - RELAY_AUTH_REQUIRED=${RELAY_AUTH_REQUIRED:-false}
       # AI 执行模式: auto (默认，本地在线走本地，离线走云端) | cloud (强制云端) | local (强制本地)
       - AI_MODE=${AI_MODE:-auto}
-      # 云端内置大模型配置（用于 cloud 模式或 auto 离线回退）
-      - SERVER_LLM_BASE_URL=${SERVER_LLM_BASE_URL:-https://api.openai.com/v1}
-      - SERVER_LLM_API_KEY=${SERVER_LLM_API_KEY:-}
-      - SERVER_LLM_MODEL=${SERVER_LLM_MODEL:-gpt-4o-mini}
+      # 提示：大模型 API（Base URL / Key / Model）直接在 Web 网页端或电脑桌面端「设置」中随时在线修改，
+      # 会自动持久化保存到挂载的 ./data 卷中，无需在 compose 中硬编码密钥。
       # 系统在线更新配置
-      - GITHUB_REPO=Emoing/learnflow
+      - GITHUB_REPO=zxxhz/LearnFlow
       - WATCHTOWER_URL=http://watchtower:8080/v1/update
       - WATCHTOWER_TOKEN=${WATCHTOWER_TOKEN:-learnflow_update_secret}
       - DATA_DIR=/app/data
