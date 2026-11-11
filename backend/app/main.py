@@ -13,6 +13,7 @@ except Exception:
 import contextlib
 import ipaddress
 import logging
+import re
 import socket
 import sys
 from collections.abc import AsyncIterator
@@ -184,6 +185,25 @@ try:
         _TRUSTED_HOSTS.add(f"{_hn}.local")
 except Exception:
     pass
+
+
+class _TokenLogFilter(logging.Filter):
+    """uvicorn access log 过滤：把 query 里的 token 值替换为 ***（令牌不落访问日志/终端回滚）。"""
+
+    _TOKEN_RE = re.compile(r"([?&])token=[^&\s]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+            if "token=" in msg:
+                record.msg = self._TOKEN_RE.sub(r"\1token=***", msg)
+                record.args = None
+        except Exception:
+            pass
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_TokenLogFilter())
 
 
 def _parse_host_header(host_header: str) -> tuple[str, int] | None:
@@ -521,15 +541,14 @@ def main() -> None:
     import uvicorn
 
     if settings.host == "0.0.0.0":
-        # 局域网访问（PRD §5.9）：若开启则打印本机局域网地址（带访问令牌），默认关闭时给出引导
-        from app.services.system import get_access_token, lan_urls, is_lan_access_enabled
+        # 局域网访问（PRD §5.9）：若开启则打印本机局域网地址（不含 token：终端回滚/截图即泄漏），默认关闭时给出引导
+        from app.services.system import lan_urls, is_lan_access_enabled
 
         if is_lan_access_enabled():
             print("\n>>> 局域网访问地址（需与电脑同一网络，或走内网穿透）：")
-            token = get_access_token()
             for url in lan_urls():
-                print(f">>>   {url}/?token={token}")
-            print(">>> 安全提示：已启用访问令牌保护，完整地址（含 token）可在设置页查看。\n")
+                print(f">>>   {url}")
+            print(">>> 安全提示：已启用访问令牌保护，完整地址（含 token）请在设置页「局域网访问」一键复制。\n")
         else:
             print("\n>>> 局域网访问当前处于关闭状态（仅限本机 127.0.0.1 访问）。")
             print(">>> 如需在平板或手机浏览器中使用，请在设置页「数据与安全」开启「局域网访问」。\n")

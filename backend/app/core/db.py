@@ -102,10 +102,13 @@ async def init_db() -> None:
             try:
                 await conn.execute(text(ddl))
             except Exception as e:  # noqa: BLE001
-                # 仅幂等忽略「列已存在」；其余迁移失败记录告警后继续，不让老库阻断启动
+                # 仅幂等忽略「列已存在」；其余失败直接中止启动（v0.5.3 体检 P3）：
+                # 表缺失/磁盘只读等问题静默吞掉会让依赖该列的后续索引也静默失败，
+                # 问题被推迟到运行期以 OperationalError 暴露，排查成本远高于启动失败
                 if "duplicate column" in str(e).lower():
                     continue
-                logger.warning("轻量迁移执行失败（跳过并继续启动）: %s；原因: %s", ddl, e)
+                logger.error("轻量迁移执行失败，中止启动: %s；原因: %s", ddl, e)
+                raise
 
     # v0.4.0 移除费曼/复习模块的老库清理。须在 foreign_keys=OFF 的独立连接上做：
     # feynman 对话连带消息先删 → DROP 三张表；conversations 里指向已删表的

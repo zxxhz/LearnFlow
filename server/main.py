@@ -393,11 +393,13 @@ async def get_study_today():
                 "chapter_title": d.get("title", ""),
             }
 
-    db_stats = await relay_db.get_db_stats()
+    # 错题数与错题池同口径现算（v0.5.3 体检 P3）：mistakes 表从不清理且 exercise
+    # 来源塌缩为 None_None，行数不代表真实错题量
+    bank_wrong_count = await relay_db.count_bank_wrong_questions()
     return {
         "last_read": last_read,
         "hard_bones": [],
-        "bank_wrong_count": db_stats.get("mistakes", 0),
+        "bank_wrong_count": bank_wrong_count,
         "active_misconceptions": active_mis,
     }
 

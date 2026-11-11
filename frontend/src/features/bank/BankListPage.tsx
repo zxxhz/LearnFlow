@@ -18,6 +18,7 @@ import type { Bank, BankAnalysis } from "../../lib/types";
 import BankPromptModal from "./BankPromptModal";
 import PasteImportModal from "./PasteImportModal";
 import ReplaceBankModal from "./ReplaceBankModal";
+import { showToast } from "../../lib/toast";
 
 const TYPE_LABEL: Record<string, string> = { single: "单选", multi: "多选", judge: "判断" };
 
@@ -38,7 +39,7 @@ export default function BankListPage() {
       setRenameTarget(null);
       qc.invalidateQueries({ queryKey: ["banks"] });
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const remove = useMutation({
@@ -49,7 +50,7 @@ export default function BankListPage() {
     },
     onError: (e) => {
       setDeleteTarget(null);
-      alert((e as Error).message);
+      showToast(`❌ ${(e as Error).message}`);
     },
   });
 

@@ -2,7 +2,8 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, getRelayConfig } from "../../lib/api";
-import { Button, EmptyState, Spinner } from "../../components/ui";
+import { Button, ConfirmDialog, EmptyState, Spinner } from "../../components/ui";
+import { showToast } from "../../lib/toast";
 
 function fmtSize(n: number): string {
   if (n > 1048576) return `${(n / 1048576).toFixed(1)} MB`;
@@ -12,6 +13,12 @@ function fmtSize(n: number): string {
 export default function DataSafetySection() {
   const qc = useQueryClient();
   const [msg, setMsg] = useState("");
+  // 破坏性操作确认（v0.5.3 体检 P3）：原生 confirm 与全站 ConfirmDialog 体系割裂
+  const [confirmAsk, setConfirmAsk] = useState<
+    | { kind: "restore"; name: string }
+    | { kind: "delete"; name: string }
+    | null
+  >(null);
 
   // 获取中转配置以区分云端 Web 服务端 vs 本地桌面客户端
   const { data: relayConfig } = useQuery({
@@ -46,17 +53,17 @@ export default function DataSafetySection() {
       flash(`已备份：${b.name}（${fmtSize(b.size)}）`);
       qc.invalidateQueries({ queryKey: ["system-backups"] });
     },
-    onError: (e) => alert(e.message),
+    onError: (e) => showToast(`❌ ${e.message}`),
   });
   const doRestore = useMutation({
     mutationFn: (name: string) => api.system.restore(name),
     onSuccess: (r) => flash(r.message),
-    onError: (e) => alert(e.message),
+    onError: (e) => showToast(`❌ ${e.message}`),
   });
   const doDelete = useMutation({
     mutationFn: (name: string) => api.system.deleteBackup(name),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["system-backups"] }),
-    onError: (e) => alert(e.message),
+    onError: (e) => showToast(`❌ ${e.message}`),
   });
   const doRotate = useMutation({
     mutationFn: api.system.rotateToken,
@@ -65,7 +72,7 @@ export default function DataSafetySection() {
       qc.invalidateQueries({ queryKey: ["system-access"] });
       flash("已重新生成令牌，旧地址立即失效");
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
   const doToggleLan = useMutation({
     mutationFn: (enabled: boolean) => api.system.setLanAccess(enabled),
@@ -74,7 +81,7 @@ export default function DataSafetySection() {
       qc.invalidateQueries({ queryKey: ["system-access"] });
       flash(a.lan_mode ? "已开启局域网访问" : "已关闭局域网访问");
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   return (
@@ -109,18 +116,13 @@ export default function DataSafetySection() {
                 <span className="flex shrink-0 items-center gap-2">
                   <button
                     className="text-brand-600 underline"
-                    onClick={() => {
-                      if (confirm(`用 ${b.name} 恢复数据？当前未备份的修改会丢失。恢复在重启应用后生效。`))
-                        doRestore.mutate(b.name);
-                    }}
+                    onClick={() => setConfirmAsk({ kind: "restore", name: b.name })}
                   >
                     恢复
                   </button>
                   <button
                     className="text-gray-400 dark:text-gray-500 underline hover:text-red-500 dark:hover:text-red-400"
-                    onClick={() => {
-                      if (confirm(`删除备份 ${b.name}？`)) doDelete.mutate(b.name);
-                    }}
+                    onClick={() => setConfirmAsk({ kind: "delete", name: b.name })}
                   >
                     删除
                   </button>
@@ -200,6 +202,22 @@ export default function DataSafetySection() {
           )}
         </div>
       )}
+      <ConfirmDialog
+        open={confirmAsk !== null}
+        title={confirmAsk?.kind === "restore" ? "恢复数据" : "删除备份"}
+        message={
+          confirmAsk?.kind === "restore"
+            ? `用 ${confirmAsk.name} 恢复数据？当前未备份的修改会丢失。恢复在重启应用后生效。`
+            : `删除备份 ${confirmAsk?.name ?? ""}？`
+        }
+        confirmText={confirmAsk?.kind === "restore" ? "恢复" : "删除"}
+        onCancel={() => setConfirmAsk(null)}
+        onConfirm={() => {
+          if (confirmAsk?.kind === "restore") doRestore.mutate(confirmAsk.name);
+          else if (confirmAsk?.kind === "delete") doDelete.mutate(confirmAsk.name);
+          setConfirmAsk(null);
+        }}
+      />
     </section>
   );
 }

@@ -3,11 +3,12 @@ import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getServerSystemVersion, triggerServerUpdate } from "../../lib/api";
 import type { ServerSystemVersion, ServerUpdateTriggerResult } from "../../lib/types";
-import { Button, Spinner } from "../../components/ui";
+import { Button, Spinner , ConfirmDialog } from "../../components/ui";
 import { showToast } from "../../lib/toast";
 
 export default function ServerUpdateCard({ embedded = false }: { embedded?: boolean }) {
   const qc = useQueryClient();
+  const [confirmUpdate, setConfirmUpdate] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [updateMsg, setUpdateMsg] = useState<string | null>(null);
@@ -174,9 +175,7 @@ export default function ServerUpdateCard({ embedded = false }: { embedded?: bool
                 <Button
                   disabled={updating || updateMutation.isPending}
                   onClick={() => {
-                    if (window.confirm("确定要立即在线更新服务端镜像吗？更新过程中服务将重启约 10~15 秒。")) {
-                      updateMutation.mutate();
-                    }
+                    setConfirmUpdate(true);
                   }}
                   className="bg-brand-600 hover:bg-brand-700 text-white font-medium text-xs px-4 py-2"
                 >
@@ -237,6 +236,16 @@ export default function ServerUpdateCard({ embedded = false }: { embedded?: bool
           )}
         </div>
       ) : null}
+      <ConfirmDialog
+        open={confirmUpdate}
+        title="在线更新服务端"
+        message="确定要立即在线更新服务端镜像吗？更新过程中服务将重启约 10~15 秒。"
+        onCancel={() => setConfirmUpdate(false)}
+        onConfirm={() => {
+          setConfirmUpdate(false);
+          updateMutation.mutate();
+        }}
+      />
     </section>
   );
 }

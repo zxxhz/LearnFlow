@@ -12,6 +12,7 @@ import RuntimeEnvSection from "./RuntimeEnvSection";
 import DownloadMirrorsSection from "./DownloadMirrorsSection";
 import { FontSizeControl } from "../../components/FontSizeControl";
 import { LearnerProfileSection } from "./LearnerProfileSection";
+import { showToast } from "../../lib/toast";
 
 
 const PROVIDER_PRESETS: { label: string; base_url: string; model: string }[] = [
@@ -243,7 +244,7 @@ export default function SettingsPage() {
                     setLlm((prev) => ({ ...prev, base_url: "http://localhost:11434/v1", model: r.models[0] }));
                   }
                 } catch (e) {
-                  alert((e as Error).message);
+                  showToast(`❌ ${(e as Error).message}`);
                 }
               }}
               className="rounded-full border border-gray-200 dark:border-gray-700 px-2.5 py-1 text-gray-600 dark:text-gray-400 hover:border-brand-500 hover:text-brand-600"
@@ -614,7 +615,7 @@ export default function SettingsPage() {
           <Button
             className="mt-3"
             variant="secondary"
-            onClick={() => api.settings.openDataDir().catch((e) => alert(e.message))}
+            onClick={() => api.settings.openDataDir().catch((e) => showToast(`❌ ${e.message}`))}
           >
             打开数据目录
           </Button>

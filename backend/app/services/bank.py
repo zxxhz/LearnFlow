@@ -366,8 +366,26 @@ async def update_question(
                 raw_opts = [opt.strip() for opt in options if opt.strip()]
                 if len(raw_opts) < 2:
                     raise ValueError("选择题至少需要保留 2 个有效选项")
-                opts = (raw_opts + [""] * 8)[:8]
-                new_options_json = json.dumps(opts, ensure_ascii=False)
+                # 按位置回填保持 8 列位语义（v0.5.3 体检 P3）：此前去空后从 0 重排会造成列位
+                # 漂移（空槽位后的选项整体前移），同一逻辑选项与 parse_bank 的 JSON 不等价
+                # → 下次 replace 误判 content_changed，误清 AI 解析并误触发重判
+                old_slots = json.loads(q.options) if q.options else []
+                if not isinstance(old_slots, list):
+                    old_slots = []
+                old_slots = (list(old_slots) + [""] * 8)[:8]
+                nonempty_idx = [i for i, v in enumerate(old_slots) if str(v).strip()]
+                new_slots = [""] * 8
+                cursor_pos = 0
+                for opt in raw_opts:
+                    if cursor_pos < len(nonempty_idx):
+                        new_slots[nonempty_idx[cursor_pos]] = opt
+                    else:
+                        nxt = next((i for i, v in enumerate(new_slots) if not str(v).strip()), None)
+                        if nxt is None:
+                            break  # 超过 8 列的尾部选项丢弃（与旧 [:8] 口径一致）
+                        new_slots[nxt] = opt
+                    cursor_pos += 1
+                new_options_json = json.dumps(new_slots, ensure_ascii=False)
                 if new_options_json != q.options:
                     content_changed = True
                 q.options = new_options_json
@@ -390,21 +408,21 @@ async def update_question(
 
         recalibrated_attempt = None
         if recalibrate_attempts and content_changed:
-            latest_att = (
+            # 全量重判该题全部作答（v0.5.3 体检 P3）：只重判最近一次会让
+            # bank_stats 的 accuracy（全量聚合）与题目当前答案口径脱钩
+            attempts = (
                 await db.scalars(
                     select(BankAttempt)
                     .where(BankAttempt.question_id == q.id)
-                    .order_by(BankAttempt.created_at.desc())
-                    .limit(1)
+                    .order_by(BankAttempt.created_at)
                 )
-            ).first()
-
-            if latest_att:
-                submitted = [x.strip() for x in latest_att.content.split(",") if x.strip()]
+            ).all()
+            for att in attempts:
+                submitted = [x.strip() for x in att.content.split(",") if x.strip()]
                 new_passed = judge_answer(q.qtype, q.answer, submitted)
-                if latest_att.passed != new_passed:
-                    latest_att.passed = new_passed
-                recalibrated_attempt = latest_att
+                if att.passed != new_passed:
+                    att.passed = new_passed
+            recalibrated_attempt = attempts[-1] if attempts else None
 
         await db.commit()
         return q, recalibrated_attempt
@@ -498,6 +516,12 @@ def align_questions_for_replacement(
     return matched, added, removed
 
 
+def _replacement_content_changed(old_q: BankQuestion, new_q: dict) -> bool:
+    """替换对齐对的「内容变化」判定——预览（analyze）与执行（replace）必须共用同一函数，
+    保证预览页校准题数与实际重判数一致（v0.5.3 体检 P3：此前预览只算答案、执行还含选项）。"""
+    return old_q.answer != new_q["answer"] or json.dumps(new_q["options"], ensure_ascii=False) != old_q.options
+
+
 async def analyze_bank_replacement(
     db: AsyncSession,
     bank: QuestionBank,
@@ -527,7 +551,7 @@ async def analyze_bank_replacement(
         else:
             unanswered_retained += 1
 
-        if new_q["answer"] != old_q.answer:
+        if _replacement_content_changed(old_q, new_q):
             recalibrated_count += 1
             if len(samples_recalibrated) < 5:
                 sample_item = {
@@ -583,13 +607,18 @@ async def _replace_bank_locked(
     new_file_name: str,
     file_bytes: bytes,
 ) -> QuestionBank:
+    # 锁内重查（populate_existing）：调用方在锁外加载的 bank 可能已被并发删除/修改
+    fresh_bank = await db.get(QuestionBank, bank.id, populate_existing=True)
+    if fresh_bank is None:
+        raise ValueError("题库不存在或已被删除")
+    bank = fresh_bank
+
     old_questions = (
         await db.scalars(
             select(BankQuestion).where(BankQuestion.bank_id == bank.id).order_by(BankQuestion.seq)
         )
     ).all()
 
-    latest_atts = await latest_attempts(db, bank.id)
     matched, added, removed = align_questions_for_replacement(old_questions, new_questions)
 
     matched_old_lookup: dict[int, BankQuestion] = {}
@@ -611,7 +640,7 @@ async def _replace_bank_locked(
         old_q = matched_old_lookup.get(id(nq))
         if old_q:
             old_options_json = json.dumps(nq["options"], ensure_ascii=False)
-            content_changed = old_q.answer != nq["answer"] or old_options_json != old_q.options
+            content_changed = _replacement_content_changed(old_q, nq)
             old_q.seq = seq_idx
             old_q.title = nq["title"]
             old_q.options = old_options_json
@@ -623,8 +652,13 @@ async def _replace_bank_locked(
                 old_q.answer_raw = nq["answer_raw"]
                 old_q.ai_explanation = ""
 
-                att = latest_atts.get(old_q.id)
-                if att:
+                # 全量重判该题全部作答（口径与 bank_stats 的全量 accuracy 一致，v0.5.3 体检 P3）
+                atts = (
+                    await db.scalars(
+                        select(BankAttempt).where(BankAttempt.question_id == old_q.id)
+                    )
+                ).all()
+                for att in atts:
                     submitted = [x.strip() for x in att.content.split(",") if x.strip()]
                     new_passed = judge_answer(old_q.qtype, old_q.answer, submitted)
                     if att.passed != new_passed:
@@ -650,20 +684,25 @@ async def _replace_bank_locked(
         bank.source_file = new_file_name
 
     # 4. 安全两阶段替换原件归档文件；顺手清理历史遗留的孤儿临时归档（>1h）
+    #    磁盘 IO 全部下线程（v0.5.3 体检 P3）：20MB 文件写在持锁临界区内会冻结事件循环
     ext = "." + new_file_name.rsplit(".", 1)[-1].lower() if "." in new_file_name else ".xlsx"
     bank_dir = settings.data_dir / "banks" / bank.id
     bank_dir.mkdir(parents=True, exist_ok=True)
     import time as _time
 
     now_ts = _time.time()
-    for stale_tmp in bank_dir.glob(".replace_tmp_*"):
-        try:
-            if now_ts - stale_tmp.stat().st_mtime > 3600:
-                stale_tmp.unlink(missing_ok=True)
-        except OSError:
-            pass
+
+    def _prepare_archive_dir() -> None:
+        for stale_tmp in bank_dir.glob(".replace_tmp_*"):
+            try:
+                if now_ts - stale_tmp.stat().st_mtime > 3600:
+                    stale_tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    await asyncio.to_thread(_prepare_archive_dir)
     temp_archive = bank_dir / f".replace_tmp_{uuid.uuid4().hex[:8]}{ext}"
-    temp_archive.write_bytes(file_bytes)
+    await asyncio.to_thread(temp_archive.write_bytes, file_bytes)
 
     try:
         await db.commit()
@@ -672,10 +711,18 @@ async def _replace_bank_locked(
         temp_archive.unlink(missing_ok=True)
         raise
 
-    try:
-        for old_orig in bank_dir.glob("original.*"):
-            old_orig.unlink(missing_ok=True)
+    def _swap_archive() -> None:
+        # 先原子改名旧原件再落新件，替换成功后才删旧档（v0.5.3 体检 P3：
+        # 此前先 unlink 后 replace，进程崩溃在两步之间会留下 DB 指向新件而归档缺失）
+        stale_olds = list(bank_dir.glob("original.*"))
+        for i, old_orig in enumerate(stale_olds):
+            old_orig.replace(bank_dir / f".old_{uuid.uuid4().hex[:6]}{old_orig.suffix}")
         temp_archive.replace(bank_dir / f"original{ext}")
+        for retired in bank_dir.glob(".old_*"):
+            retired.unlink(missing_ok=True)
+
+    try:
+        await asyncio.to_thread(_swap_archive)
     except Exception as e:
         logger.warning("归档文件重命名异常（不影响数据库正常使用）：%s", e)
 
@@ -1015,6 +1062,11 @@ async def delete_bank(db: AsyncSession, bank: QuestionBank) -> None:
     全程持写锁防止与并发追加、替换或作答提交冲突。
     """
     async with _bank_lock(bank.id):
+        # 锁内重查存在性（v0.5.3 体检 P3）：调用方在锁外加载，与并发删除竞态时
+        # db.delete 一个已消失的行会 commit 异常 500
+        fresh = await db.get(QuestionBank, bank.id, populate_existing=True)
+        if fresh is None:
+            return
         # 不从 _bank_locks pop（v0.5.2 体检 P3）：已排队的协程持旧锁对象时，
         # pop 会让新请求建新锁立刻获得 → 同一 bank 两段并行临界区
         await db.execute(

@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import type { Exercise, ExerciseAttempt } from "../../lib/types";
-import { Badge, Button, Spinner } from "../../components/ui";
+import { Badge, Button, ConfirmDialog, Spinner } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
 import { useReaderAssistant } from "./assistantContext";
+import { showToast } from "../../lib/toast";
 
 interface Props {
   exercise: Exercise;
@@ -53,6 +54,7 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
   const [showRef, setShowRef] = useState(false);
   const [isDoubtful, setIsDoubtful] = useState(false);
   const adoptedAttempt = useRef<string | null>(null);
+  const [confirmDel, setConfirmDel] = useState(false);
 
   const attempt: ExerciseAttempt | null = exercise.latest_attempt;
 
@@ -104,7 +106,7 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
       // 小测题同源提交，需刷新 quizzes 缓存才能拿到作答后的参考答案回显
       queryClient.invalidateQueries({ queryKey: ["quizzes", documentId] });
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const remove = useMutation({
@@ -113,7 +115,7 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
       queryClient.invalidateQueries({ queryKey: ["exercises", documentId] });
       queryClient.invalidateQueries({ queryKey: ["exercises-wrongbook"] });
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const toggleHardBone = useMutation({
@@ -122,7 +124,7 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
       queryClient.invalidateQueries({ queryKey: ["exercises", documentId] });
       queryClient.invalidateQueries({ queryKey: ["exercises-wrongbook"] });
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const generateBridge = useMutation({
@@ -130,7 +132,7 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["exercises", documentId] });
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -300,9 +302,7 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
           <button
             className="text-[0.75em] text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400"
             title="删除此题"
-            onClick={() => {
-              if (confirm("删除这道练习题及其作答记录？")) remove.mutate();
-            }}
+            onClick={() => setConfirmDel(true)}
           >
             删除
           </button>
@@ -586,6 +586,16 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
           )}
         </>
       )}
+      <ConfirmDialog
+        open={confirmDel}
+        title="删除练习题"
+        message="将删除这道练习题及其全部作答记录，确定？"
+        onCancel={() => setConfirmDel(false)}
+        onConfirm={() => {
+          setConfirmDel(false);
+          remove.mutate();
+        }}
+      />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import { Button, ConfirmDialog, Select, Spinner } from "../../components/ui";
 import ExerciseCard from "./ExerciseCard";
 import FontSizeControl from "../../components/FontSizeControl";
 import { useFontSize } from "../../lib/fontSize";
+import { showToast } from "../../lib/toast";
 
 interface Props {
   documentId: string;
@@ -132,12 +133,11 @@ export default function ExerciseDrawer({
 
   // 正在出题的知识点（跨 mutation 存活：不同知识点允许并发出题，同一知识点按钮禁用防重复触发）
   const [pendingKpIds, setPendingKpIds] = useState<string[]>([]);
+  // 重新生成二次确认（v0.5.3 体检 P3：原生 confirm → ConfirmDialog）
+  const [regenConfirm, setRegenConfirm] = useState<{ kpId: string; language: "python" | "cpp" } | null>(null);
+
   const generate = useMutation({
     mutationFn: async (body: { kpId: string; language: "python" | "cpp" }) => {
-      const has = (byKp.get(body.kpId) ?? []).length > 0;
-      if (has && !confirm("重新生成将替换该知识点现有的练习题和作答记录，继续？")) {
-        throw new Error("cancelled");
-      }
       setPendingKpIds((p) => (p.includes(body.kpId) ? p : [...p, body.kpId]));
       try {
         return await api.exercises.generate({ knowledge_point_id: body.kpId, language: body.language });
@@ -150,7 +150,7 @@ export default function ExerciseDrawer({
       queryClient.invalidateQueries({ queryKey: ["exercises-wrongbook"] });
     },
     onError: (e) => {
-      if ((e as Error).message !== "cancelled") alert((e as Error).message);
+      if ((e as Error).message !== "cancelled") showToast(`❌ ${(e as Error).message}`);
     },
   });
 
@@ -161,7 +161,7 @@ export default function ExerciseDrawer({
       queryClient.invalidateQueries({ queryKey: ["quizzes", documentId] });
       queryClient.invalidateQueries({ queryKey: ["exercises-wrongbook"] });
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const removeQuiz = useMutation({
@@ -170,7 +170,7 @@ export default function ExerciseDrawer({
       queryClient.invalidateQueries({ queryKey: ["quizzes", documentId] });
       queryClient.invalidateQueries({ queryKey: ["exercises-wrongbook"] });
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const ladder = exercises.filter((e) => e.kind === "code" && !e.quiz_id);
@@ -356,7 +356,13 @@ export default function ExerciseDrawer({
                   variant="secondary"
                   className="text-xs"
                   disabled={busy}
-                  onClick={() => generate.mutate({ kpId: kp.id, language: isCoding ? lang : "python" })}
+                  onClick={() => {
+                    const kpId = kp.id;
+                    const language = (isCoding ? lang : "python") as "python" | "cpp";
+                    const has = (byKp.get(kpId) ?? []).length > 0;
+                    if (has) setRegenConfirm({ kpId, language });
+                    else generate.mutate({ kpId, language });
+                  }}
                 >
                   {busy ? (
                     <>
@@ -380,8 +386,7 @@ export default function ExerciseDrawer({
           );
         })}
         </div>
-      </div>
-      <ConfirmDialog
+        <ConfirmDialog
         open={confirmDeleteQuiz}
         title="删除随堂小测"
         message={`将删除「${activeQuiz?.title ?? ""}」及其全部题目与作答记录，且不可恢复。确定删除？`}
@@ -390,6 +395,18 @@ export default function ExerciseDrawer({
           if (activeQuiz) removeQuiz.mutate(activeQuiz.id);
         }}
         onCancel={() => setConfirmDeleteQuiz(false)}
+      />
+    </div>
+      <ConfirmDialog
+        open={regenConfirm !== null}
+        title="重新生成本知识点练习"
+        message="重新生成将替换该知识点现有的练习题和作答记录，继续？"
+        confirmText="继续重新生成"
+        onCancel={() => setRegenConfirm(null)}
+        onConfirm={() => {
+          if (regenConfirm) generate.mutate(regenConfirm);
+          setRegenConfirm(null);
+        }}
       />
     </div>
   );

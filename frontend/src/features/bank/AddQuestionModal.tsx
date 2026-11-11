@@ -277,7 +277,14 @@ export default function AddQuestionModal({ open, bankId, bankName, onClose, onSu
   };
 
   return (
-    <Modal open={open} onClose={handleReset} title={`➕ 向「${bankName}」增加题目`} width="max-w-2xl">
+    <Modal
+      open={open}
+      onClose={handleReset}
+      title={`➕ 向「${bankName}」增加题目`}
+      width="max-w-2xl"
+      confirmCloseIf={() => Boolean(rawText.trim() || parsedQuestions?.length)}
+      confirmCloseMessage="粘贴的题目尚未提交，关闭后将丢失，确定？"
+    >
       <div className="space-y-4">
         {/* 顶部 Tab 模式切换 */}
         <div className="flex border-b border-gray-200 dark:border-gray-700">

@@ -863,6 +863,27 @@ class RelayDatabase:
     async def get_bank_questions(self, bank_id: str) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self.get_bank_questions_sync, bank_id)
 
+    def count_bank_wrong_questions_sync(self) -> int:
+        """全部题库错题总数：与错题池同口径（每题最近一次作答未过或存疑）。"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM (
+                    SELECT question_id, is_correct, is_doubtful,
+                           ROW_NUMBER() OVER (PARTITION BY question_id ORDER BY created_at DESC) AS rn
+                    FROM bank_attempts
+                ) a
+                JOIN bank_questions q ON q.id = a.question_id
+                WHERE a.rn = 1 AND (a.is_correct = 0 OR a.is_doubtful = 1)
+                """
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
+    async def count_bank_wrong_questions(self) -> int:
+        return await asyncio.to_thread(self.count_bank_wrong_questions_sync)
+
     def get_bank_wrong_questions_sync(self, bank_id: str) -> list[dict[str, Any]]:
         """云端错题池：与桌面端同口径——每题最近一次作答「未通过或存疑」才算错题（v0.5.1 体检 P1）。
 

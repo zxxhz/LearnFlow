@@ -12,6 +12,8 @@ from fastapi import HTTPException
 MAX_OCR_PAGES = 16
 # 栅格化长边与 JPEG 质量：与拍照导入对齐（1600px 在文档 OCR 细节与体积间的最佳平衡）
 _RENDER_MAX_SIDE = 1600
+# 栅格化像素总量帽（40MP ≈ 拍照路径 60MP 帽的 2/3，防超大 MediaBox 巨型位图）
+_MAX_RENDER_PIXELS = 40_000_000
 _JPEG_QUALITY = 82
 
 
@@ -62,7 +64,11 @@ def rasterize_pdf_to_data_urls(data: bytes, max_pages: int = MAX_OCR_PAGES) -> l
         data_urls: list[str] = []
         for page in doc:
             w, h = page.get_size()
-            scale = max(0.5, _RENDER_MAX_SIDE / max(w, h, 1.0))
+            # 像素帽反推 scale（v0.5.3 体检 P3）：此前 max(0.5, ...) 下限会让超大 MediaBox
+            # （>3200pt）渲染出巨型位图（数百 MB 内存，且在线程池内执行）；对照 images 路径有 60MP 帽
+            scale = _RENDER_MAX_SIDE / max(w, h, 1.0)
+            if w * h * scale * scale > _MAX_RENDER_PIXELS:
+                scale = (_MAX_RENDER_PIXELS / (w * h)) ** 0.5
             bitmap = page.render(scale=scale)
             try:
                 pil = bitmap.to_pil()

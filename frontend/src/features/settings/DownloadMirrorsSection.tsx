@@ -2,10 +2,12 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
-import { Badge, Button, ErrorText, Input, Modal, Spinner } from "../../components/ui";
+import { Badge, Button, ErrorText, Input, Modal, Spinner , ConfirmDialog } from "../../components/ui";
 import type { DownloadMirrorItem } from "../../lib/types";
+import { showToast } from "../../lib/toast";
 
 export default function DownloadMirrorsSection() {
+  const [confirmMirror, setConfirmMirror] = useState<{ id: string; name: string } | null>(null);
   const queryClient = useQueryClient();
   const [testingMsg, setTestingMsg] = useState("");
 
@@ -41,7 +43,7 @@ export default function DownloadMirrorsSection() {
     onSuccess: (data) => {
       queryClient.setQueryData(["settings-mirrors"], data);
     },
-    onError: (e) => alert(`镜像源切换失败：${(e as Error).message}`),
+    onError: (e) => showToast(`❌ 镜像源切换失败：${(e as Error).message}`),
   });
 
   const addCustomMutation = useMutation({
@@ -172,9 +174,7 @@ export default function DownloadMirrorsSection() {
 
   const handleDeleteCustom = (e: React.MouseEvent, item: DownloadMirrorItem) => {
     e.stopPropagation();
-    if (window.confirm(`确定要删除自定义镜像「${item.name}」吗？`)) {
-      deleteCustomMutation.mutate(item.id);
-    }
+    setConfirmMirror({ id: item.id, name: item.name });
   };
 
   if (isLoading) {
@@ -457,6 +457,16 @@ export default function DownloadMirrorsSection() {
           </div>
         </form>
       </Modal>
+      <ConfirmDialog
+        open={confirmMirror !== null}
+        title="删除自定义镜像"
+        message={`确定要删除自定义镜像「${confirmMirror?.name ?? ""}」吗？`}
+        onCancel={() => setConfirmMirror(null)}
+        onConfirm={() => {
+          if (confirmMirror) deleteCustomMutation.mutate(confirmMirror.id);
+          setConfirmMirror(null);
+        }}
+      />
     </section>
   );
 }

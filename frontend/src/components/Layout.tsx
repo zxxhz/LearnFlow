@@ -183,6 +183,20 @@ export default function Layout() {
     return typeof window !== "undefined" && window.innerWidth < 1024;
   });
 
+  const expandNavBtnRef = useRef<HTMLButtonElement | null>(null);
+  const prevCollapsedRef = useRef(navCollapsed);
+  useEffect(() => {
+    // 折叠发生且焦点原本在侧栏内时，把焦点交给顶栏「展开导航」按钮，
+    // 键盘用户 Ctrl+B 折叠后不再丢失位置（v0.5.3 体检 P3）
+    if (!prevCollapsedRef.current && navCollapsed && expandNavBtnRef.current) {
+      const ae = document.activeElement;
+      const sidebar = document.querySelector("aside");
+      if (ae instanceof HTMLElement && sidebar?.contains(ae)) {
+        expandNavBtnRef.current.focus();
+      }
+    }
+    prevCollapsedRef.current = navCollapsed;
+  }, [navCollapsed]);
   const toggleNavCollapsed = () => {
     setNavCollapsed((prev) => !prev);
   };
@@ -459,6 +473,7 @@ export default function Layout() {
             {navCollapsed && (
               <button
                 type="button"
+                ref={expandNavBtnRef}
                 onClick={toggleNavCollapsed}
                 className="hidden md:inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-2.5 py-1 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-brand-600 dark:hover:text-brand-400 transition"
                 title="展开左侧导航 (Ctrl+B)"

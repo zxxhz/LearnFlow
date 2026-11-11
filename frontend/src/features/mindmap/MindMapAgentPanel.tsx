@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { MindMapAgentSSEEvent, MindMapNode } from "../../lib/types";
 import { api } from "../../lib/api";
-import { Button, Spinner } from "../../components/ui";
+import { Button, Spinner , ConfirmDialog} from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
 import { createStreamFlusher } from "../../lib/streamFlusher";
 
@@ -113,18 +113,21 @@ export default function MindMapAgentPanel({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length, streamingText, currentActions.length]);
 
+  const [confirmClear, setConfirmClear] = useState(false);
   const handleClear = () => {
     if (messages.length <= 1) return;
-    if (confirm("确定清空当前的 Agent 对话历史？导图结构不会被删除。")) {
-      abortRef.current?.abort();
-      setMessages([INITIAL_MSG]);
-      setStreamingText("");
-      setCurrentActions([]);
-      setLoading(false);
-      try {
-        localStorage.removeItem(`learnflow_mindmap_agent_msgs_${mindmapId}`);
-      } catch {}
-    }
+    setConfirmClear(true);
+  };
+
+  const doClear = () => {
+    abortRef.current?.abort();
+    setMessages([INITIAL_MSG]);
+    setStreamingText("");
+    setCurrentActions([]);
+    setLoading(false);
+    try {
+      localStorage.removeItem(`learnflow_mindmap_agent_msgs_${mindmapId}`);
+    } catch {}
   };
 
   const handleSend = async (customPrompt?: string) => {
@@ -452,6 +455,16 @@ export default function MindMapAgentPanel({
           支持模糊语义，如“把网络模型展开到物理层”、“添加常见握手失败原因”
         </p>
       </div>
+      <ConfirmDialog
+        open={confirmClear}
+        title="清空对话历史"
+        message="确定清空当前的 Agent 对话历史？导图结构不会被删除。"
+        onCancel={() => setConfirmClear(false)}
+        onConfirm={() => {
+          setConfirmClear(false);
+          doClear();
+        }}
+      />
     </div>
   );
 }

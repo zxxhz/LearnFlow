@@ -141,12 +141,17 @@ export function Modal({
   title,
   children,
   width = "max-w-lg",
+  /** 脏数据守卫（v0.5.3 体检 P2）：返回 true 表示内容未保存，Esc/遮罩/✕ 触发二次确认而非直接销毁 */
+  confirmCloseIf,
+  confirmCloseMessage = "内容尚未保存，确定丢弃并关闭？",
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
   width?: string;
+  confirmCloseIf?: () => boolean;
+  confirmCloseMessage?: string;
 }) {
   // 进出场动画：render 控制是否挂载（出场过渡完成后再卸载），shown 控制过渡目标态。
   // 20ms 延迟与项目内抽屉（ExerciseDrawer 等）一致：先绘制初始态，过渡才会生效。
@@ -190,12 +195,20 @@ export function Modal({
     if (!open || !shown) return;
     const handleTab = (e: KeyboardEvent) => {
       if (e.key !== "Tab" || !panelRef.current) return;
-      const focusables = panelRef.current.querySelectorAll<HTMLElement>(
-        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      );
+      const focusables = Array.from(
+        panelRef.current.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((el) => el.offsetParent !== null || el === document.activeElement);
       if (focusables.length === 0) return;
       const first = focusables[0];
       const last = focusables[focusables.length - 1];
+      // 焦点已逃逸到 body/遮罩（点击了面板内非可聚焦区域）时先拉回面板再处理循环
+      if (!panelRef.current.contains(document.activeElement)) {
+        e.preventDefault();
+        first.focus();
+        return;
+      }
       if (e.shiftKey && document.activeElement === first) {
         e.preventDefault();
         last.focus();
@@ -208,13 +221,23 @@ export function Modal({
     return () => window.removeEventListener("keydown", handleTab);
   }, [open, shown]);
 
-  // Esc 关闭栈顶模态框（栈机制见 _escStack 注释）
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  // 脏数据守卫：确认弹层状态与守卫关闭入口（v0.5.3 体检 P2）
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const guardedClose = () => {
+    if (confirmCloseIf?.()) {
+      setConfirmDiscard(true);
+      return;
+    }
+    onClose();
+  };
+
+  // Esc 关闭栈顶模态框（栈机制见 _escStack 注释）；走 guardedClose 保留脏数据守卫
+  const guardedCloseRef = useRef(guardedClose);
+  guardedCloseRef.current = guardedClose;
   useEffect(() => {
     if (!open) return;
     const token = Symbol("modal");
-    const entry: EscEntry = { token, onEsc: () => onCloseRef.current() };
+    const entry: EscEntry = { token, onEsc: () => guardedCloseRef.current() };
     _escStack.push(entry);
     return () => {
       const i = _escStack.findIndex((x) => x.token === token);
@@ -232,7 +255,7 @@ export function Modal({
       aria-modal="true"
       aria-hidden={!open}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) guardedClose();
       }}
     >
       <div
@@ -245,7 +268,7 @@ export function Modal({
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">{title}</h3>
           <button
-            onClick={onClose}
+            onClick={guardedClose}
             aria-label="关闭"
             className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
           >
@@ -253,6 +276,19 @@ export function Modal({
           </button>
         </div>
         {children}
+        {confirmDiscard && (
+          <ConfirmDialog
+            open
+            title="放弃未保存内容"
+            message={confirmCloseMessage}
+            confirmText="丢弃并关闭"
+            onCancel={() => setConfirmDiscard(false)}
+            onConfirm={() => {
+              setConfirmDiscard(false);
+              onClose();
+            }}
+          />
+        )}
       </div>
     </div>
   );

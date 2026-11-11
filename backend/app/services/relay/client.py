@@ -265,8 +265,17 @@ class RelayClient:
                 worker_task = asyncio.create_task(
                     handle_relay_request(self.send_message, msg)
                 )
+                worker_task._relay_request_id = msg.get("request_id")  # 供 cancel 帧定位
                 self._active_worker_tasks.add(worker_task)
                 worker_task.add_done_callback(self._active_worker_tasks.discard)
+            elif msg_type == "cancel":
+                # 云端下发的取消帧（v0.5.3 体检 P3）：下游断连/超时后本地中止生成，
+                # 不再空烧 LLM token。按 request_id 找到在跑的 worker 任务并 cancel
+                request_id = msg.get("request_id")
+                for task in list(self._active_worker_tasks):
+                    if not task.done() and getattr(task, "_relay_request_id", None) == request_id:
+                        task.cancel()
+                        break
             else:
                 logger.debug("收到其他云端消息: %s", msg)
 

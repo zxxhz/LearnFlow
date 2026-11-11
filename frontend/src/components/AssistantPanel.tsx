@@ -150,8 +150,16 @@ export default function AssistantPanel({
     };
   }, [convId]);
 
+  // 自动跟随仅在用户本来就贴底时生效（距底 <80px）：连续流式刷新把正在上翻
+  // 阅读的用户拽回底部是反交互的（v0.5.3 体检 P3）
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const followScrollRef = useRef(true);
   useEffect(() => {
-    if (open) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (open) {
+      if (followScrollRef.current) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    } else {
+      followScrollRef.current = true;
+    }
   }, [localMsgs.length, isThinking, streaming, toolStatus, turnPlots.length, open]);
 
   const displayMsgs = useMemo(() => {
@@ -402,7 +410,15 @@ export default function AssistantPanel({
       )}
 
       {/* 对话区 */}
-      <div className="flex-1 space-y-3 overflow-auto px-4 py-3">
+      <div
+        ref={scrollContainerRef}
+        onScroll={() => {
+          const el = scrollContainerRef.current;
+          if (!el) return;
+          followScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        }}
+        className="flex-1 space-y-3 overflow-auto px-4 py-3"
+      >
         {session.isLoading && <Spinner className="mx-auto mt-8 h-5 w-5" />}
         {session.isError && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-2 text-center text-[0.85em] text-red-600 dark:border-red-800 dark:bg-red-950/40 dark:text-red-400">

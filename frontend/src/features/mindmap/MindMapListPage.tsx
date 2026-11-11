@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, downloadFile, saveBlobAs } from "../../lib/api";
 import type { MindMapSummary } from "../../lib/types";
 import { Button, ConfirmDialog, DropdownMenu, EmptyState, Modal, Spinner, Textarea } from "../../components/ui";
+import { showToast } from "../../lib/toast";
 
 export default function MindMapListPage() {
   const navigate = useNavigate();
@@ -36,7 +37,7 @@ export default function MindMapListPage() {
       queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
       navigate(`/mindmap/${res.id}`);
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const generateMap = useMutation({
@@ -53,7 +54,7 @@ export default function MindMapListPage() {
       queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
       navigate(`/mindmap/${res.id}`);
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const importMap = useMutation({
@@ -69,7 +70,7 @@ export default function MindMapListPage() {
       queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
       navigate(`/mindmap/${res.id}`);
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const renameMutation = useMutation({
@@ -81,7 +82,7 @@ export default function MindMapListPage() {
       setRenamingMap(null);
       queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const deleteMutation = useMutation({
@@ -89,7 +90,7 @@ export default function MindMapListPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["mindmaps"] });
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const handleExport = async (id: string, title: string) => {
@@ -98,7 +99,7 @@ export default function MindMapListPage() {
       const blob = new Blob([res.markdown], { type: "text/markdown;charset=utf-8" });
       await saveBlobAs(blob, `${title || "思维导图"}.md`);
     } catch (err) {
-      alert(`导出失败: ${(err as Error).message}`);
+      showToast(`❌ 导出失败: ${(err as Error).message}`);
     }
   };
 
@@ -117,11 +118,11 @@ export default function MindMapListPage() {
     if (!file) return;
     // drop 不受 accept 属性约束：文本类以外的文件会被读成乱码并按 Markdown 大纲解析出一张乱码导图
     if (!/\.(md|markdown|txt|text)$/i.test(file.name)) {
-      alert("仅支持 Markdown / 纯文本文件（.md / .txt）");
+      showToast(`❌ ${"仅支持 Markdown / 纯文本文件（.md / .txt）"}`);
       return;
     }
     if (file.size > 5 * 1024 * 1024) {
-      alert("文件过大（上限 5MB）");
+      showToast(`❌ ${"文件过大（上限 5MB）"}`);
       return;
     }
     const reader = new FileReader();
@@ -287,7 +288,7 @@ export default function MindMapListPage() {
                           icon: "🗂",
                           onSelect: () =>
                             downloadFile(`/mindmaps/${m.id}/export.json`).catch(
-                              (err) => alert(`导出失败: ${(err as Error).message}`)
+                              (err) => showToast(`❌ 导出失败: ${(err as Error).message}`)
                             ),
                         },
                         { label: "删除", icon: "🗑️", danger: true, onSelect: () => setDeleteTargetMap(m) },

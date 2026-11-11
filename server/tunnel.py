@@ -229,6 +229,15 @@ class TunnelManager:
             detail = msg.get("detail", msg.get("error", "本地处理发生未知异常"))
             await queue.put(("error", str(detail)))
 
+    async def _send_cancel(self, worker: "WorkerConnection", request_id: str) -> None:
+        """向本地 worker 下发取消帧：下游断连/超时后本地中止生成，不再空烧 token。"""
+        try:
+            await worker.websocket.send_text(
+                json.dumps({"type": "cancel", "request_id": request_id})
+            )
+        except Exception:
+            pass
+
     async def dispatch_request(
         self,
         method: str,
@@ -302,6 +311,8 @@ class TunnelManager:
                 try:
                     event_type, payload = await asyncio.wait_for(queue.get(), timeout=timeout)
                 except asyncio.TimeoutError:
+                    # 下发取消帧让本地中止任务（v0.5.3 体检 P3：本地不再继续烧 token）
+                    await self._send_cancel(worker, request_id)
                     raise WorkerRequestTimeoutError(f"等待本地节点响应超时 ({timeout}s)")
 
                 if event_type == "chunk":
@@ -324,6 +335,8 @@ class TunnelManager:
         finally:
             worker.pending_requests.pop(request_id, None)
             worker.response_metadata.pop(request_id, None)
+            # 下游断连（StreamingResponse GeneratorExit）/异常时同样取消本地任务
+            await self._send_cancel(worker, request_id)
 
     async def dispatch_full(
         self,

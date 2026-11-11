@@ -1,10 +1,10 @@
 // 运行环境区块：代码沙箱 Python / C++ 工具链检测 + 一键便携安装（装进软件目录，不动系统）
 // 安装跑后端守护线程，这里 1s 轮询进度；active 从非空变空（装完/失败）时刷新状态
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import type { InstallState, RuntimeComponentName } from "../../lib/types";
-import { Button, Spinner } from "../../components/ui";
+import { Button, Spinner , ConfirmDialog } from "../../components/ui";
 
 // 来源徽章：已安装时补充说明装在哪（系统装 / 应用内装 / 打包内置）
 const SOURCE_META: Record<"bundled" | "managed" | "system", { label: string; cls: string }> = {
@@ -30,6 +30,7 @@ const ROWS: { key: RuntimeComponentName; title: string; desc: string; installLab
 
 function Row({ name, state, installable }: { name: RuntimeComponentName; state?: InstallState; installable: boolean }) {
   const qc = useQueryClient();
+  const [confirmReinstall, setConfirmReinstall] = useState(false);
   const start = useMutation({
     mutationFn: (c: RuntimeComponentName) => api.runtime.install(c),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["runtime-install"] }),
@@ -44,7 +45,8 @@ function Row({ name, state, installable }: { name: RuntimeComponentName; state?:
   const row = ROWS.find((r) => r.key === name)!;
 
   const startInstall = () => {
-    if (status?.installed && !confirm(`已检测到可用的 ${row.title}（${meta?.label ?? "已安装"}），重新下载会清空并覆盖 ${row.key === "cpp" ? "toolchains/mingw64" : "toolchains/python"} 目录，继续？`)) {
+    if (status?.installed) {
+      setConfirmReinstall(true);
       return;
     }
     start.mutate(name);
@@ -105,6 +107,16 @@ function Row({ name, state, installable }: { name: RuntimeComponentName; state?:
       {state?.state === "error" && (
         <div className="mt-1.5 text-xs text-red-600 dark:text-red-400">❌ {state.message}（可重试，或换网络环境再试）</div>
       )}
+      <ConfirmDialog
+        open={confirmReinstall}
+        title="重新下载运行时"
+        message={`已检测到可用的 ${row.title}（${meta?.label ?? "已安装"}），重新下载会清空并覆盖 ${row.key === "cpp" ? "toolchains/mingw64" : "toolchains/python"} 目录，继续？`}
+        onCancel={() => setConfirmReinstall(false)}
+        onConfirm={() => {
+          setConfirmReinstall(false);
+          start.mutate(name);
+        }}
+      />
     </div>
   );
 }

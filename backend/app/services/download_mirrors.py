@@ -135,9 +135,23 @@ def load_custom_mirrors() -> list[dict[str, Any]]:
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(data, list):
+                # 与 add_custom_mirror 同规则过滤（v0.5.3 体检 P2）：
+                # 手改 JSON 绕过添加校验的仿冒官方域条目在这里二次拦截
+                def _spoofed(prefix: str) -> bool:
+                    from urllib.parse import urlparse as _up
+
+                    host = (_up(prefix).hostname or "").lower()
+                    return any(
+                        official in host
+                        for official in ("github.com", "raw.githubusercontent.com", "objects.githubusercontent.com", "api.github.com")
+                    )
+
                 return [
-                    item for item in data
-                    if isinstance(item, dict) and str(item.get("prefix") or "").strip()
+                    item
+                    for item in data
+                    if isinstance(item, dict)
+                    and str(item.get("prefix") or "").strip()
+                    and not _spoofed(str(item.get("prefix")))
                 ]
         except Exception as e:
             logger.warning("读取自定义镜像配置失败: %s", e)
@@ -175,6 +189,15 @@ def add_custom_mirror(name: str, prefix: str, desc: str = "") -> dict[str, Any]:
         raise ValueError("镜像名称不能为空")
     if not (prefix.startswith("http://") or prefix.startswith("https://")):
         raise ValueError("镜像地址前缀必须以 http:// 或 https:// 开头")
+    # 仿冒官方域拦截（v0.5.3 体检 P2）：hostname 含官方域名子串（如 github.com.evil.example）
+    # 会让仿冒源进入下载白名单与 latest.json 信息源；安装包有 SHA-256 锚点兜底，
+    # 但更新提示可被钓鱼利用，官方系域名不允许出现在第三方镜像 host 的任意位置
+    from urllib.parse import urlparse as _urlparse
+
+    mirror_host = (_urlparse(prefix).hostname or "").lower()
+    for official in ("github.com", "raw.githubusercontent.com", "objects.githubusercontent.com", "api.github.com"):
+        if official in mirror_host:
+            raise ValueError(f"镜像地址不能包含官方域名「{official}」（疑似仿冒），请使用真正的加速服务域名")
     if not prefix.endswith("/"):
         prefix += "/"
 

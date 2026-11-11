@@ -6,11 +6,12 @@ import { api } from "../../lib/api";
 import type { MindMapCrossLink, MindMapDetail, MindMapNode } from "../../lib/types";
 import { findNodeInTree } from "../../lib/mindmap";
 import { notify } from "../../lib/notify";
-import { Button, Input, Modal, Spinner, Textarea } from "../../components/ui";
+import { Button, Input, Modal, Spinner, Textarea , ConfirmDialog } from "../../components/ui";
 import FontSizeControl from "../../components/FontSizeControl";
 import { useFontSize } from "../../lib/fontSize";
 import NodeDetailDrawer from "./NodeDetailDrawer";
 import MindMapAgentPanel from "./MindMapAgentPanel";
+import { showToast } from "../../lib/toast";
 
 // 布局常量
 const NODE_WIDTH = 195;
@@ -139,7 +140,7 @@ export default function MindMapCanvasPage() {
       console.error("Failed to save cross links:", e);
       // 回滚本地状态：否则界面显示已连线、状态"已保存"，重进后连线消失
       setCrossLinks(prevLinks);
-      alert("横向连线保存失败，请稍后重试");
+      showToast(`❌ ${"横向连线保存失败，请稍后重试"}`);
     }
   };
 
@@ -231,8 +232,9 @@ export default function MindMapCanvasPage() {
         saveTreeDebounced(next);
         return next;
       });
+      setPendingDeleteNodeId(null);
     },
-    [saveTreeDebounced]
+    [treeData, saveTreeDebounced]
   );
 
   // 新增子节点
@@ -272,15 +274,26 @@ export default function MindMapCanvasPage() {
     [saveTreeDebounced]
   );
 
+  // 删除分支二次确认（v0.5.3 体检 P3：原生 confirm → ConfirmDialog）
+  const [pendingDeleteNodeId, setPendingDeleteNodeId] = useState<string | null>(null);
+  const [pendingDeleteLinkId, setPendingDeleteLinkId] = useState<string | null>(null);
+
   // 删除节点及其子分支
   const handleDeleteNode = useCallback(
     (nodeId: string) => {
       if (!treeData || treeData.id === nodeId) {
-        alert("根节点不可删除");
+        showToast(`❌ ${"根节点不可删除"}`);
         return;
       }
-      if (!confirm("确定删除该分支及其下属的所有子概念？")) return;
+      // 原生 confirm 下线（v0.5.3 体检 P3）：改走 ConfirmDialog 二次确认
+      setPendingDeleteNodeId(nodeId);
+    },
+    [treeData]
+  );
 
+  const performDeleteNode = useCallback(
+    (nodeId: string) => {
+      if (!treeData || treeData.id === nodeId) return;
       setTreeData((prev) => {
         if (!prev) return prev;
         const deleteRecursive = (cur: MindMapNode): MindMapNode => {
@@ -339,8 +352,9 @@ export default function MindMapCanvasPage() {
         saveTreeDebounced(next);
         return next;
       });
+      setPendingDeleteNodeId(null);
     },
-    [saveTreeDebounced]
+    [treeData, saveTreeDebounced]
   );
 
   // 节点详情抽屉与 Agent 面板的平滑开启/关闭控制
@@ -771,7 +785,7 @@ export default function MindMapCanvasPage() {
                 } else if (selectedNodeId) {
                   setLinkingFromId(selectedNodeId);
                 } else {
-                  alert("请先在画布上点击选中一个起点节点，再开启横向连线。");
+                  showToast(`❌ ${"请先在画布上点击选中一个起点节点，再开启横向连线。"}`);
                 }
               }}
               className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-semibold shadow-2xs transition ${
@@ -932,9 +946,7 @@ export default function MindMapCanvasPage() {
                       <div
                         onClick={(e) => {
                           e.stopPropagation();
-                          if (confirm(`删除横向关联关系「${link.label}」？`)) {
-                            saveCrossLinks(crossLinks.filter((l) => l.id !== link.id));
-                          }
+                          setPendingDeleteLinkId(link.id);
                         }}
                         className={`flex items-center justify-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold select-none shadow-2xs backdrop-blur-xs transition cursor-pointer ${
                           isRelated
@@ -1321,15 +1333,15 @@ export default function MindMapCanvasPage() {
                   const { sourceId, targetId } = pendingLinkTarget;
                   // 与后端校验口径对齐：禁自环、同方向去重、总量上限 200
                   if (sourceId === targetId) {
-                    alert("起点与终点不能是同一个节点，无法建立自环连线。");
+                    showToast(`❌ ${"起点与终点不能是同一个节点，无法建立自环连线。"}`);
                     return;
                   }
                   if (crossLinks.some((l) => l.sourceId === sourceId && l.targetId === targetId)) {
-                    alert("这两个概念之间已存在同方向的横向连线，无需重复建立。");
+                    showToast(`❌ ${"这两个概念之间已存在同方向的横向连线，无需重复建立。"}`);
                     return;
                   }
                   if (crossLinks.length >= 200) {
-                    alert("横向连线数量已达上限（200），请先清理不需要的连线。");
+                    showToast(`❌ ${"横向连线数量已达上限（200），请先清理不需要的连线。"}`);
                     return;
                   }
                   const newLink: MindMapCrossLink = {
@@ -1349,6 +1361,25 @@ export default function MindMapCanvasPage() {
           </div>
         </Modal>
       )}
+      <ConfirmDialog
+        open={pendingDeleteLinkId !== null}
+        title="删除关联关系"
+        message={`删除横向关联关系「${crossLinks.find((l) => l.id === pendingDeleteLinkId)?.label ?? ""}」？`}
+        onCancel={() => setPendingDeleteLinkId(null)}
+        onConfirm={() => {
+          saveCrossLinks(crossLinks.filter((l) => l.id !== pendingDeleteLinkId));
+          setPendingDeleteLinkId(null);
+        }}
+      />
+      <ConfirmDialog
+        open={pendingDeleteNodeId !== null}
+        title="删除分支"
+        message="确定删除该分支及其下属的所有子概念？"
+        onCancel={() => setPendingDeleteNodeId(null)}
+        onConfirm={() => {
+          if (pendingDeleteNodeId) performDeleteNode(pendingDeleteNodeId);
+        }}
+      />
     </div>
   );
 }

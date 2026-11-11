@@ -86,7 +86,13 @@ export function SectionReviseModal({
   };
 
   return (
-    <Modal open={isOpen} onClose={resetAll} title="🚩 段落核验与手术式重写">
+    <Modal
+      open={isOpen}
+      onClose={resetAll}
+      title="🚩 段落核验与手术式重写"
+      confirmCloseIf={() => Boolean(instruction.trim() || reviewResult)}
+      confirmCloseMessage="核验/重写内容尚未应用，关闭后将丢失，确定？"
+    >
       <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
         {/* 原段落引用 */}
         <div>

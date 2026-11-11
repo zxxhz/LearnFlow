@@ -90,6 +90,27 @@ const DELIMITERS = [
   { left: "\\(", right: "\\)", display: false },
 ];
 
+// 覆盖层单例宿主注册表：首实例独占渲染，卸载时释放给下一个实例
+type ZoomListener = (detail: { html: string; title: string } | null) => void;
+let _zoomListener: ZoomListener | null = null;
+
+function registerZoomHost(listener: (detail: { html: string; title: string } | null) => void): () => void {
+  if (_zoomListener) {
+    // 已有宿主在位：本实例不渲染覆盖层，事件由宿主响应
+    return () => {};
+  }
+  _zoomListener = listener;
+  const onZoom = (e: Event) => {
+    const detail = (e as CustomEvent<{ html: string; title: string }>).detail;
+    _zoomListener?.(detail?.html ? { html: detail.html, title: detail.title || "思维导图" } : null);
+  };
+  window.addEventListener(MINDMAP_ZOOM_EVENT, onZoom);
+  return () => {
+    window.removeEventListener(MINDMAP_ZOOM_EVENT, onZoom);
+    if (_zoomListener === listener) _zoomListener = null;
+  };
+}
+
 function MarkdownLiteImpl({
   text,
   className = "",
@@ -102,16 +123,12 @@ function MarkdownLiteImpl({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const html = useMemo(() => md.render(text ?? ""), [text]);
-  // 导图全屏放大覆盖层（经 window 事件从任意 MarkdownLite 实例的 DOM 按钮唤起）
+  // 导图全屏放大覆盖层：模块级单例宿主——只有第一个挂载的 MarkdownLite 实例注册为
+  // 渲染宿主，避免每条消息一个实例时 N 层覆盖层叠加、需连点 N 次才关完（v0.5.3 体检 P2）
   const [zoom, setZoom] = useState<{ html: string; title: string } | null>(null);
 
   useEffect(() => {
-    const onZoom = (e: Event) => {
-      const detail = (e as CustomEvent<{ html: string; title: string }>).detail;
-      if (detail?.html) setZoom({ html: detail.html, title: detail.title || "思维导图" });
-    };
-    window.addEventListener(MINDMAP_ZOOM_EVENT, onZoom);
-    return () => window.removeEventListener(MINDMAP_ZOOM_EVENT, onZoom);
+    return registerZoomHost((detail) => setZoom(detail));
   }, []);
 
   useEffect(() => {

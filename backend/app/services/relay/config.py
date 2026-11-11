@@ -116,7 +116,13 @@ def normalize_http_url(url: str) -> str:
             break
     
     port_part = f":{parsed.port}" if parsed.port else ""
-    return f"{parsed.scheme}://{parsed.hostname}{port_part}{path}".rstrip("/")
+    normalized = f"{parsed.scheme}://{parsed.hostname}{port_part}{path}".rstrip("/")
+    if normalized.startswith("http://") and "127.0.0.1" not in normalized and "localhost" not in normalized:
+        logging.getLogger(__name__).warning(
+            "云端中转地址使用明文 http（%s）：令牌与学习数据将不经加密传输，建议配置 https 反代后切换",
+            normalized,
+        )
+    return normalized
 
 
 def normalize_ws_url(url: str, token: str = "") -> str:
@@ -127,8 +133,6 @@ def normalize_ws_url(url: str, token: str = "") -> str:
     else:
         ws_base = "ws://" + http_base[7:]
 
-    ws_url = f"{ws_base}/ws/relay"
-    if token and token.strip():
-        sep = "&" if "?" in ws_url else "?"
-        ws_url = f"{ws_url}{sep}token={quote(token.strip())}"
-    return ws_url
+    # token 不再拼进 URL query（v0.5.3 体检 P3）：query 会落云端访问日志/反代日志；
+    # 服务端自首版即支持 x-server-token 头鉴权，客户端连接时经 headers 携带
+    return f"{ws_base}/ws/relay"

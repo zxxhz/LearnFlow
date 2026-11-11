@@ -32,6 +32,7 @@ import { useAdhdMode } from "./adhd";
 import { useFontSize } from "../../lib/fontSize";
 import { FontSizeControl } from "../../components/FontSizeControl";
 import ErrorBoundary from "../../components/ErrorBoundary";
+import { showToast } from "../../lib/toast";
 
 /** 小屏左侧抽屉壳：蒙层淡入 + 内容从左滑入/滑出（20ms 挂载 + 过渡 + 延迟卸载，与全站抽屉一致）。
  *  children 在出场动画期间保持挂载，动画结束后才真正卸载。 */
@@ -493,7 +494,7 @@ export default function ReaderPage() {
         );
       }
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   const handleAdoptHighlight = async (item: CompareHighlightItem) => {
@@ -524,7 +525,7 @@ export default function ReaderPage() {
       setSelection(null);
       await invalidate();
     } catch (e) {
-      alert((e as Error).message);
+      showToast(`❌ ${(e as Error).message}`);
     } finally {
       setCreating(false);
     }
@@ -580,7 +581,7 @@ export default function ReaderPage() {
             window.getSelection()?.removeAllRanges();
             invalidate();
           })
-          .catch((e) => alert((e as Error).message));
+          .catch((e) => showToast(`❌ ${(e as Error).message}`));
       }, 0);
     };
     document.addEventListener("mouseup", onMouseUp);
@@ -733,7 +734,7 @@ export default function ReaderPage() {
         setRegenMsg("");
       });
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
 
   if (contentQuery.isLoading) {
@@ -776,8 +777,10 @@ export default function ReaderPage() {
       {/* 目录：桌面左侧栏；固定不随文章滑动，支持丝滑折叠展开 */}
       <aside
         className={`hidden h-full w-72 shrink-0 flex-col border-r border-gray-100 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-800/40 md:flex transition-all duration-300 ease-in-out ${
-          sidebarOpen ? "ml-0 opacity-100 pointer-events-auto" : "-ml-72 opacity-0 pointer-events-none border-r-0"
+          // invisible 使子树退出 Tab 序与无障碍树：仅 opacity+pointer-events 会让隐形按钮仍可被键盘聚焦（v0.5.3 体检 P3，对齐 Layout 范式）
+          sidebarOpen ? "ml-0 opacity-100 pointer-events-auto" : "-ml-72 invisible opacity-0 pointer-events-none border-r-0"
         }`}
+        aria-hidden={!sidebarOpen}
       >
         {/* 顶部：返回首页、课程名、折叠按钮 */}
         <div className="border-b border-gray-200/60 dark:border-gray-700/60 p-4">
@@ -1201,7 +1204,7 @@ export default function ReaderPage() {
           activeAnnId={activeAnn?.id ?? null}
           reAnchoring={reAnchoring}
           closing={isClosingDrawer}
-          onExportNotes={() => courseId && api.courses.exportNotesMd(courseId).catch((e) => alert(e.message))}
+          onExportNotes={() => courseId && api.courses.exportNotesMd(courseId).catch((e) => showToast(`❌ ${e.message}`))}
           onOpen={(a) => {
             closeDrawer();
             openAnnotation(a);
@@ -1267,7 +1270,7 @@ export default function ReaderPage() {
                 closeAnnotation();
               }
             })
-            .catch((e) => alert(e?.message || "删除失败"));
+            .catch((e) => showToast(`❌ ${e?.message || "删除失败"}`));
         }}
         onCancel={() => setAnnToDelete(null)}
       />
@@ -1302,7 +1305,7 @@ export default function ReaderPage() {
               queryClient.invalidateQueries({ queryKey: ["exercises", documentId] });
               queryClient.invalidateQueries({ queryKey: ["wrongbook"] });
             } catch (e) {
-              alert((e as Error)?.message || "重新生成练习失败");
+              showToast(`❌ ${(e as Error)?.message || "重新生成练习失败"}`);
             }
           })();
         }}
@@ -1349,19 +1352,19 @@ export default function ReaderPage() {
             api.annotations
               .update(a.id, { color: c })
               .then(() => invalidate())
-              .catch((e) => alert((e as Error).message));
+              .catch((e) => showToast(`❌ ${(e as Error).message}`));
           }}
           onNoteSave={(a, note) => {
             api.annotations
               .update(a.id, { note })
               .then(() => invalidate())
-              .catch((e) => alert((e as Error).message));
+              .catch((e) => showToast(`❌ ${(e as Error).message}`));
           }}
           onDeleteAnnotation={(a) => {
             api.annotations
               .remove(a.id)
               .then(() => invalidate())
-              .catch((e) => alert((e as Error).message));
+              .catch((e) => showToast(`❌ ${(e as Error).message}`));
           }}
         />
       )}

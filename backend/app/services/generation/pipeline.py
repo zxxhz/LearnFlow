@@ -458,16 +458,26 @@ async def purge_course_data(db: AsyncSession, course: Course) -> None:
                 )
             ).all()
         ]
+        # 分批 in_（v0.5.3 体检 P3）：SQLite 绑定变量上限 32766，超长 id 列表一次绑定会 500
+        def _chunked(ids: list[str], size: int = 500):
+            for i in range(0, len(ids), size):
+                yield ids[i : i + size]
+
         if ann_conv_ids:
-            await db.execute(delete(Message).where(Message.conversation_id.in_(ann_conv_ids)))
-            await db.execute(delete(Conversation).where(Conversation.id.in_(ann_conv_ids)))
-        if ann_ids:
-            await db.execute(delete(Annotation).where(Annotation.id.in_(ann_ids)))
-        if kp_ids:
-            await db.execute(delete(KnowledgePoint).where(KnowledgePoint.id.in_(kp_ids)))
-        await db.execute(delete(Section).where(Section.document_id.in_(doc_ids)))
-        await db.execute(delete(CodeExecution).where(CodeExecution.document_id.in_(doc_ids)))
-        await db.execute(delete(Document).where(Document.id.in_(doc_ids)))
+            for chunk in _chunked(ann_conv_ids):
+                await db.execute(delete(Message).where(Message.conversation_id.in_(chunk)))
+            for chunk in _chunked(ann_conv_ids):
+                await db.execute(delete(Conversation).where(Conversation.id.in_(chunk)))
+        for chunk in _chunked(ann_ids):
+            await db.execute(delete(Annotation).where(Annotation.id.in_(chunk)))
+        for chunk in _chunked(kp_ids):
+            await db.execute(delete(KnowledgePoint).where(KnowledgePoint.id.in_(chunk)))
+        for chunk in _chunked(doc_ids):
+            await db.execute(delete(Section).where(Section.document_id.in_(chunk)))
+        for chunk in _chunked(doc_ids):
+            await db.execute(delete(CodeExecution).where(CodeExecution.document_id.in_(chunk)))
+        for chunk in _chunked(doc_ids):
+            await db.execute(delete(Document).where(Document.id.in_(chunk)))
         # FTS 全文索引行不随外键级联：不清理则旧章节正文永久残留 app.db（库无限膨胀）
         from sqlalchemy import text as sa_text
 

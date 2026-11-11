@@ -5,9 +5,12 @@
 """
 import base64
 import io
+import logging
 
 from fastapi import HTTPException, UploadFile
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 # 单张原图上限（手机直出 JPEG 通常 2~8MB）
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -25,6 +28,9 @@ def _check_image(upload: UploadFile, index: int) -> bytes:
     ctype = (upload.content_type or "").lower()
     if not ctype.startswith("image/"):
         raise HTTPException(status_code=400, detail=f"第 {index + 1} 个文件不是图片（收到：{name}），仅支持拍照或图片上传")
+    # 显式拒绝矢量类型（v0.5.3 体检 P3）：此前靠 Pillow 解析失败兜底，方向对但依赖隐式行为
+    if ctype in ("image/svg+xml", "image/svg", "image/x-ms-bmp") or ctype.endswith("/svg"):
+        raise HTTPException(status_code=400, detail=f"第 {index + 1} 个文件是矢量图（{name}），请转换为 JPG/PNG 后上传")
     f = upload.file
     f.seek(0, 2)  # 文件部分是 SpooledTemporaryFile：先取大小再有界读取
     size = f.tell()
@@ -77,8 +83,11 @@ def compress_to_data_urls(uploads: list[UploadFile], max_count: int) -> list[str
         except HTTPException:
             raise
         except Exception as e:  # noqa: BLE001
+            # 详情只留通用话术：原始 Pillow 异常含内部对象地址，不回显给客户端（v0.5.3 体检 P3）
+            logger.warning("图片解析失败（%s）: %s", upload.filename, e)
             raise HTTPException(
-                status_code=400, detail=f"第 {i + 1} 张图片无法解析（{upload.filename or '未命名'}）：{e}"
+                status_code=400,
+                detail="图片解析失败，请确认文件为有效照片（JPG/PNG）",
             ) from e
     return data_urls
 

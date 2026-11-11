@@ -17,17 +17,40 @@ export default function ServerUpdateDialog({
   const [updating, setUpdating] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
 
-  // 倒计时并在归零后自动刷新页面重连
+  // 倒计时并在归零后轮询服务端健康检查（v0.5.3 体检 P2）：容器重启耗时可能超过
+  // estimated_seconds，盲目 reload 会撞上停机窗口直接白屏；改为 2s/4s/8s…（上限 60s）
+  // 指数退避探测版本接口，服务恢复后才刷新重连
+  const [reconnecting, setReconnecting] = useState(false);
   useEffect(() => {
     if (countdown === null) return;
-    if (countdown <= 0) {
-      window.location.reload();
-      return;
+    if (countdown > 0) {
+      const timer = setTimeout(() => {
+        setCountdown((prev) => (prev !== null ? prev - 1 : 0));
+      }, 1000);
+      return () => clearTimeout(timer);
     }
-    const timer = setTimeout(() => {
-      setCountdown((prev) => (prev !== null ? prev - 1 : 0));
-    }, 1000);
-    return () => clearTimeout(timer);
+    setReconnecting(true);
+    let cancelled = false;
+    let delay = 2000;
+    const poll = async () => {
+      while (!cancelled) {
+        try {
+          const res = await fetch("/api/relay/system/version", { cache: "no-store" });
+          if (res.ok) {
+            window.location.reload();
+            return;
+          }
+        } catch {
+          /* 服务仍在重启，继续退避重试 */
+        }
+        await new Promise((r) => setTimeout(r, delay));
+        delay = Math.min(delay * 2, 60_000);
+      }
+    };
+    poll();
+    return () => {
+      cancelled = true;
+    };
   }, [countdown]);
 
   if (!update || !update.has_update) return null;
@@ -97,7 +120,7 @@ export default function ServerUpdateDialog({
             <Spinner className="h-4 w-4" />
             <div>
               <span className="font-medium">
-                正在拉取最新镜像并重启服务容器，预计将在 {countdown ?? 15} 秒后自动刷新重连…
+                正在拉取最新镜像并重启服务容器，{reconnecting ? "服务重启中，正在探测恢复（指数退避重试）…" : `预计将在 ${countdown ?? 15} 秒后自动刷新重连…`}
               </span>
             </div>
           </div>

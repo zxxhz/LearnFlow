@@ -8,6 +8,7 @@ import type { ChapterProgress, ProgressSSEEvent } from "../../lib/types";
 import { Badge, Button, ConfirmDialog, DropdownMenu, EmptyState, ErrorText, Input, Modal, Spinner } from "../../components/ui";
 import OutlineEditor from "./OutlineEditor";
 import CourseAskPanel from "./CourseAskPanel";
+import { showToast } from "../../lib/toast";
 
 const DOC_STATUS: Record<string, { label: string; color: "gray" | "green" | "blue" | "red" | "amber" }> = {
   pending: { label: "待生成", color: "gray" },
@@ -157,7 +158,7 @@ export default function CourseDetailPage() {
       queryClient.invalidateQueries({ queryKey: ["course", courseId] });
       queryClient.invalidateQueries({ queryKey: ["courses"] });
     },
-    onError: (e) => alert((e as Error).message),
+    onError: (e) => showToast(`❌ ${(e as Error).message}`),
   });
   const abortRef = useRef<AbortController | null>(null);
 
@@ -296,7 +297,7 @@ export default function CourseDetailPage() {
         }
       });
     } catch (e) {
-      alert((e as Error).message);
+      showToast(`❌ ${(e as Error).message}`);
     }
   };
 
@@ -350,9 +351,9 @@ export default function CourseDetailPage() {
               title="导出课程内容"
               triggerClassName="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
               items={[
-                { label: "笔记汇编（含批注）", icon: "📝", onSelect: () => api.courses.exportNotesMd(course.id).catch((e) => alert(e.message)) },
-                { label: "教材 Markdown", icon: "📄", onSelect: () => api.courses.exportMd(course.id).catch((e) => alert(e.message)) },
-                { label: "教材 HTML", icon: "🌐", onSelect: () => api.courses.exportHtml(course.id).catch((e) => alert(e.message)) },
+                { label: "笔记汇编（含批注）", icon: "📝", onSelect: () => api.courses.exportNotesMd(course.id).catch((e) => showToast(`❌ ${e.message}`)) },
+                { label: "教材 Markdown", icon: "📄", onSelect: () => api.courses.exportMd(course.id).catch((e) => showToast(`❌ ${e.message}`)) },
+                { label: "教材 HTML", icon: "🌐", onSelect: () => api.courses.exportHtml(course.id).catch((e) => showToast(`❌ ${e.message}`)) },
               ]}
             />
           )}
@@ -470,7 +471,7 @@ export default function CourseDetailPage() {
             await queryClient.invalidateQueries();
             navigate("/");
           } catch (err) {
-            alert((err as Error).message);
+            showToast(`❌ ${(err as Error).message}`);
           }
         }}
       />

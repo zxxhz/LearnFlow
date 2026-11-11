@@ -335,10 +335,13 @@ async def delete_kp_exercises(db: AsyncSession, kp_ids: list[str]) -> list[str]:
     if not old_ids:
         return []
     affected_quiz_ids = sorted({e.quiz_id for e in old if e.quiz_id})
-    await db.execute(
-        ExerciseAttempt.__table__.delete().where(ExerciseAttempt.exercise_id.in_(old_ids))
-    )
-    await db.execute(Exercise.__table__.delete().where(Exercise.id.in_(old_ids)))
+    # 分批 in_（v0.5.3 体检 P3）：SQLite 绑定变量上限 32766，超大章节一次绑定会 500
+    for i in range(0, len(old_ids), 500):
+        chunk = old_ids[i : i + 500]
+        await db.execute(
+            ExerciseAttempt.__table__.delete().where(ExerciseAttempt.exercise_id.in_(chunk))
+        )
+        await db.execute(Exercise.__table__.delete().where(Exercise.id.in_(chunk)))
     return affected_quiz_ids
 
 
