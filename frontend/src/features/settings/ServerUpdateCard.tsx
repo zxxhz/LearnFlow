@@ -6,7 +6,7 @@ import type { ServerSystemVersion, ServerUpdateTriggerResult } from "../../lib/t
 import { Button, Spinner } from "../../components/ui";
 import { showToast } from "../../lib/toast";
 
-export default function ServerUpdateCard() {
+export default function ServerUpdateCard({ embedded = false }: { embedded?: boolean }) {
   const qc = useQueryClient();
   const [updating, setUpdating] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -63,7 +63,13 @@ export default function ServerUpdateCard() {
   const hasUpdate = versionInfo?.has_update ?? false;
 
   return (
-    <section className="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6 shadow-sm">
+    <section
+      className={
+        embedded
+          ? ""
+          : "mt-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6 shadow-sm"
+      }
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span className="text-xl">🚀</span>

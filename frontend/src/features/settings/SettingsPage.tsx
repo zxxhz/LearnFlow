@@ -591,35 +591,34 @@ export default function SettingsPage() {
       {/* 代码运行环境（沙箱工具链检测 + 一键便携安装） */}
       <RuntimeEnvSection />
 
-      {/* 数据与安全：备份 / 恢复 / 局域网访问令牌 */}
+      {/* 数据与安全：备份 / 恢复 / 局域网访问令牌（云端模式下局域网令牌子项自动隐藏） */}
       <DataSafetySection />
 
       {/* 自建云端中转服务器配置 */}
       <RelaySettingsCard />
 
-      {/* 云端服务端在线更新 */}
-      <ServerUpdateCard />
-
       {/* 下载源测速与智能路由（仅桌面客户端/局域网模式展示，云端VPS网页端隐藏） */}
       {!isRelayServer && <DownloadMirrorsSection />}
 
-      {/* 数据 */}
-      <section className="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6">
-        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">数据</h2>
-        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          所有数据保存在本地 <code className="rounded bg-gray-100 dark:bg-gray-800 px-1">backend/data/</code>{" "}
-          目录（SQLite + 纯 Markdown 文档）。复制该目录即可备份；文档可用 git 管理。
-        </p>
-        <Button
-          className="mt-3"
-          variant="secondary"
-          onClick={() => api.settings.openDataDir().catch((e) => alert(e.message))}
-        >
-          打开数据目录
-        </Button>
-      </section>
+      {/* 数据（仅桌面客户端展示；云端服务端数据目录在 VPS 上，打开本地目录无意义） */}
+      {!isRelayServer && (
+        <section className="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">数据</h2>
+          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            所有数据保存在本地 <code className="rounded bg-gray-100 dark:bg-gray-800 px-1">backend/data/</code>{" "}
+            目录（SQLite + 纯 Markdown 文档）。复制该目录即可备份；文档可用 git 管理。
+          </p>
+          <Button
+            className="mt-3"
+            variant="secondary"
+            onClick={() => api.settings.openDataDir().catch((e) => alert(e.message))}
+          >
+            打开数据目录
+          </Button>
+        </section>
+      )}
 
-      {/* 关于 */}
+      {/* 关于（云端模式下内嵌云端服务端在线更新卡片） */}
       <section className="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6">
         <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
           关于 LearnFlow{" "}
@@ -640,6 +639,13 @@ export default function SettingsPage() {
         <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
           打开应用时会自动检查一次（静默，失败不影响使用）；仓库发布 GitHub Release 后生效。
         </p>
+
+        {/* 云端服务端在线更新（内嵌于关于区块，含版本对比、Docker 容器标识与一键升级） */}
+        {isRelayServer && (
+          <div className="mt-4 border-t border-gray-100 dark:border-gray-800 pt-4">
+            <ServerUpdateCard embedded />
+          </div>
+        )}
       </section>
     </div>
   );

@@ -1,7 +1,7 @@
 // 数据与安全：一键备份/恢复 + 局域网访问令牌（0.0.0.0 平板场景）
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../lib/api";
+import { api, getRelayConfig } from "../../lib/api";
 import { Button, EmptyState, Spinner } from "../../components/ui";
 
 function fmtSize(n: number): string {
@@ -12,6 +12,19 @@ function fmtSize(n: number): string {
 export default function DataSafetySection() {
   const qc = useQueryClient();
   const [msg, setMsg] = useState("");
+
+  // 获取中转配置以区分云端 Web 服务端 vs 本地桌面客户端
+  const { data: relayConfig } = useQuery({
+    queryKey: ["relay-config"],
+    queryFn: getRelayConfig,
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const isRelayServer = Boolean(
+    relayConfig?.is_relay_server || relayConfig?.service === "LearnFlow-Relay-Server"
+  );
+
   const { data: backups, isLoading: loadingBackups } = useQuery({
     queryKey: ["system-backups"],
     queryFn: api.system.backups,
@@ -118,72 +131,75 @@ export default function DataSafetySection() {
         )}
       </div>
 
-      <div className="mt-5 border-t border-gray-100 dark:border-gray-800 pt-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">局域网访问</h3>
-            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-              允许同一 Wi-Fi 或局域网下的手机、平板及其他设备通过浏览器访问本应用
-            </p>
+      {/* 局域网访问令牌（仅本地桌面客户端展示；云端服务端本身即对外提供访问，无此概念） */}
+      {!isRelayServer && (
+        <div className="mt-5 border-t border-gray-100 dark:border-gray-800 pt-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">局域网访问</h3>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                允许同一 Wi-Fi 或局域网下的手机、平板及其他设备通过浏览器访问本应用
+              </p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={access?.lan_mode ?? false}
+                disabled={doToggleLan.isPending}
+                onChange={(e) => doToggleLan.mutate(e.target.checked)}
+              />
+              <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-brand-600"></div>
+            </label>
           </div>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              className="sr-only peer"
-              checked={access?.lan_mode ?? false}
-              disabled={doToggleLan.isPending}
-              onChange={(e) => doToggleLan.mutate(e.target.checked)}
-            />
-            <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-brand-600"></div>
-          </label>
-        </div>
 
-        {!access?.lan_mode ? (
-          <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
-            局域网访问已关闭，当前仅允许本机访问（127.0.0.1）。
-          </p>
-        ) : (
-          <div className="mt-3 space-y-2">
-            <div className="text-xs text-gray-600 dark:text-gray-400">
-              在局域网设备浏览器中打开以下完整地址（含专属安全令牌）：
-            </div>
-            {access.lan_urls_with_token.map((u) => (
-              <div
-                key={u}
-                onClick={async () => {
-                  // http 局域网地址下 navigator.clipboard 可能不存在或被拒绝，降级用 execCommand
-                  try {
-                    if (navigator.clipboard?.writeText) {
-                      await navigator.clipboard.writeText(u);
-                    } else {
-                      const ta = document.createElement("textarea");
-                      ta.value = u;
-                      document.body.appendChild(ta);
-                      ta.select();
-                      document.execCommand("copy");
-                      ta.remove();
-                    }
-                    flash("地址与令牌已复制到剪贴板");
-                  } catch {
-                    flash("复制失败，请手动长按选择复制");
-                  }
-                }}
-                className="group flex items-center justify-between rounded-lg bg-gray-50 dark:bg-gray-800/50 px-3 py-2 font-mono text-xs text-gray-700 dark:text-gray-300 border border-gray-100 dark:border-gray-800 hover:border-brand-300 dark:hover:border-brand-700 cursor-pointer transition"
-                title="点击复制访问地址"
-              >
-                <span className="truncate">{u}</span>
-                <span className="shrink-0 text-[11px] text-brand-600 dark:text-brand-400 opacity-80 group-hover:opacity-100 ml-2">复制</span>
+          {!access?.lan_mode ? (
+            <p className="mt-2 text-xs text-gray-400 dark:text-gray-500">
+              局域网访问已关闭，当前仅允许本机访问（127.0.0.1）。
+            </p>
+          ) : (
+            <div className="mt-3 space-y-2">
+              <div className="text-xs text-gray-600 dark:text-gray-400">
+                在局域网设备浏览器中打开以下完整地址（含专属安全令牌）：
               </div>
-            ))}
-            <div className="flex items-center gap-2 pt-1">
-              <Button variant="secondary" className="text-xs" disabled={doRotate.isPending} onClick={() => doRotate.mutate()}>
-                重新生成令牌
-              </Button>
-              <span className="text-[10px] text-gray-400 dark:text-gray-500">非本机来源必须携带 token；重新生成后旧地址立即失效。</span>
+              {access.lan_urls_with_token.map((u) => (
+                <div
+                  key={u}
+                  onClick={async () => {
+                    // http 局域网地址下 navigator.clipboard 可能不存在或被拒绝，降级用 execCommand
+                    try {
+                      if (navigator.clipboard?.writeText) {
+                        await navigator.clipboard.writeText(u);
+                      } else {
+                        const ta = document.createElement("textarea");
+                        ta.value = u;
+                        document.body.appendChild(ta);
+                        ta.select();
+                        document.execCommand("copy");
+                        ta.remove();
+                      }
+                      flash("地址与令牌已复制到剪贴板");
+                    } catch {
+                      flash("复制失败，请手动长按选择复制");
+                    }
+                  }}
+                  className="group flex items-center justify-between rounded-lg bg-gray-50 dark:bg-gray-800/50 px-3 py-2 font-mono text-xs text-gray-700 dark:text-gray-300 border border-gray-100 dark:border-gray-800 hover:border-brand-300 dark:hover:border-brand-700 cursor-pointer transition"
+                  title="点击复制访问地址"
+                >
+                  <span className="truncate">{u}</span>
+                  <span className="shrink-0 text-[11px] text-brand-600 dark:text-brand-400 opacity-80 group-hover:opacity-100 ml-2">复制</span>
+                </div>
+              ))}
+              <div className="flex items-center gap-2 pt-1">
+                <Button variant="secondary" className="text-xs" disabled={doRotate.isPending} onClick={() => doRotate.mutate()}>
+                  重新生成令牌
+                </Button>
+                <span className="text-[10px] text-gray-400 dark:text-gray-500">非本机来源必须携带 token；重新生成后旧地址立即失效。</span>
+              </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }
