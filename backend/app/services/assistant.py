@@ -7,12 +7,15 @@
 
 同一章节内「看讲义」与「做练习」共用 document 会话，上下文自然延续；
 练习未通过时自动上苏格拉底护栏（不泄答案），讲解/已通关场景放开直答。
+v0.5.1：模型自主沙箱运行须学员授权（会话级记忆）；护栏下沉为服务端工具字段白名单。
 """
+import asyncio
 import json
 import logging
 from typing import Any, AsyncIterator
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
@@ -44,6 +47,14 @@ logger = logging.getLogger(__name__)
 
 ASSISTANT_CONTEXT_TYPES = ("document", "bank_question", "global")
 ASSISTANT_SCENE_KINDS = ("reading", "exercise", "bank", "global")
+
+# ===== 模型自主沙箱运行的一次性授权（v0.5.1 体检 P1）=====
+# 单用户本地产品：授权状态按会话存内存（进程生命周期），不落库不跨端；
+# 未授权时每个 run_sandbox_code 工具调用先向学员要一次许可，超时/拒绝即跳过——
+# 导入内容里的间接提示注入在无人值守场景下永远拿不到授权。
+CONFIRM_TIMEOUT_SECONDS = 180
+_pending_tool_confirms: dict[str, "asyncio.Future[bool]"] = {}
+_sandbox_allowed_conversations: set[str] = set()
 
 # 苏格拉底护栏文本：注入练习未通过 / 未作答场景（防泄题），其余场景为空（放开直答）
 _GUARDRAIL_SOCRATIC = """## 场景护栏（最高优先级，覆盖其他一切准则）
@@ -86,7 +97,27 @@ async def get_or_create_assistant_session(
         context_id=norm_context_id,
     )
     db.add(conv)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # 并发首访（局域网两台设备同时打开同一章节）撞唯一索引：回滚重查最早一条，
+        # 防止产生重复会话导致消息黑洞（v0.5.1 体检 P2）
+        await db.rollback()
+        conv = (
+            await db.scalars(
+                select(Conversation)
+                .where(
+                    Conversation.kind == CONVERSATION_KIND_ASSISTANT,
+                    Conversation.context_type == context_type,
+                    Conversation.context_id == norm_context_id,
+                )
+                .order_by(Conversation.created_at)
+                .limit(1)
+            )
+        ).first()
+        if conv is None:
+            raise
+        return conv
     await db.refresh(conv)
     return conv
 
@@ -224,7 +255,8 @@ async def _bank_scene_block(db: AsyncSession, scene: dict[str, Any]) -> tuple[st
     user_answer = str(scene.get("user_answer") or "").strip()
     judge = str(scene.get("judge_status") or "").strip()
     if user_answer:
-        parts.append(f"学员的作答：{user_answer}（判题：{'通过' if judge == 'passed' else '未通过' if judge == 'failed' else '未提交'}）")
+        # 学员作答一律裁剪：scene 来自请求体任意字段，超长内容原样拼入会随历史反复膨胀上下文
+        parts.append(f"学员的作答：{_clip(user_answer, 800)}（判题：{'通过' if judge == 'passed' else '未通过' if judge == 'failed' else '未提交'}）")
     if judge == "passed":
         # 已做对：放开讲透，包括深挖易混项
         parts.append(f"正确答案：{q.answer_raw or q.answer}")
@@ -237,10 +269,11 @@ async def _bank_scene_block(db: AsyncSession, scene: dict[str, Any]) -> tuple[st
 
 async def build_assistant_messages(
     db: AsyncSession, conv: Conversation, scene: dict[str, Any]
-) -> tuple[list[dict], str, str]:
-    """组装助教消息序列。返回 (messages, evolve_scope, document_id)。
+) -> tuple[list[dict], str, str, str]:
+    """组装助教消息序列。返回 (messages, evolve_scope, document_id, guardrail_mode)。
 
-    document_id 供工具现场排除当前章节（lookup 不再翻正在读的这节）。
+    document_id 供工具现场排除当前章节（lookup 不再翻正在读的这节）；
+    guardrail_mode ∈ {"socratic", "free"} 同步下沉给工具层做服务端防泄题白名单。
     """
     kind = str(scene.get("kind") or "global")
     if kind not in ASSISTANT_SCENE_KINDS:
@@ -299,8 +332,78 @@ async def build_assistant_messages(
         )
     ).all()
     messages = [{"role": "system", "content": system}]
-    messages += [{"role": m.role, "content": m.content} for m in reversed(history)]
-    return messages, evolve_scope, exclude_doc_id
+    # 历史回放逐条裁剪：一条超长消息若原样保留，会被后续 29 轮反复原样带入撑爆上下文
+    messages += [{"role": m.role, "content": _clip(m.content, 4000)} for m in reversed(history)]
+    guardrail_mode = "socratic" if guardrail is _GUARDRAIL_SOCRATIC else "free"
+    return messages, evolve_scope, exclude_doc_id, guardrail_mode
+
+
+async def resolve_scene_scope(db: AsyncSession, scene: dict[str, Any]) -> str:
+    """轻量解析画像演进学科域：只做归属查询，绝不触发沙箱运行或全文组装。
+
+    供消息流结束后计算 evolve_scope 用——修复 v0.5.1 体检 P2「每条练习消息跑两次沙箱」：
+    此前为取 scope 重复执行了整趟 build_assistant_messages（含实时判题）。
+    """
+    kind = str(scene.get("kind") or "global")
+    if kind == "reading":
+        document_id = str(scene.get("document_id") or "")
+        doc = await db.get(Document, document_id) if document_id else None
+        return await discipline_for_document(db, doc) if doc is not None else "general"
+    if kind == "exercise":
+        exercise_id = str(scene.get("exercise_id") or "")
+        ex = await db.get(Exercise, exercise_id) if exercise_id else None
+        if ex is not None and ex.document_id:
+            doc = await db.get(Document, ex.document_id)
+            if doc is not None:
+                return await discipline_for_document(db, doc)
+        return "general"
+    if kind == "bank":
+        question_id = str(scene.get("bank_question_id") or "")
+        q = await db.get(BankQuestion, question_id) if question_id else None
+        if q is not None:
+            from app.models import QuestionBank
+
+            bank = await db.get(QuestionBank, q.bank_id)
+            if bank is not None:
+                return discipline_for_text(bank.name)
+        return "general"
+    return "general"
+
+
+def _make_confirm_callback(conv_id: str):
+    """敏感工具（run_sandbox_code）的一次性授权回调。
+
+    会话已授权 → 直接放行；否则注册 pending Future 等学员响应（SSE confirm 事件由
+    runner 的 tool_call 事件承载，API 层 /tool-confirm 端点落结果），超时/拒绝返回 False。
+    """
+
+    async def confirm(name: str, args: dict, seq: int) -> bool:
+        if conv_id in _sandbox_allowed_conversations:
+            return True
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        _pending_tool_confirms[conv_id] = fut
+        try:
+            return await asyncio.wait_for(fut, timeout=CONFIRM_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            logger.info("沙箱授权等待超时（conv=%s seq=%s），跳过工具执行", conv_id, seq)
+            return False
+        finally:
+            if _pending_tool_confirms.get(conv_id) is fut:
+                _pending_tool_confirms.pop(conv_id, None)
+
+    return confirm
+
+
+def resolve_tool_confirm(conv_id: str, approve: bool, remember: bool) -> bool:
+    """落学员的授权决定。返回 False 表示当前没有等待中的授权请求。"""
+    fut = _pending_tool_confirms.get(conv_id)
+    if fut is None or fut.done():
+        return False
+    if approve and remember:
+        _sandbox_allowed_conversations.add(conv_id)
+    if not fut.done():
+        fut.set_result(bool(approve))
+    return True
 
 
 async def stream_assistant_reply(
@@ -314,7 +417,7 @@ async def stream_assistant_reply(
     事件：user_ack（由 API 层先发）/ tool_call / tool_result / reference / delta / done / error。
     """
     try:
-        messages, _scope, exclude_doc = await build_assistant_messages(db, conv, scene)
+        messages, _scope, exclude_doc, guardrail_mode = await build_assistant_messages(db, conv, scene)
     except Exception:  # noqa: BLE001
         logger.exception("助教上下文组装失败")
         yield {"type": "error", "detail": "助教上下文组装失败，请稍后重试"}
@@ -326,7 +429,8 @@ async def stream_assistant_reply(
         db=db,
         tools=AGENT_TOOLS_SCHEMA,
         max_tool_steps=3,
-        context={"exclude_document_id": exclude_doc},
+        context={"exclude_document_id": exclude_doc, "guardrail": guardrail_mode},
+        confirm_sensitive=_make_confirm_callback(conv.id),
     )
     try:
         async for evt in agent_stream:
@@ -373,8 +477,11 @@ def build_evolution_interaction(
 __all__ = [
     "ASSISTANT_CONTEXT_TYPES",
     "ASSISTANT_SCENE_KINDS",
+    "CONFIRM_TIMEOUT_SECONDS",
     "build_assistant_messages",
     "build_evolution_interaction",
     "get_or_create_assistant_session",
+    "resolve_scene_scope",
+    "resolve_tool_confirm",
     "stream_assistant_reply",
 ]

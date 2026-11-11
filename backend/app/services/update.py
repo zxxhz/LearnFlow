@@ -449,7 +449,8 @@ async def _stream_installer(url: str, installer_path: "Path", headers: dict[str,
 async def stream_download_and_install(target_version: str, direct_url: str | None = None):
     """流式下载官方最新安装包，向前端实时推送进度，并在完成后以静默模式触发安装。
 
-    完整性 fail-closed：仅当能从 GitHub API 取到官方 sha256 时才允许下载与校验；
+    完整性 fail-closed（真实现）：仅当能从 GitHub API 取到官方 sha256 时才允许下载；
+    下载完成后强比对，取不到官方 sha256 时直接拒绝安装并引导手动下载。
     镜像不再参与安装包下载（仅保留为 check_update 的 latest.json 回退源）。
     """
     import hashlib
@@ -517,12 +518,18 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
     # 文件名带随机后缀：并发触发两次安装互不覆盖、互不删对方的在途文件
     installer_path = temp_dir / f"LearnFlow_{clean_v}_{uuid.uuid4().hex[:8]}_x64-setup.exe"
 
-    # 完整性校验：优先获取官方 sha256 并在下载完成后强比对；
-    # 若在极端无网/老资产场景下未能获取到 sha256，则降级为仅放行官方直连源防篡改。
+    # 完整性校验（真 fail-closed）：仅当能从 GitHub API 取到官方 sha256 时才允许下载安装。
+    # 拿不到官方摘要时绝不静默降级为「无校验直装」——那条路径在 TLS 被解代理劫持时
+    # 会同时骗过 api 与下载源，构成供应链风险（v0.5.1 体检 P1）；此时引导手动下载核验。
     expected_sha256 = await _fetch_release_asset_sha256(repo, f"v{clean_v}", f"LearnFlow_{clean_v}_x64-setup.exe")
     if not expected_sha256:
-        logger.warning("未获取到官方 sha256，为防篡改本次仅保留官方直连下载源")
-        urls_to_try = [raw_github_exe]
+        detail = (
+            f"无法从 GitHub API 获取 v{clean_v} 安装包的官方 SHA-256，已中止应用内更新。"
+            "为防供应链篡改，未通过完整性基线的安装包不会被执行；请前往 GitHub Releases 页面手动下载并核对校验和后安装。"
+        )
+        logger.error("fail-closed：未获取到官方 sha256，拒绝应用内安装 v%s", clean_v)
+        yield f"data: {json.dumps({'type': 'error', 'detail': detail}, ensure_ascii=False)}\n\n"
+        return
 
     headers = {"User-Agent": "LearnFlow-InAppUpdater/1.0"}
     success = False

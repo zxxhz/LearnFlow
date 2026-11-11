@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
+from app.core.sse import SSE_HEADERS
 from app.models import Exercise
 from app.services.llm import create_adapter_from_settings
 from app.services.llm.errors import LLMError
@@ -41,6 +42,6 @@ async def diagnose(body: ExerciseDiagnoseRequest, db: AsyncSession = Depends(get
         question=body.question,
         mode=body.mode,
     )
-    return StreamingResponse(gen, media_type="text/event-stream")
+    return StreamingResponse(gen, media_type="text/event-stream", headers=SSE_HEADERS)
 
 

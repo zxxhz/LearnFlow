@@ -186,21 +186,28 @@ except Exception:
     pass
 
 
-def _parse_host_header(host_header: str) -> tuple[str, int]:
-    """解析 Host 头的 host 与 port（支持 IPv6 [::1]:8420 形式）。"""
-    if host_header.startswith("["):
-        end = host_header.find("]")
-        if end != -1:
-            h_host = host_header[1:end].lower()
-            rest = host_header[end + 1 :]
-            host_port = int(rest[1:]) if rest.startswith(":") else 80
+def _parse_host_header(host_header: str) -> tuple[str, int] | None:
+    """解析 Host 头的 host 与 port（支持 IPv6 [::1]:8420 形式）。
+
+    畸形端口（如 1.2.3.4:abc）返回 None：调用方按非法 Host 一律 403 拒绝，
+    而不是让 ValueError 穿透中间件变每请求 500（v0.5.1 体检 P2）。
+    """
+    try:
+        if host_header.startswith("["):
+            end = host_header.find("]")
+            if end != -1:
+                h_host = host_header[1:end].lower()
+                rest = host_header[end + 1 :]
+                host_port = int(rest[1:]) if rest.startswith(":") else 80
+            else:
+                h_host, host_port = host_header, 80
         else:
-            h_host, host_port = host_header, 80
-    else:
-        h_host_raw, _, h_port = host_header.partition(":")
-        h_host = h_host_raw.lower()
-        host_port = int(h_port) if h_port else 80
-    return h_host, host_port
+            h_host_raw, _, h_port = host_header.partition(":")
+            h_host = h_host_raw.lower()
+            host_port = int(h_port) if h_port else 80
+        return h_host, host_port
+    except ValueError:
+        return None
 
 
 def _is_trusted_host(h_host: str) -> bool:
@@ -229,12 +236,13 @@ class _AccessGuard:
         if scope["type"] == "http":
             headers = {k.lower(): v for k, v in scope.get("headers", [])}
             host_header = headers.get(b"host", b"").decode("latin-1").strip().lower()
-            h_host, host_port = _parse_host_header(host_header) if host_header else ("", 80)
+            parsed_host = _parse_host_header(host_header) if host_header else ("", 80)
+            h_host, host_port = parsed_host if parsed_host else (None, 80)
 
             # 1. Host 头合法性校验（防 DNS rebinding 攻击）：
             # 攻击者通过公共域名绑定 127.0.0.1 试图 drive-by 绕过回环免令牌限制，
             # 任何 Host 头非本机回环/机器名/合法 IP 的请求一律拒绝
-            if host_header and not _is_trusted_host(h_host):
+            if host_header and (parsed_host is None or not _is_trusted_host(h_host or "")):
                 res = JSONResponse(status_code=403, content={"detail": "非法的 Host 请求头，拒绝访问"})
                 await res(scope, receive, send)
                 return

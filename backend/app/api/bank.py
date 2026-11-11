@@ -532,7 +532,12 @@ async def ai_explain_question(
             yield f"data: {json.dumps({'type': 'error', 'detail': '服务异常，请稍后重试'}, ensure_ascii=False)}\n\n"
             return
         finally:
-            await deltas.aclose()
+            # 与全链路其余 9 处 SSE 释放统一防御写法（v0.5.1 体检 P3）：
+            # 底层 close 异常若冒出会跳过 ai_explanation 落库与 done 事件
+            try:
+                await deltas.aclose()
+            except Exception:
+                logger.debug("bank explain deltas aclose 异常（忽略）", exc_info=True)
 
         # 流式顺利结束，持久化到 bank_questions.ai_explanation
         full_text = "".join(accumulated).strip()

@@ -478,12 +478,15 @@ async def update_mindmap(db: AsyncSession, mindmap_id: str, data: MindMapUpdate)
 
 
 async def delete_mindmap(db: AsyncSession, mindmap_id: str) -> bool:
-    mm = await db.get(MindMap, mindmap_id)
-    if not mm:
-        return False
-    await db.delete(mm)
-    await db.commit()
-    return True
+    # 纳入 _mm_lock（v0.5.1 体检 P2）：这是唯一不持锁的导图写路径，
+    # 与持锁的「fresh 读树→修改→commit」并发时会插出 UPDATE 0 行 → StaleDataError
+    async with _mm_lock(mindmap_id):
+        mm = await db.get(MindMap, mindmap_id)
+        if not mm:
+            return False
+        await db.delete(mm)
+        await db.commit()
+        return True
 
 
 # ==============================================================================

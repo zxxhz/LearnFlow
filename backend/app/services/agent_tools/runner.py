@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any, AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,10 @@ from app.services.agent_tools.registry import AGENT_TOOLS_SCHEMA, execute_tool
 from app.services.llm.openai_compat import OpenAICompatAdapter
 
 logger = logging.getLogger(__name__)
+
+# 需要学员一次性授权才能由模型自主执行的高影响工具（v0.5.1 体检 P1：
+# 导入内容可携带间接提示注入，防其驱动沙箱代码自动出网；确认与超时策略见服务层）
+SENSITIVE_TOOLS = {"run_sandbox_code"}
 
 
 async def stream_agent_with_tools(
@@ -20,19 +25,23 @@ async def stream_agent_with_tools(
     tools: list[dict] | None = None,
     max_tool_steps: int = 2,
     context: dict[str, Any] | None = None,
+    confirm_sensitive: Callable[[str, dict, int], Awaitable[bool]] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """支持工具调用的 Agent 执行器。
 
     事件类型：
-    - {"type": "tool_call", "name": str, "args": dict}
+    - {"type": "tool_call", "name": str, "args": dict, "needs_confirm"?: bool, "confirm_seq"?: int}
     - {"type": "tool_result", "name": str, "result": dict}
     - {"type": "delta", "text": str}
     - {"type": "done"}
     context：服务层注入的调用现场（如当前文档 ID），透传给 execute_tool。
+    confirm_sensitive：敏感工具（SENSITIVE_TOOLS）执行前的授权回调——返回 True 放行、False 跳过；
+    实现方负责（经 SSE 事件 + 等待用户响应）拿到授权，未提供时按既有行为直接执行。
     """
     tools_to_use = tools or AGENT_TOOLS_SCHEMA
     history = list(messages)
     final_content: str | None = None
+    tool_seq = 0
 
     for _ in range(max_tool_steps):
         try:
@@ -73,7 +82,26 @@ async def stream_agent_with_tools(
             except Exception:
                 args = {}
 
-            yield {"type": "tool_call", "name": fn_name, "args": args}
+            need_confirm = bool(confirm_sensitive) and fn_name in SENSITIVE_TOOLS
+            if need_confirm:
+                tool_seq += 1
+                yield {"type": "tool_call", "name": fn_name, "args": args, "needs_confirm": True, "confirm_seq": tool_seq}
+                allowed = await confirm_sensitive(fn_name, args, tool_seq)
+                if not allowed:
+                    skipped = {
+                        "status": "skipped",
+                        "message": "学员未授权本次沙箱运行，已跳过；请改用讲解说明，或提示学员手动运行验证。",
+                    }
+                    yield {"type": "tool_result", "name": fn_name, "result": skipped}
+                    history.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": json.dumps(skipped, ensure_ascii=False),
+                    })
+                    continue
+            else:
+                yield {"type": "tool_call", "name": fn_name, "args": args}
+
             result = await execute_tool(fn_name, args, db=db, context=context)
             yield {"type": "tool_result", "name": fn_name, "result": result}
 

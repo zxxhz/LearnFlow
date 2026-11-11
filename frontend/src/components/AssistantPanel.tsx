@@ -17,6 +17,7 @@ import type {
 import { Button, ConfirmDialog, Spinner, Textarea } from "./ui";
 import MarkdownLite from "./MarkdownLite";
 import { createStreamFlusher } from "../lib/streamFlusher";
+import { sanitizeSvg } from "../lib/sanitize";
 import { HL_COLOR_KEYS, useHlColors } from "../features/reader/colors";
 import { useFontSize } from "../lib/fontSize";
 
@@ -98,6 +99,9 @@ export default function AssistantPanel({
   const [toolStatus, setToolStatus] = useState<string | null>(null);
   const [turnPlots, setTurnPlots] = useState<string[]>([]);
   const [turnRefs, setTurnRefs] = useState<AssistantReference[]>([]);
+  // 模型自主沙箱运行的一次性授权卡（v0.5.1 体检 P1）：后端挂起等待，超时/拒绝即跳过
+  const [pendingConfirm, setPendingConfirm] = useState<{ name: string; seq: number } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   // 标注管理（仅阅读页划线入口）
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState(annotation?.note ?? "");
@@ -133,6 +137,7 @@ export default function AssistantPanel({
     setToolStatus(null);
     setTurnPlots([]);
     setTurnRefs([]);
+    setPendingConfirm(null);
     setNoteDraft(annotation?.note ?? "");
     setCurrentColor(annotation?.color ?? "yellow");
     setNoteOpen(false);
@@ -199,12 +204,20 @@ export default function AssistantPanel({
             const acked = ev.message.id;
             setLocalMsgs((prev) => prev.map((m) => (m.id === tempId ? { ...m, id: acked } : m)));
           } else if (ev.type === "tool_call" && ev.name) {
+            if (ev.needs_confirm) {
+              // 沙箱等敏感工具：后端已挂起等待授权，弹卡而非状态行
+              setPendingConfirm({ name: ev.name, seq: ev.confirm_seq ?? 0 });
+              return;
+            }
             setToolStatus(TOOL_STATUS[ev.name] ?? `🛠️ 助教正在调用工具 ${ev.name}…`);
           } else if (ev.type === "tool_result") {
+            // 授权卡要么已处理、要么超时被服务端跳过：一律收起
+            setPendingConfirm(null);
             setToolStatus(null);
             const svg = ev.result?.svg;
             if (ev.name === "render_math_plot" && typeof svg === "string" && svg) {
-              setTurnPlots((prev) => [...prev, svg]);
+              // 与 MarkdownLite 同一净化口径（v0.5.1 体检 P2）：SSE 事件里的 SVG 进 innerHTML 前剥脚本与 on*
+              setTurnPlots((prev) => [...prev, sanitizeSvg(svg)]);
             }
           } else if (ev.type === "reference" && Array.isArray(ev.references)) {
             const refs: AssistantReference[] = ev.references;
@@ -255,6 +268,19 @@ export default function AssistantPanel({
       setIsThinking(false);
       setToolStatus(null);
     }
+  };
+
+  /** 落学员的沙箱授权决定（remember=true 后本会话内不再逐次询问） */
+  const answerConfirm = async (approve: boolean, remember: boolean) => {
+    if (!convId || !pendingConfirm || confirmBusy) return;
+    setConfirmBusy(true);
+    try {
+      await api.assistant.confirmTool(convId, { approve, remember });
+    } catch {
+      /* 409（超时已被服务端跳过）等竞态：收起卡片即可 */
+    }
+    setPendingConfirm(null);
+    setConfirmBusy(false);
   };
 
   const isVisible = open && !closing;
@@ -377,14 +403,43 @@ export default function AssistantPanel({
             </div>
           ))}
 
-        {/* 本轮来源引用标签（旧知/历史错题跳转） */}
-        {turnRefs.length > 0 && (isThinking || streaming) && (
+        {/* 沙箱授权卡：模型请求自主运行代码，须学员放行（v0.5.1 体检 P1） */}
+        {pendingConfirm && (
+          <div className="flex justify-start">
+            <div className="max-w-[92%] rounded-xl border border-amber-300 bg-amber-50 p-3 shadow-sm dark:border-amber-700 dark:bg-amber-950/40">
+              <p className="text-[0.9em] font-medium text-amber-800 dark:text-amber-200">
+                ⚠️ AI 助教请求在沙箱中运行一段代码
+              </p>
+              <p className="mt-1 text-[0.82em] leading-relaxed text-gray-600 dark:text-gray-400">
+                代码将在本地真实执行，经你授权后才会运行；3 分钟未确认将自动跳过。
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <Button
+                  className="bg-amber-600 text-white hover:bg-amber-700"
+                  disabled={confirmBusy}
+                  onClick={() => answerConfirm(true, false)}
+                >
+                  ▶ 仅这次运行
+                </Button>
+                <Button variant="secondary" disabled={confirmBusy} onClick={() => answerConfirm(true, true)}>
+                  ✓ 本会话自动运行
+                </Button>
+                <Button variant="ghost" disabled={confirmBusy} onClick={() => answerConfirm(false, false)}>
+                  跳过
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 本轮来源引用标签（旧知/历史错题跳转）——回复结束后保留至下次提问（v0.5.1 体检 P2） */}
+        {turnRefs.length > 0 && (
           <div className="flex justify-start">
             <ReferenceChips refs={turnRefs} />
           </div>
         )}
-        {/* 本轮工具绘制的函数图像 */}
-        {turnPlots.length > 0 && (isThinking || streaming) && (
+        {/* 本轮工具绘制的函数图像——回复结束后保留至下次提问（v0.5.1 体检 P2） */}
+        {turnPlots.length > 0 && (
           <div className="flex justify-start">
             <div className="max-w-[95%] space-y-2">
               {turnPlots.map((svg, i) => (

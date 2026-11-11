@@ -181,11 +181,14 @@ export interface AssistantReference {
   href?: string;
 }
 
-/** 统一助教 SSE 事件：user_ack 对齐乐观气泡；reference 渲染旧知/错题跳转标签；tool_result.result.svg 为函数图像 */
+/** 统一助教 SSE 事件：user_ack 对齐乐观气泡；reference 渲染旧知/错题跳转标签；tool_result.result.svg 为函数图像；tool_call.needs_confirm=true 时须弹授权卡并回发 /tool-confirm */
 export interface AssistantSSEEvent {
   type: "user_ack" | "status" | "tool_call" | "tool_result" | "reference" | "delta" | "done" | "error";
   name?: string;
   args?: Record<string, unknown>;
+  /** 沙箱等敏感工具：须学员授权后服务端才会执行 */
+  needs_confirm?: boolean;
+  confirm_seq?: number;
   result?: { svg?: string; [key: string]: unknown };
   references?: AssistantReference[];
   text?: string;

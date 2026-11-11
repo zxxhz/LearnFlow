@@ -338,9 +338,25 @@ async def execute_tool(
             exprs = str(args.get("expressions") or "").strip()
             if not exprs:
                 return {"error": "函数表达式为空"}
-            x_min = float(args.get("x_min", -10.0))
-            x_max = float(args.get("x_max", 10.0))
-            svg = await asyncio.to_thread(render_sync, exprs, x_min, x_max)
+            # 与 API 层 /api/math/render 同一套校验（v0.5.1 体检 P2）：区间合法、跨度受限、10s 超时，
+            # 防模型给出的离谱区间卡死 to_thread 线程并让 SSE 永久停在工具步
+            try:
+                x_min = float(args.get("x_min", -10.0))
+                x_max = float(args.get("x_max", 10.0))
+            except (TypeError, ValueError):
+                x_min, x_max = -10.0, 10.0
+            import math as _math
+
+            if not (_math.isfinite(x_min) and _math.isfinite(x_max)) or x_max <= x_min:
+                x_min, x_max = -10.0, 10.0
+            if (x_max - x_min) > 10000:
+                x_min, x_max = -10.0, 10.0
+            try:
+                svg = await asyncio.wait_for(
+                    asyncio.to_thread(render_sync, exprs, x_min, x_max), timeout=10.0
+                )
+            except asyncio.TimeoutError:
+                return {"error": "函数图像渲染超时（10s），已放弃本次绘制"}
             # svg 通过 tool_result 事件透传给前端渲染；进入 LLM 历史前由 runner 剥离避免撑爆上下文
             return {
                 "status": "success",
@@ -358,6 +374,20 @@ async def execute_tool(
             exercise = await db.get(Exercise, ex_id)
             if exercise is None:
                 return {"error": f"未找到 ID 为 {ex_id} 的关卡"}
+            # 服务端防泄题白名单（v0.5.1 体检 P1）：苏格拉底护栏场景下参考实现/预期输出/渐进提示
+            # 一律不出服务端——护栏不能只靠提示词，答案字段绝不允许经 tool_result 事件到达浏览器
+            guardrail = ""
+            if isinstance(context, dict):
+                guardrail = str(context.get("guardrail") or "")
+            if guardrail == "socratic":
+                return {
+                    "id": exercise.id,
+                    "title": exercise.title,
+                    "task": exercise.task_md,
+                    "language": exercise.language,
+                    "reference_hidden": True,
+                    "note": "学员当前练习未通过（启发式辅导场景），参考实现、预期输出与渐进提示已按防泄题策略隐藏；请基于题面与学员作答点拨思路。",
+                }
             return {
                 "id": exercise.id,
                 "title": exercise.title,

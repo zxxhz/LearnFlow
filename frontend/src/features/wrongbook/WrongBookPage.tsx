@@ -1,6 +1,6 @@
 // 错题本：最近一次作答未通过的练习（跨课程），重刷通过后自动出池
 // v0.5.0：接入统一 AI 助教——错题卡「问 AI 助教」打开 document 会话，与对应章节阅读页上下文延续
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -26,16 +26,26 @@ export default function WrongBookPage() {
     label: string;
   } | null>(null);
   const [closing, setClosing] = useState(false);
+  // 关闭动画定时器须可取消：关后 300ms 内再开时陈旧回调会把面板再次关掉（v0.5.1 体检 P2）
+  const assistantCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeAssistant = useCallback(() => {
     setClosing(true);
-    setTimeout(() => {
+    if (assistantCloseTimerRef.current) clearTimeout(assistantCloseTimerRef.current);
+    assistantCloseTimerRef.current = setTimeout(() => {
+      assistantCloseTimerRef.current = null;
       setAssistant(null);
       setClosing(false);
     }, 300);
   }, []);
-  const assistantApi = useCallback(
+  // Provider value 必须是稳定引用（useMemo 直接给对象）：工厂函数会让 context value
+  // 每次渲染恒变，触发全部 ExerciseCard 消费者（含 KaTeX/Shiki 重组件）无谓重渲染
+  const assistantApi = useMemo(
     () => ({
       openAssistant: (scene: AssistantSceneContext, label: string) => {
+        if (assistantCloseTimerRef.current) {
+          clearTimeout(assistantCloseTimerRef.current);
+          assistantCloseTimerRef.current = null;
+        }
         setClosing(false);
         setAssistant({ scene, label });
       },
@@ -44,7 +54,7 @@ export default function WrongBookPage() {
   );
 
   return (
-    <ReaderAssistantContext.Provider value={assistantApi()}>
+    <ReaderAssistantContext.Provider value={assistantApi}>
       <div className="mx-auto max-w-5xl p-8">
         <div className="flex items-center justify-between">
           <div>

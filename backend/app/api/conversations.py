@@ -55,6 +55,11 @@ async def post_message(
     ann = await db.get(Annotation, conv.annotation_id) if conv.annotation_id else None
     if ann is None:
         raise HTTPException(status_code=400, detail="标注不存在")
+
+    # LLM 配置校验先于任何持久化：未配置时快速 400，不留下没有回应的孤儿提问（v0.5.1 体检 P2）
+    messages = await build_annotation_messages(db, conv)
+    adapter = await create_adapter_from_settings(db, scene="chat")
+
     user_msg = Message(conversation_id=conv.id, role="user", content=body.content)
     db.add(user_msg)
     ann.updated_at = utcnow_iso()
@@ -62,8 +67,6 @@ async def post_message(
     await db.refresh(user_msg)
 
     user_msg_dict = MessageOut.model_validate(user_msg).model_dump()
-    messages = await build_annotation_messages(db, conv)
-    adapter = await create_adapter_from_settings(db, scene="chat")
     deltas = await adapter.chat(messages, stream=True)
     conv_id = conv.id
     # 划线所在课程学科域：盲区盖章 scope + 证据溯源（在请求会话存活期内解析好）
@@ -74,10 +77,12 @@ async def post_message(
         # 首先立即确认用户消息已保存，供前端快速对齐
         yield f"data: {json.dumps({'type': 'user_ack', 'message': user_msg_dict}, ensure_ascii=False)}\n\n"
         buffer: list[str] = []
+        stream_finished = False
         try:
             async for delta in deltas:
                 buffer.append(delta)
                 yield f"data: {json.dumps({'type': 'delta', 'text': delta}, ensure_ascii=False)}\n\n"
+            stream_finished = True
         except LLMError as e:
             logger.warning(f"LLM stream error: {e}")
             yield f"data: {json.dumps({'type': 'error', 'detail': e.message}, ensure_ascii=False)}\n\n"
@@ -91,15 +96,23 @@ async def post_message(
                 await deltas.aclose()
             except Exception:
                 pass
+            # 半截回复也落库（含客户端断连）：user/assistant 成对，LLM 已消耗的 token 不凭空蒸发
+            full_content = "".join(buffer)
+            if full_content.strip():
+                async with async_session_factory() as s:
+                    saved = Message(
+                        conversation_id=conv_id,
+                        role="assistant",
+                        content=full_content,
+                        meta='{"partial": true}' if not stream_finished else "{}",
+                    )
+                    s.add(saved)
+                    await s.commit()
+                    msg_id = saved.id
 
         full_content = "".join(buffer)
-        async with async_session_factory() as s:
-            saved = Message(
-                conversation_id=conv_id, role="assistant", content=full_content
-            )
-            s.add(saved)
-            await s.commit()
-            msg_id = saved.id
+        if not stream_finished or not full_content.strip():
+            return
 
         # 异步提炼用户划线问答的认知盲区与提问习惯（盖章学科域与证据来源）
         trigger_profile_evolution(

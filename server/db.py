@@ -362,9 +362,13 @@ class RelayDatabase:
                 qid = att.get("question_id")
                 if not aid or not bid or not qid:
                     continue
-                user_ans = att.get("user_answer", "")
+                # 字段兼容（v0.5.1 体检 P1）：桌面端 BankAttempt 列名是 passed/content，
+                # 此前只读 user_answer/is_correct → 本地键不存在时 is_correct 恒缺省 True，
+                # 云端统计变成 100% 正确率。以 passed/content 为主，旧字段名兜底。
+                user_ans = att.get("content", att.get("user_answer", ""))
                 if isinstance(user_ans, list):
                     user_ans = ",".join(user_ans)
+                passed_val = att.get("passed", att.get("is_correct", True))
                 cursor.execute(
                     """
                     INSERT INTO bank_attempts (id, bank_id, question_id, user_answer, is_correct, is_doubtful, created_at, raw_json)
@@ -380,7 +384,7 @@ class RelayDatabase:
                         bid,
                         qid,
                         str(user_ans),
-                        1 if att.get("is_correct", True) else 0,
+                        1 if passed_val else 0,
                         1 if att.get("is_doubtful", False) else 0,
                         att.get("created_at", now_str),
                         json.dumps(att, ensure_ascii=False),
@@ -857,15 +861,36 @@ class RelayDatabase:
         return await asyncio.to_thread(self.get_bank_questions_sync, bank_id)
 
     def get_bank_wrong_questions_sync(self, bank_id: str) -> list[dict[str, Any]]:
+        """云端错题池：与桌面端同口径——每题最近一次作答「未通过或存疑」才算错题（v0.5.1 体检 P1）。
+
+        此前直接 JOIN 永不清理的 mistakes 表：历史失败行永存、exercise 来源塌缩为 None_None，
+        且与 _compute_bank_stats_sync 的统计口径互相矛盾。改为从 bank_attempts 窗口函数现算。
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT q.*, m.wrong_count, m.last_attempt_at
-                FROM mistakes m
-                JOIN bank_questions q ON m.question_id = q.id
-                WHERE m.bank_id = ?
-                ORDER BY m.last_attempt_at DESC
-            """, (bank_id,))
+            cursor.execute(
+                """
+                SELECT q.*, s.wrong_count, s.last_attempt_at
+                FROM bank_questions q
+                JOIN (
+                    SELECT question_id,
+                           SUM(CASE WHEN is_correct = 0 THEN 1 ELSE 0 END) AS wrong_count,
+                           MAX(created_at) AS last_attempt_at
+                    FROM bank_attempts
+                    WHERE bank_id = ?
+                    GROUP BY question_id
+                ) s ON s.question_id = q.id
+                JOIN (
+                    SELECT question_id, is_correct, is_doubtful,
+                           ROW_NUMBER() OVER (PARTITION BY question_id ORDER BY created_at DESC) AS rn
+                    FROM bank_attempts
+                    WHERE bank_id = ?
+                ) a ON a.question_id = q.id AND a.rn = 1
+                WHERE q.bank_id = ? AND (a.is_correct = 0 OR a.is_doubtful = 1)
+                ORDER BY s.last_attempt_at DESC
+                """,
+                (bank_id, bank_id, bank_id),
+            )
             rows = cursor.fetchall()
             res = []
             for r in rows:

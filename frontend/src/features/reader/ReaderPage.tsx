@@ -388,6 +388,10 @@ export default function ReaderPage() {
     []
   );
 
+  // Rules of Hooks：必须位于所有条件 return 之前（首个 hook 数须与数据到达后的完整渲染一致），
+  // 否则首屏 isLoading 早退分支会触发「Rendered more hooks」整页崩溃（v0.5.1 体检 P0）
+  const assistantApi = useMemo(() => ({ openAssistant: openAssistantFromChild }), [openAssistantFromChild]);
+
   const isRightPanelOpen = Boolean(
     isCardOpen ||
       (drawerOpen && !isClosingDrawer) ||
@@ -759,8 +763,6 @@ export default function ReaderPage() {
   const nextDoc = idx >= 0 && idx < docs.length - 1 ? docs[idx + 1] : null;
   const activeKps = kpsQuery.data ?? [];
   const orphanCount = annotations.filter((a) => a.status === "orphan").length;
-
-  const assistantApi = useMemo(() => ({ openAssistant: openAssistantFromChild }), [openAssistantFromChild]);
 
   return (
     <ReaderAssistantContext.Provider value={assistantApi}>

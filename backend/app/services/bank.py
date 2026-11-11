@@ -329,7 +329,10 @@ async def update_question(
     全程持有 _bank_lock，并在锁内重查题目防与 replace 并发导致 StaleDataError。
     """
     async with _bank_lock(q.bank_id):
-        fresh_q = await db.get(BankQuestion, q.id)
+        # populate_existing 必须加：同一 Session 此前已加载过该题时，裸 get 命中 identity map
+        # 不再发 SQL，「锁内重查」沦为空操作 → 用陈旧答案判分 / 并发删题 commit 时 StaleDataError
+        # / 陈旧基线覆盖 replace 校准（lost update）。（v0.5.1 体检 P1，venv 实跑复刻实证）
+        fresh_q = await db.get(BankQuestion, q.id, populate_existing=True)
         if fresh_q is None:
             raise ValueError("题目不存在或已被移除")
         q = fresh_q

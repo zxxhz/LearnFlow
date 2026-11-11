@@ -1,6 +1,8 @@
 // 轻量 markdown 渲染（消息/卡片背面共用）：markdown-it + KaTeX auto-render + 函数图像自动渲染
 // v0.5.0：新增 mindmap（交互导图）与 quiz（随堂微测卡）富块，由 assistantBlocks 装配
-import { useEffect, useRef, useState } from "react";
+// v0.5.1：React.memo + useMemo——长会话里每个历史消息一个实例，输入框每敲一字不能把全部
+// 消息 O(全文) 重解析一遍；流式期间（deferMath）富块只挂占位不发 /math/render 请求
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import MarkdownIt from "markdown-it";
 import renderMathInElement from "katex/contrib/auto-render";
 import { api } from "../lib/api";
@@ -88,18 +90,18 @@ const DELIMITERS = [
   { left: "\\(", right: "\\)", display: false },
 ];
 
-export default function MarkdownLite({
+function MarkdownLiteImpl({
   text,
   className = "",
   deferMath = false,
 }: {
   text: string;
   className?: string;
-  /** 流式输出期间置 true：跳过 KaTeX 渲染（每个 token 排版公式开销过大），翻转回 false 时对最终全文补渲染一次 */
+  /** 流式输出期间置 true：跳过 KaTeX 渲染（每个 token 排版公式开销过大），翻转回 false 时对最终全文补渲染一次；富块同样只挂占位不发请求 */
   deferMath?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const html = md.render(text ?? "");
+  const html = useMemo(() => md.render(text ?? ""), [text]);
   // 导图全屏放大覆盖层（经 window 事件从任意 MarkdownLite 实例的 DOM 按钮唤起）
   const [zoom, setZoom] = useState<{ html: string; title: string } | null>(null);
 
@@ -124,8 +126,11 @@ export default function MarkdownLite({
       }
     }
 
-    // 1.5 助教富块（思维导图 / 随堂微测卡）装配
-    attachAssistantBlocks(ref.current);
+    // 1.5 助教富块（思维导图 / 随堂微测卡）装配：流式期间只渲染占位（半截 fence 的内容
+    // 每 120ms 就变一次，发请求必然浪费且闪错误态），deferMath 翻回 false 时统一补装配
+    if (!deferMath) {
+      attachAssistantBlocks(ref.current);
+    }
 
     // 2. 异步自动绘制并装配所有函数图像
     const plotContainers = ref.current.querySelectorAll<HTMLDivElement>(".math-plot-container[data-plot]");
@@ -141,6 +146,13 @@ export default function MarkdownLite({
       if (plotSvgCache.has(expressions)) {
         const cachedSvg = plotSvgCache.get(expressions)!;
         canvas.innerHTML = `<div class="plot-svg w-full [&_svg]:h-auto [&_svg]:max-w-full">${cachedSvg}</div>`;
+        return;
+      }
+
+      // 流式期间（deferMath）不发绘制请求：半截表达式是每帧都变的移动目标，
+      // 等 deferMath 翻回 false（流结束）时本 effect 依 [html, deferMath] 重跑再补渲染
+      if (deferMath) {
+        canvas.innerHTML = '<span class="animate-pulse">📐 正在生成回答，完成后绘制…</span>';
         return;
       }
 
@@ -216,3 +228,8 @@ export default function MarkdownLite({
     </>
   );
 }
+
+// React.memo：AssistantPanel 里每个历史消息一个实例，输入框每次键入触发面板重渲染时，
+// text 未变的实例不再重跑 md.render（v0.5.1 体检 P3 打字掉帧）
+const MarkdownLite = memo(MarkdownLiteImpl);
+export default MarkdownLite;

@@ -26,7 +26,9 @@ def _set_sqlite_pragma(dbapi_connection, _record):
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA foreign_keys=ON")
-    cursor.execute("PRAGMA busy_timeout=5000")
+    # 与 connect_args timeout=30 对齐（两者是同一 busy handler，PRAGMA 会覆盖后者）：
+    # relay 全量 pull / 题库替换等长写事务期间，并发写等待 5s 即报 database is locked（v0.5.1 体检 P2 实证）
+    cursor.execute("PRAGMA busy_timeout=30000")
     cursor.close()
 
 
@@ -92,6 +94,9 @@ async def init_db() -> None:
             "ALTER TABLE conversations ADD COLUMN context_type VARCHAR(20) DEFAULT ''",
             "ALTER TABLE conversations ADD COLUMN context_id VARCHAR(64) DEFAULT ''",
             "CREATE INDEX IF NOT EXISTS ix_conversations_context_id ON conversations(context_id)",
+            # v0.5.1 助教会话归属唯一性：并发首访不再产生重复会话（消息黑洞）；
+            # 服务层配合 IntegrityError 重查兜底。存量若已有重复行，本条创建失败仅告警不阻断
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_conversations_assistant ON conversations(kind, context_type, context_id) WHERE kind = 'assistant'",
         ]
         for ddl in migrations:
             try:

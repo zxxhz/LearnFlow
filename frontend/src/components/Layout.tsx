@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, getRelayConfig, getServerSystemVersion } from "../lib/api";
@@ -287,9 +287,21 @@ export default function Layout() {
   // v0.5.0 全局 AI 助教：任意页面 Ctrl+J 唤起 / Esc 关闭（global 会话，跨课程提问与学情咨询）
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantClosing, setAssistantClosing] = useState(false);
+  // 关闭动画定时器须可取消：关后 300ms 内重开时，陈旧回调会把刚滑入的面板再次关掉（v0.5.1 体检 P2）
+  const assistantCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const openGlobalAssistant = () => {
+    if (assistantCloseTimerRef.current) {
+      clearTimeout(assistantCloseTimerRef.current);
+      assistantCloseTimerRef.current = null;
+    }
+    setAssistantClosing(false);
+    setAssistantOpen(true);
+  };
   const closeGlobalAssistant = () => {
     setAssistantClosing(true);
-    setTimeout(() => {
+    if (assistantCloseTimerRef.current) clearTimeout(assistantCloseTimerRef.current);
+    assistantCloseTimerRef.current = setTimeout(() => {
+      assistantCloseTimerRef.current = null;
       setAssistantOpen(false);
       setAssistantClosing(false);
     }, 300);
@@ -309,8 +321,7 @@ export default function Layout() {
           return;
         }
         e.preventDefault();
-        setAssistantClosing(false);
-        setAssistantOpen(true);
+        openGlobalAssistant();
       } else if (e.key === "Escape" && assistantOpen) {
         closeGlobalAssistant();
       }
@@ -378,7 +389,7 @@ export default function Layout() {
                 </svg>
               </button>
             </div>
-            <NavLinks onOpenAssistant={() => setAssistantOpen(true)} />
+            <NavLinks onOpenAssistant={openGlobalAssistant} />
             <NavActions />
             <div className="flex flex-col gap-2 border-t border-gray-100 dark:border-gray-800 p-3">
               <div className="flex items-center justify-between">
@@ -404,7 +415,7 @@ export default function Layout() {
         <MobileNavDrawer
           open={navOpen}
           onClose={() => setNavOpen(false)}
-          onOpenAssistant={() => setAssistantOpen(true)}
+          onOpenAssistant={openGlobalAssistant}
         />
       )}
 

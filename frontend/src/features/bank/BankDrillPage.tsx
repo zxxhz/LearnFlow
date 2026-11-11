@@ -98,12 +98,24 @@ export default function BankDrillPage() {
   // v0.5.0 统一 AI 助教（bank_question 会话：单题连续追问，支持画导图/关联已学课程）
   const [assistant, setAssistant] = useState<{ scene: AssistantSceneContext; label: string } | null>(null);
   const [assistantClosing, setAssistantClosing] = useState(false);
+  // 关闭动画定时器须可取消：关后 300ms 内再开时陈旧回调会把面板再次关掉（v0.5.1 体检 P2）
+  const assistantCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const closeAssistant = () => {
     setAssistantClosing(true);
-    setTimeout(() => {
+    if (assistantCloseTimerRef.current) clearTimeout(assistantCloseTimerRef.current);
+    assistantCloseTimerRef.current = setTimeout(() => {
+      assistantCloseTimerRef.current = null;
       setAssistant(null);
       setAssistantClosing(false);
     }, 300);
+  };
+  const openAssistant = (scene: AssistantSceneContext, label: string) => {
+    if (assistantCloseTimerRef.current) {
+      clearTimeout(assistantCloseTimerRef.current);
+      assistantCloseTimerRef.current = null;
+    }
+    setAssistantClosing(false);
+    setAssistant({ scene, label });
   };
 
   const handleAddSuccess = (addedCount: number) => {
@@ -389,12 +401,12 @@ export default function BankDrillPage() {
             onAnswered={(r) => onAnswered(current.id, r)}
             onQuestionUpdated={handleQuestionUpdated}
             onAskAssistant={(userAnswer, judgeStatus) => {
-              setAssistant({ scene: {
+              openAssistant({
                 kind: "bank",
                 bank_question_id: current.id,
                 user_answer: userAnswer.join(",") || undefined,
                 judge_status: judgeStatus,
-              }, label: `📝 题库第 ${current.seq} 题` });
+              }, `📝 题库第 ${current.seq} 题`);
             }}
           />
         </div>

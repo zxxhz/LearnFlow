@@ -807,6 +807,12 @@ export const api = {
         onEvent,
         signal
       ),
+    /** 落学员对模型自主沙箱运行的授权决定（remember=true 后本会话不再逐次询问） */
+    confirmTool: (conversationId: string, body: { approve: boolean; remember?: boolean }) =>
+      request<{ ok: boolean }>(`/conversations/${conversationId}/tool-confirm`, {
+        method: "POST",
+        ...jsonBody(body),
+      }),
   },
   knowledgePoints: {
     forDoc: (docId: string) =>
