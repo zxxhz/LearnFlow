@@ -280,6 +280,129 @@ async def get_server_settings():
 
 
 # ----------------------------------------------------
+# 3.1 学习者认知画像与学情中枢（支持云端 SQLite 离线直读与双向同步）
+# ----------------------------------------------------
+@app.get("/api/study/profile")
+async def get_study_profile():
+    """获取学习者认知画像与认知盲区。
+
+    若本地 Worker 在线优先代理获取最新数据；
+    若 Worker 离线，直接从云端 SQLite 读取已同步的画像与盲区，避免纯 Web 模式下 503 报错。
+    """
+    if tunnel_manager.is_worker_online():
+        try:
+            status_code, _, body = await tunnel_manager.dispatch_full("GET", "/api/study/profile")
+            return Response(content=body, status_code=status_code, media_type="application/json")
+        except Exception:
+            pass
+
+    return await relay_db.get_learner_profile()
+
+
+@app.put("/api/study/profile")
+async def update_study_profile(request: Request):
+    """更新学习者画像（背景描述与苏格拉底模式）。"""
+    try:
+        data = await request.json()
+    except Exception as e:
+        logger.warning("解析画像请求体异常: %s", e)
+        data = {}
+
+    bg = data.get("background_summary")
+    sm = data.get("socratic_mode")
+
+    if tunnel_manager.is_worker_online():
+        try:
+            body_bytes = json.dumps(data).encode("utf-8")
+            status_code, _, resp_body = await tunnel_manager.dispatch_full(
+                "PUT", "/api/study/profile", body=body_bytes
+            )
+            # 本地更新成功后，也同步更新云端数据库
+            await relay_db.update_learner_profile(background_summary=bg, socratic_mode=sm)
+            return Response(content=resp_body, status_code=status_code, media_type="application/json")
+        except Exception:
+            pass
+
+    # 云端独立执行
+    return await relay_db.update_learner_profile(background_summary=bg, socratic_mode=sm)
+
+
+@app.post("/api/study/profile/reset")
+@app.delete("/api/study/profile/reset")
+async def reset_study_profile():
+    """重置学习者画像与认知盲区。"""
+    if tunnel_manager.is_worker_online():
+        try:
+            status_code, _, body = await tunnel_manager.dispatch_full("POST", "/api/study/profile/reset")
+            await relay_db.reset_learner_profile()
+            return Response(content=body, status_code=status_code, media_type="application/json")
+        except Exception:
+            pass
+
+    return await relay_db.reset_learner_profile()
+
+
+@app.delete("/api/study/profile/misconceptions/{misconception_id}")
+async def delete_study_misconception(misconception_id: str):
+    """移除单个认知盲区。"""
+    if tunnel_manager.is_worker_online():
+        try:
+            status_code, _, body = await tunnel_manager.dispatch_full(
+                "DELETE", f"/api/study/profile/misconceptions/{misconception_id}"
+            )
+            await relay_db.delete_misconception(misconception_id)
+            return Response(content=body, status_code=status_code, media_type="application/json")
+        except Exception:
+            pass
+
+    await relay_db.delete_misconception(misconception_id)
+    return {"ok": True}
+
+
+@app.get("/api/study/today")
+async def get_study_today():
+    """获取今日学情行动中枢数据。"""
+    if tunnel_manager.is_worker_online():
+        try:
+            status_code, _, body = await tunnel_manager.dispatch_full("GET", "/api/study/today")
+            return Response(content=body, status_code=status_code, media_type="application/json")
+        except Exception:
+            pass
+
+    # 云端独立模式下的学情中枢
+    profile = await relay_db.get_learner_profile()
+    misconceptions = profile.get("misconceptions", [])
+    active_mis = [
+        {"id": m.get("id", ""), "topic": m.get("topic", ""), "tag": m.get("tag")}
+        for m in misconceptions
+        if m.get("status", "active") == "active"
+    ][:5]
+
+    courses = await relay_db.list_courses()
+    last_read = None
+    if courses:
+        c = courses[0]
+        docs = c.get("documents", [])
+        if docs:
+            d = docs[0]
+            last_read = {
+                "course_id": c["id"],
+                "course_title": c["title"],
+                "document_id": d.get("id") or d.get("document_id", ""),
+                "chapter_index": d.get("chapter_index", 0),
+                "chapter_title": d.get("title", ""),
+            }
+
+    db_stats = await relay_db.get_db_stats()
+    return {
+        "last_read": last_read,
+        "hard_bones": [],
+        "bank_wrong_count": db_stats.get("mistakes", 0),
+        "active_misconceptions": active_mis,
+    }
+
+
+# ----------------------------------------------------
 # 4. 智能路由：AI 生成、助教与沙箱执行（接入 dispatch_ai_request 统一调度）
 # ----------------------------------------------------
 _AI_KEYWORDS = (

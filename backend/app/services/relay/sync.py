@@ -104,12 +104,19 @@ async def collect_local_sync_payload(since: str | None = None) -> dict[str, Any]
                     "created_at": ea.get("created_at"),
                 })
 
-        # 5. 认知画像与薄弱点标签
-        profile_res = await db.scalar(select(LearnerProfile).where(LearnerProfile.id == "local"))
-        learner_profile = _model_to_dict(profile_res) if profile_res else None
+        # 5. 认知画像与薄弱点标签（完整采集画像与所有盲区记录，保障云端与本地一致）
+        from app.services.profile import get_or_create_profile
+        try:
+            profile_res = await get_or_create_profile(db)
+            learner_profile = _model_to_dict(profile_res)
+        except Exception:
+            profile_res = await db.scalar(select(LearnerProfile).where(LearnerProfile.id == "local"))
+            learner_profile = _model_to_dict(profile_res) if profile_res else None
 
         misconceptions_res = await db.scalars(select(LearnerMisconception))
         learner_misconceptions = [_model_to_dict(m) for m in misconceptions_res]
+        if learner_profile is not None:
+            learner_profile["misconceptions"] = learner_misconceptions
 
         # 6. 划线批注
         annotations_res = await db.scalars(select(Annotation))
@@ -176,12 +183,15 @@ async def push_local_data_to_server(
             if resp.status_code == 200:
                 synced_at = payload["synced_at"]
                 update_relay_config(last_sync_at=synced_at)
-                summary = (
-                    f"课程 {len(payload['courses'])} 个，"
-                    f"章节 {len(payload['documents'])} 篇，"
-                    f"题库 {len(payload['banks'])} 个，"
-                    f"导图 {len(payload['mindmaps'])} 幅"
-                )
+                summary_items = [
+                    f"课程 {len(payload['courses'])} 个",
+                    f"章节 {len(payload['documents'])} 篇",
+                    f"题库 {len(payload['banks'])} 个",
+                    f"导图 {len(payload['mindmaps'])} 幅",
+                ]
+                if payload.get("learner_profile"):
+                    summary_items.append("认知画像已同步")
+                summary = "，".join(summary_items)
                 logger.info("数据同步成功: %s", summary)
                 return {
                     "ok": True,
@@ -477,7 +487,7 @@ async def pull_cloud_data_to_local(
                     db.add(new_m)
                 counts["mindmaps"] += 1
 
-            # 7. 合并学习者画像
+            # 7. 合并学习者画像与认知盲区
             if learner_profile:
                 prof = await db.scalar(select(LearnerProfile).where(LearnerProfile.id == "local"))
                 data_dict = (
@@ -500,17 +510,47 @@ async def pull_cloud_data_to_local(
                     )
                     db.add(new_prof)
 
+                # 合并认知盲区
+                misconceptions_list = data_dict.get("misconceptions") or data.get("learner_misconceptions") or []
+                for m in misconceptions_list:
+                    mid = m.get("id")
+                    if not mid:
+                        continue
+                    existing_m = await db.get(LearnerMisconception, mid)
+                    if existing_m:
+                        existing_m.topic = m.get("topic", existing_m.topic)
+                        existing_m.tag = m.get("tag", existing_m.tag)
+                        existing_m.evidence = m.get("evidence", existing_m.evidence)
+                        existing_m.status = m.get("status", existing_m.status)
+                        existing_m.scope = m.get("scope", existing_m.scope)
+                    else:
+                        new_m = LearnerMisconception(
+                            id=mid,
+                            topic=m.get("topic", ""),
+                            tag=m.get("tag", ""),
+                            evidence=m.get("evidence", ""),
+                            status=m.get("status", "active"),
+                            resolved_at=m.get("resolved_at"),
+                            scope=m.get("scope", "general"),
+                            source_type=m.get("source_type", ""),
+                            source_id=m.get("source_id", ""),
+                        )
+                        db.add(new_m)
+
             await db.commit()
 
         synced_at = data.get("synced_at") or utcnow_iso()
         update_relay_config(last_sync_at=synced_at)
-        summary = (
-            f"课程 {counts['courses']} 个，"
-            f"文档 {counts['documents']} 篇，"
-            f"题库 {counts['banks']} 个，"
-            f"题目 {counts['questions']} 道，"
-            f"导图 {counts['mindmaps']} 幅"
-        )
+        summary_items = [
+            f"课程 {counts['courses']} 个",
+            f"文档 {counts['documents']} 篇",
+            f"题库 {counts['banks']} 个",
+            f"题目 {counts['questions']} 道",
+            f"导图 {counts['mindmaps']} 幅",
+        ]
+        if learner_profile:
+            summary_items.append("认知画像已同步")
+        summary = "，".join(summary_items)
         logger.info("云端数据拉取并合并成功: %s", summary)
         return {
             "ok": True,

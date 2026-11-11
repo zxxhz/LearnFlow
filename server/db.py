@@ -457,6 +457,9 @@ class RelayDatabase:
             # 8. Learner Profile
             profile = payload.get("learner_profile")
             if profile and isinstance(profile, dict):
+                # 附带将 learner_misconceptions 一并存入 profile，保障纯 Web 端离线直读完整数据
+                if not profile.get("misconceptions") and payload.get("learner_misconceptions"):
+                    profile["misconceptions"] = payload.get("learner_misconceptions")
                 cursor.execute(
                     """
                     INSERT INTO learner_profile (id, data, updated_at)
@@ -467,6 +470,7 @@ class RelayDatabase:
                     """,
                     (json.dumps(profile, ensure_ascii=False), now_str),
                 )
+                counts["learner_profile"] = 1
 
             # 更新元信息
             cursor.execute(
@@ -902,11 +906,142 @@ class RelayDatabase:
     async def get_mindmap(self, mindmap_id: str) -> Optional[dict[str, Any]]:
         return await asyncio.to_thread(self.get_mindmap_sync, mindmap_id)
 
+    def get_learner_profile_sync(self) -> dict[str, Any]:
+        """获取学习者认知画像与认知盲区（供云端 Web 离线或独立模式直接使用）。"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT data, updated_at FROM learner_profile WHERE id = 'local'")
+            row = cursor.fetchone()
+            if row and row[0]:
+                try:
+                    data = json.loads(row[0])
+                    if isinstance(data, dict):
+                        data.setdefault("id", "local")
+                        data.setdefault("background_summary", "")
+                        data.setdefault("socratic_mode", True)
+                        data.setdefault("misconceptions", [])
+                        data.setdefault("updated_at", row[1] or _now_iso())
+                        return data
+                except Exception:
+                    pass
+            return {
+                "id": "local",
+                "background_summary": "",
+                "socratic_mode": True,
+                "misconceptions": [],
+                "updated_at": _now_iso(),
+            }
+
+    async def get_learner_profile(self) -> dict[str, Any]:
+        return await asyncio.to_thread(self.get_learner_profile_sync)
+
+    def update_learner_profile_sync(
+        self,
+        background_summary: Optional[str] = None,
+        socratic_mode: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        """更新学习者认知画像设置（背景描述与苏格拉底模式）。"""
+        current = self.get_learner_profile_sync()
+        if background_summary is not None:
+            current["background_summary"] = str(background_summary).strip()
+        if socratic_mode is not None:
+            current["socratic_mode"] = bool(socratic_mode)
+        now_str = _now_iso()
+        current["updated_at"] = now_str
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO learner_profile (id, data, updated_at)
+                VALUES ('local', ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    data = excluded.data,
+                    updated_at = excluded.updated_at
+                """,
+                (json.dumps(current, ensure_ascii=False), now_str),
+            )
+            conn.commit()
+        return current
+
+    async def update_learner_profile(
+        self,
+        background_summary: Optional[str] = None,
+        socratic_mode: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self.update_learner_profile_sync, background_summary, socratic_mode
+        )
+
+    def reset_learner_profile_sync(self) -> dict[str, Any]:
+        """重置学习者画像并清空盲区。"""
+        now_str = _now_iso()
+        fresh = {
+            "id": "local",
+            "background_summary": "",
+            "socratic_mode": True,
+            "misconceptions": [],
+            "updated_at": now_str,
+        }
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO learner_profile (id, data, updated_at)
+                VALUES ('local', ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    data = excluded.data,
+                    updated_at = excluded.updated_at
+                """,
+                (json.dumps(fresh, ensure_ascii=False), now_str),
+            )
+            conn.commit()
+        return fresh
+
+    async def reset_learner_profile(self) -> dict[str, Any]:
+        return await asyncio.to_thread(self.reset_learner_profile_sync)
+
+    def delete_misconception_sync(self, misconception_id: str) -> bool:
+        """从学习者画像中移除单个认知盲区。"""
+        current = self.get_learner_profile_sync()
+        misconceptions = current.get("misconceptions", [])
+        new_misconceptions = [m for m in misconceptions if m.get("id") != misconception_id]
+        current["misconceptions"] = new_misconceptions
+        now_str = _now_iso()
+        current["updated_at"] = now_str
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO learner_profile (id, data, updated_at)
+                VALUES ('local', ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    data = excluded.data,
+                    updated_at = excluded.updated_at
+                """,
+                (json.dumps(current, ensure_ascii=False), now_str),
+            )
+            conn.commit()
+        return True
+
+    async def delete_misconception(self, misconception_id: str) -> bool:
+        return await asyncio.to_thread(self.delete_misconception_sync, misconception_id)
+
     def get_db_stats_sync(self) -> dict[str, int]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             stats = {}
-            for table in ("courses", "documents", "question_banks", "bank_questions", "mistakes", "mindmaps", "annotations"):
+            for table in (
+                "courses",
+                "documents",
+                "question_banks",
+                "bank_questions",
+                "mistakes",
+                "mindmaps",
+                "annotations",
+                "learner_profile",
+            ):
                 cursor.execute(f"SELECT COUNT(*) FROM {table}")
                 stats[table] = cursor.fetchone()[0]
             return stats

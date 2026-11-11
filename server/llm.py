@@ -164,6 +164,25 @@ class ServerLLMService:
             data = body
 
         system_prompt = "你是 LearnFlow 智能学习导师。用生动通俗的语言讲解，支持 LaTeX 格式公式与 Markdown 排版。"
+
+        # 注入云端存储的学习者认知画像（因材施教与薄弱点针对性引导）
+        try:
+            from server.db import relay_db
+            profile = relay_db.get_learner_profile_sync()
+            bg = profile.get("background_summary", "")
+            if bg:
+                system_prompt += f"\n[学习者认知背景]：{bg}"
+            misconceptions = [
+                m.get("topic")
+                for m in profile.get("misconceptions", [])
+                if m.get("status", "active") == "active" and m.get("topic")
+            ]
+            if misconceptions:
+                system_prompt += f"\n[近期认知薄弱点]：{', '.join(misconceptions[:5])}（请在讲解中针对性巩固）。"
+            if profile.get("socratic_mode", True) and any(kw in path for kw in ("ask", "chat", "tutor")):
+                system_prompt += "\n[导学模式]：苏格拉底式启发引导为主，优先反问引导思考，避免直接抛出完整答案。"
+        except Exception:
+            pass
         messages = []
 
         # 1. 助教答疑 /api/courses/{id}/ask 或 /api/tutor/chat

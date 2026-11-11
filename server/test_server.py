@@ -591,6 +591,28 @@ def test_cloud_ai_and_sync():
         assert any(mm["id"] == "mm-pull-1" for mm in pull_data["mindmaps"])
         assert pull_data["learner_profile"]["level"] == "advanced"
 
+        # 4. 测试 /api/study/profile 离线读取与修改
+        r_prof = client.get("/api/study/profile")
+        assert r_prof.status_code == 200
+        prof_data = r_prof.json()
+        assert prof_data["id"] == "local"
+        assert "background_summary" in prof_data
+
+        # 测试 PUT 修改画像
+        r_update_prof = client.put(
+            "/api/study/profile",
+            json={"background_summary": "测试云端画像修改", "socratic_mode": False},
+        )
+        assert r_update_prof.status_code == 200
+        assert r_update_prof.json()["background_summary"] == "测试云端画像修改"
+        assert r_update_prof.json()["socratic_mode"] is False
+
+        # 测试 GET /api/study/today 学情中枢
+        r_today = client.get("/api/study/today")
+        assert r_today.status_code == 200
+        today_data = r_today.json()
+        assert "active_misconceptions" in today_data
+
     finally:
         server_llm_service.stream_chat = original_stream_chat
         settings.ai_mode = "auto"
