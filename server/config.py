@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 from typing import Any, Literal
 
+# 服务端版本号（随发版工作流 sync_versions 同步更新，亦支持容器环境变量 SERVER_VERSION 显式覆盖）
+SERVER_VERSION: str = "0.4.75"
+
 def _get_bool_env(name: str, default: bool = False) -> bool:
     val = os.getenv(name)
     if val is None:
@@ -65,7 +68,7 @@ try:
         server_llm_model: str = os.getenv("SERVER_LLM_MODEL", os.getenv("LLM_MODEL", "deepseek-chat")).strip()
 
         # 系统与在线更新配置（固定官方仓库与现行版本，支持安全隔离的 Watchtower 代理更新）
-        server_version: str = "0.4.73"
+        server_version: str = os.getenv("SERVER_VERSION", SERVER_VERSION)
         github_repo: str = "zxxhz/LearnFlow"
         watchtower_url: str = os.getenv("WATCHTOWER_URL", "http://watchtower:8080/v1/update").strip()
         watchtower_token: str = os.getenv("WATCHTOWER_TOKEN", os.getenv("WATCHTOWER_HTTP_API_TOKEN", "learnflow_update_secret")).strip()
@@ -121,7 +124,9 @@ except ImportError:
         server_llm_model: str = Field(
             default_factory=lambda: os.getenv("SERVER_LLM_MODEL", os.getenv("LLM_MODEL", "deepseek-chat")).strip()
         )
-        server_version: str = "0.4.73"
+        server_version: str = Field(
+            default_factory=lambda: os.getenv("SERVER_VERSION", SERVER_VERSION)
+        )
         github_repo: str = "zxxhz/LearnFlow"
         watchtower_url: str = Field(
             default_factory=lambda: os.getenv("WATCHTOWER_URL", "http://watchtower:8080/v1/update").strip()

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-"""八处版本号同步：config.py / pyproject.toml / 两个 package.json / tauri.conf.json /
-Cargo.toml / sw.js CACHE_NAME / Cargo.lock learnflow-desktop。
+"""九处版本号同步：config.py / pyproject.toml / 两个 package.json / tauri.conf.json /
+Cargo.toml / sw.js CACHE_NAME / Cargo.lock learnflow-desktop / server/config.py。
 
 用法：python scripts/sync_versions.py <version> [--dry]
   --dry  只校验各文件模式命中并打印将替换的内容，不写盘。
@@ -71,6 +71,12 @@ def targets(version: str) -> list[tuple[Path, str, str, str]]:
             rf"\g<1>{version}\g<2>",
             "Cargo.lock learnflow-desktop",
         ),
+        (
+            REPO / "server/config.py",
+            rf'SERVER_VERSION: str = "{V}"',
+            f'SERVER_VERSION: str = "{version}"',
+            "server SERVER_VERSION",
+        ),
     ]
 
 
@@ -137,7 +143,7 @@ def main() -> int:
             return 1
         print(f"  ✅ {label}")
 
-    print(f"✅ 八处版本号已同步为 {version}")
+    print(f"✅ 九处版本号已同步为 {version}")
     return 0
 
 
