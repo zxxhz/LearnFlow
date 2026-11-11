@@ -24,6 +24,7 @@ import type {
 } from "../../lib/types";
 import { Button, Input, Spinner } from "../../components/ui";
 import { showToast } from "../../lib/toast";
+import { formatSyncTime } from "../../lib/format";
 
 const SERVER_PROVIDER_PRESETS = [
   { label: "DeepSeek", base_url: "https://api.deepseek.com/v1", model: "deepseek-chat" },
@@ -888,7 +889,7 @@ export default function RelaySettingsCard() {
                 <div className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
                   <span>🕒 上次同步时间：</span>
                   <span className="font-mono text-gray-700 dark:text-gray-300 font-medium">
-                    {lastSyncAt ? lastSyncAt : "尚未同步"}
+                    {lastSyncAt ? formatSyncTime(lastSyncAt) : "尚未同步"}
                   </span>
                 </div>
               </div>

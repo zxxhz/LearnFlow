@@ -1,5 +1,6 @@
 """针对 server 服务端各模块的完整自动化测试套件。"""
 import asyncio
+import gc
 import json
 import os
 import shutil
@@ -449,7 +450,7 @@ def test_database_banks_stats():
 
     from server.db import RelayDatabase
 
-    tmp_dir = tempfile.mkdtemp(prefix="lf-stats-test-")
+    tmp_dir = tempfile.mkdtemp(prefix="lf-stats-test-", dir=Path(__file__).resolve().parent / "data")
     db = RelayDatabase(db_path=Path(tmp_dir) / "relay.db")
     db.init_db_sync()
     try:
@@ -496,6 +497,8 @@ def test_database_banks_stats():
         assert detail["stats"]["question_count"] == 4
         assert detail["stats"]["new_count"] == 1
     finally:
+        del db
+        gc.collect()
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     print("✅ 云端题库 stats 聚合测试全部通过！")

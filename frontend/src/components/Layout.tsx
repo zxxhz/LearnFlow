@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "../lib/api";
-import type { UpdateCheckResult } from "../lib/types";
+import { api, getRelayConfig, getServerSystemVersion } from "../lib/api";
+import type { UpdateCheckResult, ServerSystemVersion } from "../lib/types";
 import { useTheme } from "../lib/theme";
 import { safeSessionStorage, safeStorage } from "../lib/safeStorage";
 import { isTauri, openExternalUrl } from "../lib/updater";
 import UpdateDialog from "./UpdateDialog";
+import ServerUpdateDialog from "./ServerUpdateDialog";
 import { Toast } from "./ui";
 import type { ToastPayload } from "../lib/toast";
 import RelayStatusBadge from "./RelayStatusBadge";
@@ -179,28 +180,70 @@ export default function Layout() {
   // 与阅读页共享同一主题订阅，阅读页内切换后侧栏按钮状态保持同步
   const { theme, toggle: toggleTheme } = useTheme();
   const [dialogUpdate, setDialogUpdate] = useState<UpdateCheckResult | null>(null);
+  const [dialogServerUpdate, setDialogServerUpdate] = useState<ServerSystemVersion | null>(null);
 
-  // 打开应用时静默检查新版本（后端节流 1h；失败静默）→ 发现更新弹窗；
-  // 同一会话内点过「稍后」的版本不再自动弹（PRD 实现备注 15）
+  // 获取中转配置以区分云端 Web 服务端 vs 本地桌面客户端
+  const { data: relayConfig } = useQuery({
+    queryKey: ["relay-config"],
+    queryFn: getRelayConfig,
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const isRelayServer = Boolean(
+    relayConfig?.is_relay_server || relayConfig?.service === "LearnFlow-Relay-Server"
+  );
+
+  // 1. 桌面端应用内检查更新（仅在本地桌面客户端启用；云端 Web 服务端模式下彻底禁用，避免提示下载 exe）
   const { data: update } = useQuery<UpdateCheckResult>({
     queryKey: ["update-check"],
     queryFn: () => api.update.check(false),
     retry: false,
     staleTime: Infinity,
     refetchOnWindowFocus: false,
+    enabled: !isRelayServer,
   });
 
   useEffect(() => {
-    if (update?.has_update && update.latest && safeSessionStorage.get("update-dismissed") !== update.latest) {
+    if (!isRelayServer && update?.has_update && update.latest && safeSessionStorage.get("update-dismissed") !== update.latest) {
       setDialogUpdate(update);
     }
-  }, [update]);
+  }, [isRelayServer, update]);
+
+  // 2. 云端服务端在线更新检查（仅在直接访问云端服务端 Web 模式下启用）
+  const { data: serverUpdate } = useQuery<ServerSystemVersion>({
+    queryKey: ["server-system-version"],
+    queryFn: getServerSystemVersion,
+    enabled: isRelayServer,
+    staleTime: 60_000,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+
+  useEffect(() => {
+    if (
+      isRelayServer &&
+      serverUpdate?.has_update &&
+      serverUpdate.latest_version &&
+      safeSessionStorage.get("server-update-dismissed") !== serverUpdate.latest_version
+    ) {
+      setDialogServerUpdate(serverUpdate);
+    }
+  }, [isRelayServer, serverUpdate]);
 
   // 设置页「检查更新」发现新版本 → 强制弹窗（无视本会话已忽略）
   useEffect(() => {
     const onFound = (e: Event) => setDialogUpdate((e as CustomEvent<UpdateCheckResult>).detail);
     window.addEventListener("learnflow:update-found", onFound);
     return () => window.removeEventListener("learnflow:update-found", onFound);
+  }, []);
+
+  // 设置页或外部触发服务端版本更新弹窗
+  useEffect(() => {
+    const onServerFound = (e: Event) =>
+      setDialogServerUpdate((e as CustomEvent<ServerSystemVersion>).detail);
+    window.addEventListener("learnflow:server-update-found", onServerFound);
+    return () => window.removeEventListener("learnflow:server-update-found", onServerFound);
   }, []);
 
   // 全局轻量 Toast 反馈（导出完成、系统提示等）
@@ -236,6 +279,13 @@ export default function Layout() {
   const closeUpdateDialog = () => {
     if (dialogUpdate?.latest) safeSessionStorage.set("update-dismissed", dialogUpdate.latest);
     setDialogUpdate(null);
+  };
+
+  const closeServerUpdateDialog = () => {
+    if (dialogServerUpdate?.latest_version) {
+      safeSessionStorage.set("server-update-dismissed", dialogServerUpdate.latest_version);
+    }
+    setDialogServerUpdate(null);
   };
 
   return (
@@ -346,7 +396,13 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
-      <UpdateDialog update={dialogUpdate} onClose={closeUpdateDialog} />
+      {!isRelayServer && <UpdateDialog update={dialogUpdate} onClose={closeUpdateDialog} />}
+      {isRelayServer && (
+        <ServerUpdateDialog
+          update={dialogServerUpdate}
+          onClose={closeServerUpdateDialog}
+        />
+      )}
       {globalToast && (
         <Toast
           message={globalToast.message}

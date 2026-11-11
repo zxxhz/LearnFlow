@@ -1,7 +1,7 @@
 // 设置页：LLM 配置（OpenAI 兼容）+ 学习偏好 + 数据目录（PRD §5.7）
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "../../lib/api";
+import { api, getRelayConfig, getServerSystemVersion } from "../../lib/api";
 import type { AnnotationColor, AdhdMode, LLMConfig, Preferences, SceneLLMConfig, SceneName, SettingsData } from "../../lib/types";
 import DataSafetySection from "./DataSafetySection";
 import RelaySettingsCard from "./RelaySettingsCard";
@@ -33,6 +33,18 @@ const EMPTY_SCENE: SceneLLMConfig = { base_url: "", api_key: "", model: "" };
 export default function SettingsPage() {
   const queryClient = useQueryClient();
   const { data: settings, isLoading } = useQuery({ queryKey: ["settings"], queryFn: api.settings.get });
+
+  // 获取中转配置以区分云端 Web 服务端 vs 本地桌面客户端
+  const { data: relayConfig } = useQuery({
+    queryKey: ["relay-config"],
+    queryFn: getRelayConfig,
+    staleTime: 60_000,
+    retry: 1,
+  });
+
+  const isRelayServer = Boolean(
+    relayConfig?.is_relay_server || relayConfig?.service === "LearnFlow-Relay-Server"
+  );
 
   const [llm, setLlm] = useState<LLMConfig>({ base_url: "", api_key: "", model: "" });
   const emptyScenes = () =>
@@ -126,16 +138,29 @@ export default function SettingsPage() {
     setCheckingUpdate(true);
     setUpdateResult("");
     try {
-      const r = await api.update.check(force);
-      if (r.has_update) {
-        // 更新全局缓存并通知 Layout 弹出更新弹窗（无视本会话已忽略）
-        queryClient.setQueryData(["update-check"], r);
-        window.dispatchEvent(new CustomEvent("learnflow:update-found", { detail: r }));
-        setUpdateResult(`🎉 有新版本 ${r.latest}（当前 ${r.current}）`);
+      if (isRelayServer) {
+        // 服务端模式：检查云端服务端系统版本，避免弹窗提示下载桌面安装包
+        const serverVer = await getServerSystemVersion();
+        if (serverVer.has_update) {
+          queryClient.setQueryData(["server-system-version"], serverVer);
+          window.dispatchEvent(new CustomEvent("learnflow:server-update-found", { detail: serverVer }));
+          setUpdateResult(`🎉 服务端有新版本 ${serverVer.latest_version}（当前 ${serverVer.current_version}）`);
+        } else {
+          setUpdateResult(`✅ 服务端已是最新版本（${serverVer.current_version}）`);
+        }
       } else {
-        setUpdateResult(
-          r.error ? `ℹ️ ${r.error}` : `✅ 已是最新版本（${r.current}）`
-        );
+        // 桌面/局域网模式：检查桌面客户端更新
+        const r = await api.update.check(force);
+        if (r.has_update) {
+          // 更新全局缓存并通知 Layout 弹出更新弹窗（无视本会话已忽略）
+          queryClient.setQueryData(["update-check"], r);
+          window.dispatchEvent(new CustomEvent("learnflow:update-found", { detail: r }));
+          setUpdateResult(`🎉 有新版本 ${r.latest}（当前 ${r.current}）`);
+        } else {
+          setUpdateResult(
+            r.error ? `ℹ️ ${r.error}` : `✅ 已是最新版本（${r.current}）`
+          );
+        }
       }
     } catch (e) {
       setUpdateResult(`❌ ${(e as Error).message}`);
@@ -145,8 +170,16 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
-    api.update.version().then((v) => setVersion(v.version)).catch(() => {});
-  }, []);  const testLlm = async () => {
+    if (isRelayServer) {
+      getServerSystemVersion()
+        .then((s) => setVersion(s.current_version))
+        .catch(() => {});
+    } else {
+      api.update.version()
+        .then((v) => setVersion(v.version))
+        .catch(() => {});
+    }
+  }, [isRelayServer]);  const testLlm = async () => {
     setTesting(true);
     setTestResult("");
     try {
@@ -567,8 +600,8 @@ export default function SettingsPage() {
       {/* 云端服务端在线更新 */}
       <ServerUpdateCard />
 
-      {/* 下载源测速与智能路由 */}
-      <DownloadMirrorsSection />
+      {/* 下载源测速与智能路由（仅桌面客户端/局域网模式展示，云端VPS网页端隐藏） */}
+      {!isRelayServer && <DownloadMirrorsSection />}
 
       {/* 数据 */}
       <section className="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6">
