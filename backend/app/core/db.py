@@ -88,6 +88,10 @@ async def init_db() -> None:
             "ALTER TABLE learner_misconceptions ADD COLUMN source_id VARCHAR(64) DEFAULT ''",
             # v0.4.69 出题落库前沙箱自验结果（0 存量未验 / 1 已实测 / 2 输出已校准）
             "ALTER TABLE exercises ADD COLUMN self_verified INTEGER DEFAULT 0",
+            # v0.5.0 统一 AI 助教会话归属域（document / bank_question / global）
+            "ALTER TABLE conversations ADD COLUMN context_type VARCHAR(20) DEFAULT ''",
+            "ALTER TABLE conversations ADD COLUMN context_id VARCHAR(64) DEFAULT ''",
+            "CREATE INDEX IF NOT EXISTS ix_conversations_context_id ON conversations(context_id)",
         ]
         for ddl in migrations:
             try:

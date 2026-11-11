@@ -1,9 +1,10 @@
-"""学习 Agent 本地工具箱：提供受限沙箱运行、数学函数绘图和关卡自省能力。"""
+"""学习 Agent 本地工具箱：提供受限沙箱运行、数学函数绘图、关卡自省与旧知/错题检索能力。"""
 import asyncio
 import json
 import logging
 from typing import Any
 
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.execution.runner import run_code
@@ -81,15 +82,233 @@ AGENT_TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "lookup_learned_section",
+            "description": (
+                "检索学员已学过的课程章节原文片段（按章节标题/知识点标题/正文关键词匹配）。"
+                "用于引用学员以前学过的具体例子、定义或推导来类比当前新概念。"
+                "注意：先扫视系统提示中的已学知识骨架目录选好类比锚点，再用本工具取细节。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "检索关键词，如知识点名、章节标题或术语（2~12 字效果最佳）",
+                    }
+                },
+                "required": ["keyword"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "lookup_past_mistakes",
+            "description": (
+                "检索学员以前做错的课程练习与题库错题（按题目标题/题面/作答内容关键词匹配）。"
+                "用于发现当前卡点与历史错误的关联，提醒学员不要再踩同一个坑。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "keyword": {
+                        "type": "string",
+                        "description": "检索关键词，如错误主题、知识点名或术语",
+                    }
+                },
+                "required": ["keyword"],
+            },
+        },
+    },
 ]
+
+
+def _clip(text: str, limit: int) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+async def _tool_lookup_learned_section(
+    db: AsyncSession, args: dict[str, Any]
+) -> dict[str, Any]:
+    from app.models import Document, KnowledgePoint, Section
+
+    keyword = str(args.get("keyword") or "").strip()
+    if not keyword or db is None:
+        return {"error": "缺少检索关键词或数据库上下文"}
+
+    exclude_doc = ""
+    ctx = args.get("_ctx") or {}
+    if isinstance(ctx, dict):
+        exclude_doc = str(ctx.get("exclude_document_id") or "")
+
+    like = f"%{keyword}%"
+    cond = [
+        Document.title.like(like),
+        Document.summary.like(like),
+        KnowledgePoint.title.like(like),
+        KnowledgePoint.summary.like(like),
+        Section.text_excerpt.like(like),
+        Section.heading_path.like(like),
+    ]
+    stmt = (
+        select(Section, Document)
+        .join(Document, Document.id == Section.document_id)
+        .outerjoin(KnowledgePoint, KnowledgePoint.document_id == Document.id)
+        .where(Document.status == "done", or_(*cond))
+        .order_by(Section.document_id, Section.order_index)
+        .limit(12)
+    )
+    if exclude_doc:
+        stmt = stmt.where(Section.document_id != exclude_doc)
+
+    rows = (await db.execute(stmt)).all()
+
+    hits: list[dict[str, Any]] = []
+    seen_docs: set[str] = set()
+    for sec, doc in rows:
+        if doc.id in seen_docs:
+            continue
+        seen_docs.add(doc.id)
+        heading = ""
+        try:
+            hp = json.loads(sec.heading_path) if sec.heading_path else []
+            heading = " > ".join(str(x) for x in hp)
+        except Exception:  # noqa: BLE001
+            heading = ""
+        excerpt = _clip(sec.text_excerpt or "", 500)
+        if not excerpt:
+            continue
+        references = [
+            {
+                "label": f"关联已学：《{doc.title}》" + (f" · {heading}" if heading else ""),
+                "href": f"/read/{doc.id}?section={sec.id}",
+            }
+        ]
+        hits.append(
+            {
+                "document_id": doc.id,
+                "document_title": doc.title,
+                "chapter_index": doc.chapter_index,
+                "heading": heading,
+                "excerpt": excerpt,
+                "references": references,
+            }
+        )
+        if len(hits) >= 3:
+            break
+
+    if not hits:
+        return {"status": "not_found", "message": f"没有在已学课程中检索到与「{keyword}」相关的章节"}
+    return {"status": "success", "hits": hits}
+
+
+async def _tool_lookup_past_mistakes(
+    db: AsyncSession, args: dict[str, Any]
+) -> dict[str, Any]:
+    from app.models import BankAttempt, BankQuestion, Document, Exercise, ExerciseAttempt, KnowledgePoint
+
+    keyword = str(args.get("keyword") or "").strip()
+    if not keyword or db is None:
+        return {"error": "缺少检索关键词或数据库上下文"}
+
+    like = f"%{keyword}%"
+    hits: list[dict[str, Any]] = []
+
+    # 课程练习错题（只看从未通过的最近一次失败作答）
+    ex_rows = (
+        await db.execute(
+            select(ExerciseAttempt, Exercise, Document)
+            .join(Exercise, Exercise.id == ExerciseAttempt.exercise_id)
+            .outerjoin(Document, Document.id == Exercise.document_id)
+            .outerjoin(KnowledgePoint, KnowledgePoint.id == Exercise.knowledge_point_id)
+            .where(
+                ExerciseAttempt.passed.is_(False),
+                or_(
+                    Exercise.title.like(like),
+                    Exercise.task_md.like(like),
+                    ExerciseAttempt.content.like(like),
+                    KnowledgePoint.title.like(like),
+                ),
+            )
+            .order_by(ExerciseAttempt.created_at.desc())
+            .limit(6)
+        )
+    ).all()
+    for att, ex, doc in ex_rows:
+        href = f"/read/{doc.id}?section={ex.knowledge_point_id}" if doc else ""
+        hits.append(
+            {
+                "source": "course_exercise",
+                "title": ex.title,
+                "course": doc.title if doc else "",
+                "task_excerpt": _clip(ex.task_md, 220),
+                "user_answer_excerpt": _clip(att.content, 220),
+                "created_at": att.created_at,
+                "references": [
+                    {
+                        "label": f"历史错题：{ex.title}" + (f"（《{doc.title}》）" if doc else ""),
+                        "href": href,
+                    }
+                ],
+            }
+        )
+        if len(hits) >= 3:
+            break
+
+    # 题库错题
+    if len(hits) < 3:
+        bank_rows = (
+            await db.execute(
+                select(BankAttempt, BankQuestion)
+                .join(BankQuestion, BankQuestion.id == BankAttempt.question_id)
+                .where(
+                    BankAttempt.passed.is_(False),
+                    or_(
+                        BankQuestion.title.like(like),
+                        BankQuestion.ai_explanation.like(like),
+                        BankQuestion.explanation.like(like),
+                    ),
+                )
+                .order_by(BankAttempt.created_at.desc())
+                .limit(6)
+            )
+        ).all()
+        for att, q in bank_rows:
+            hits.append(
+                {
+                    "source": "bank_question",
+                    "title": f"题库第 {q.seq} 题",
+                    "course": "",
+                    "task_excerpt": _clip(q.title, 220),
+                    "user_answer_excerpt": f"学员作答：{att.content}（正确答案：{q.answer_raw or q.answer}）",
+                    "created_at": att.created_at,
+                    "references": [
+                        {
+                            "label": f"历史错题：题库第 {q.seq} 题",
+                            "href": "/bank",
+                        }
+                    ],
+                }
+            )
+            if len(hits) >= 3:
+                break
+
+    if not hits:
+        return {"status": "not_found", "message": f"没有检索到与「{keyword}」相关的历史错题"}
+    return {"status": "success", "hits": hits}
 
 
 async def execute_tool(
     name: str,
     arguments: dict[str, Any] | str,
     db: AsyncSession | None = None,
+    context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """执行工具并返回结构化结果字典。"""
+    """执行工具并返回结构化结果字典。context：服务层注入的调用现场（如当前文档 ID）。"""
     if isinstance(arguments, str):
         try:
             args = json.loads(arguments)
@@ -148,6 +367,13 @@ async def execute_tool(
                 "reference_code": exercise.reference_code,
                 "hints": exercise.hints,
             }
+
+        elif name == "lookup_learned_section":
+            args = {**args, "_ctx": context or {}}
+            return await _tool_lookup_learned_section(db, args)
+
+        elif name == "lookup_past_mistakes":
+            return await _tool_lookup_past_mistakes(db, args)
 
         else:
             return {"error": f"未注册的工具：{name}"}

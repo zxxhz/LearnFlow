@@ -37,12 +37,15 @@ export default function BankQuestionCard({
   initialAiExplain,
   onAiExplained,
   onQuestionUpdated,
+  onAskAssistant,
 }: {
   question: BankQuestion;
   onAnswered: (result: BankAttemptResult, picked: string[]) => void;
   initialAiExplain?: string;
   onAiExplained?: (text: string) => void;
   onQuestionUpdated?: (updatedQ: BankQuestion, updatedRes?: BankAttemptResult | null) => void;
+  /** v0.5.0：唤起右侧统一 AI 助教（带上当前作答与判题状态，连续追问本题） */
+  onAskAssistant?: (userAnswer: string[], judgeStatus: "passed" | "failed" | "pending") => void;
 }) {
   const [curQuestion, setCurQuestion] = useState(question);
   useEffect(() => {
@@ -234,6 +237,24 @@ export default function BankQuestionCard({
           <span>✏️</span>
           <span>纠错</span>
         </button>
+        {onAskAssistant && (
+          <button
+            type="button"
+            onClick={() => {
+              const judgeStatus = result
+                ? result.passed
+                  ? "passed"
+                  : "failed"
+                : "pending";
+              onAskAssistant(picked, judgeStatus);
+            }}
+            className="text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 transition text-[11px] flex items-center gap-0.5 ml-1"
+            title="在右侧 AI 助教中连续追问本题（可让它画导图、关联你学过的课）"
+          >
+            <span>🤖</span>
+            <span>问助教</span>
+          </button>
+        )}
         <span className="ml-auto">第 {curQuestion.seq} 题</span>
       </div>
       <p className="drill-question-title mt-2 whitespace-pre-wrap font-medium leading-relaxed text-gray-900 dark:text-gray-100">

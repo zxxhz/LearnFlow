@@ -19,6 +19,7 @@ async def stream_agent_with_tools(
     db: AsyncSession | None = None,
     tools: list[dict] | None = None,
     max_tool_steps: int = 2,
+    context: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """支持工具调用的 Agent 执行器。
 
@@ -27,6 +28,7 @@ async def stream_agent_with_tools(
     - {"type": "tool_result", "name": str, "result": dict}
     - {"type": "delta", "text": str}
     - {"type": "done"}
+    context：服务层注入的调用现场（如当前文档 ID），透传给 execute_tool。
     """
     tools_to_use = tools or AGENT_TOOLS_SCHEMA
     history = list(messages)
@@ -72,7 +74,7 @@ async def stream_agent_with_tools(
                 args = {}
 
             yield {"type": "tool_call", "name": fn_name, "args": args}
-            result = await execute_tool(fn_name, args, db=db)
+            result = await execute_tool(fn_name, args, db=db, context=context)
             yield {"type": "tool_result", "name": fn_name, "result": result}
 
             # 大体积二进制产物（如 SVG 图像）只走前端事件，不进 LLM 历史，防止撑爆上下文

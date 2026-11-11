@@ -33,6 +33,10 @@ import type {
   MirrorsStatus,
   BackupItem,
   AccessInfo,
+  AssistantContextType,
+  AssistantSceneContext,
+  AssistantSSEEvent,
+  AssistantSessionInfo,
   Quiz,
   SearchHit,
   Bank,
@@ -785,6 +789,24 @@ export const api = {
   conversations: {
     messages: (id: string) =>
       request<Message[]>(`/conversations/${id}/messages`),
+  },
+  assistant: {
+    session: (body: { context_type: AssistantContextType; context_id: string }) =>
+      request<AssistantSessionInfo>("/assistant/session", { method: "POST", ...jsonBody(body) }),
+    messages: (id: string) =>
+      request<Message[]>(`/conversations/${id}/messages`),
+    streamSSE: (
+      conversationId: string,
+      body: { content: string; scene?: AssistantSceneContext },
+      onEvent: (ev: AssistantSSEEvent) => void,
+      signal?: AbortSignal
+    ) =>
+      streamSSE<AssistantSSEEvent>(
+        `/conversations/${conversationId}/messages/stream`,
+        body,
+        onEvent,
+        signal
+      ),
   },
   knowledgePoints: {
     forDoc: (docId: string) =>

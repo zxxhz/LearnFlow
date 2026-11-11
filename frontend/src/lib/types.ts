@@ -157,6 +157,50 @@ export interface Message {
   created_at: string;
 }
 
+// ===== v0.5.0 统一 AI 助教 =====
+/** 助教会话归属域：document（同章讲义+练习共用）/ bank_question（题库单题）/ global（全局） */
+export type AssistantContextType = "document" | "bank_question" | "global";
+
+/** 每条消息附带的现场上下文：场景护栏按 kind 自动切换（未通过练习 → 苏格拉底启发） */
+export interface AssistantSceneContext {
+  kind: "reading" | "exercise" | "bank" | "global";
+  document_id?: string;
+  section_id?: string;
+  selected_text?: string;
+  /** 打开来源为划线高亮时的标注 ID（后端暂不消费，仅前端溯源） */
+  annotation_id?: string;
+  exercise_id?: string;
+  user_code?: string;
+  user_answer?: string;
+  judge_status?: "passed" | "failed" | "pending";
+  bank_question_id?: string;
+}
+
+export interface AssistantReference {
+  label: string;
+  href?: string;
+}
+
+/** 统一助教 SSE 事件：user_ack 对齐乐观气泡；reference 渲染旧知/错题跳转标签；tool_result.result.svg 为函数图像 */
+export interface AssistantSSEEvent {
+  type: "user_ack" | "status" | "tool_call" | "tool_result" | "reference" | "delta" | "done" | "error";
+  name?: string;
+  args?: Record<string, unknown>;
+  result?: { svg?: string; [key: string]: unknown };
+  references?: AssistantReference[];
+  text?: string;
+  detail?: string;
+  message?: Message;
+  message_id?: string;
+  content?: string;
+}
+
+export interface AssistantSessionInfo {
+  conversation_id: string;
+  context_type: AssistantContextType;
+  context_id: string;
+}
+
 export interface LLMConfig {
   base_url: string;
   api_key: string;

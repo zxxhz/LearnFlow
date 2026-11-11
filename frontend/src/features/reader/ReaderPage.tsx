@@ -9,6 +9,7 @@ import { anchorFromSelection, type AnchorRange } from "../../lib/anchor";
 import type {
   Annotation,
   AnnotationColor,
+  AssistantSceneContext,
   CompareHighlightItem,
   ProgressSSEEvent,
   SectionPracticeImpact,
@@ -16,7 +17,8 @@ import type {
 import { Button, ConfirmDialog, Modal, Spinner, Textarea } from "../../components/ui";
 import BlockView from "./BlockView";
 import SelectionToolbar from "./SelectionToolbar";
-import AnnotationCard from "./AnnotationCard";
+import AssistantPanel from "../../components/AssistantPanel";
+import { ReaderAssistantContext } from "./assistantContext";
 import TocSidebar, { buildToc } from "./TocSidebar";
 import AnnotationsDrawer from "./AnnotationsDrawer";
 import ExerciseDrawer from "./ExerciseDrawer";
@@ -182,9 +184,11 @@ export default function ReaderPage() {
     if (!activeAnn) return null;
     return annotations.find((a) => a.id === activeAnn.id) ?? activeAnn;
   }, [activeAnn, annotations]);
-  const [convIdCache, setConvIdCache] = useState<Record<string, string>>({});
-  const [convId, setConvId] = useState<string | null>(null);
-  const isCardOpen = !!(currentActiveAnn && convId) && !isClosingCard;
+  // v0.5.0 统一助教面板：划线提问与练习辅导共用 document 会话（上下文跨讲义/练习延续）
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantScene, setAssistantScene] = useState<AssistantSceneContext | null>(null);
+  const [assistantLabel, setAssistantLabel] = useState("");
+  const isCardOpen = (assistantOpen || !!currentActiveAnn) && !isClosingCard;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [isClosingDrawer, setIsClosingDrawer] = useState(false);
   const [kpOpen, setKpOpen] = useState(false);
@@ -226,8 +230,6 @@ export default function ReaderPage() {
   const scrollRef = useRef<HTMLElement | null>(null);
   // 右侧面板 300ms 关闭动画定时器：重开/卸载时须清除，防止旧定时器关闭新面板
   const closeTimerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-  // 标注对话请求序号：快速连点不同标注时丢弃过期响应，防止会话串台
-  const annReqRef = useRef(0);
 
   const execBySection = useMemo(
     () => new Map((execsQuery.data ?? []).map((e) => [e.section_id, e])),
@@ -291,7 +293,8 @@ export default function ReaderPage() {
     clearCloseTimer("card");
     closeTimerRef.current.card = setTimeout(() => {
       setActiveAnn(null);
-      setConvId(null);
+      setAssistantOpen(false);
+      setAssistantScene(null);
       setIsClosingCard(false);
     }, 300);
   }, []);
@@ -327,17 +330,17 @@ export default function ReaderPage() {
 
   // 互斥打开
   const openDrawer = useCallback(() => {
-    if (activeAnn) closeAnnotation();
+    if (assistantOpen || activeAnn) closeAnnotation();
     if (exerciseOpen) closeExercise();
     if (kpOpen) closeKp();
     clearCloseTimer("drawer");
     setIsClosingDrawer(false);
     setDrawerOpen(true);
-  }, [activeAnn, exerciseOpen, kpOpen, closeAnnotation, closeExercise, closeKp]);
+  }, [assistantOpen, activeAnn, exerciseOpen, kpOpen, closeAnnotation, closeExercise, closeKp]);
 
   const openExercise = useCallback(
     (focusId?: string | null) => {
-      if (activeAnn) closeAnnotation();
+      if (assistantOpen || activeAnn) closeAnnotation();
       if (drawerOpen) closeDrawer();
       if (kpOpen) closeKp();
       clearCloseTimer("exercise");
@@ -345,17 +348,45 @@ export default function ReaderPage() {
       setExerciseOpen(true);
       setExerciseFocus(focusId ?? null);
     },
-    [activeAnn, drawerOpen, kpOpen, closeAnnotation, closeDrawer, closeKp]
+    [assistantOpen, activeAnn, drawerOpen, kpOpen, closeAnnotation, closeDrawer, closeKp]
   );
 
   const openKp = useCallback(() => {
-    if (activeAnn) closeAnnotation();
+    if (assistantOpen || activeAnn) closeAnnotation();
     if (drawerOpen) closeDrawer();
     if (exerciseOpen) closeExercise();
     clearCloseTimer("kp");
     setIsClosingKp(false);
     setKpOpen(true);
-  }, [activeAnn, drawerOpen, exerciseOpen, closeAnnotation, closeDrawer, closeExercise]);
+  }, [assistantOpen, activeAnn, drawerOpen, exerciseOpen, closeAnnotation, closeDrawer, closeExercise]);
+
+  // 统一助教面板打开（划线入口 / 练习卡入口共用）：与左侧抽屉互斥，练习抽屉保持
+  const openAssistantPanel = useCallback(
+    (scene: AssistantSceneContext, label: string, ann?: Annotation | null) => {
+      if (drawerOpen) closeDrawer();
+      if (kpOpen) closeKp();
+      clearCloseTimer("card");
+      setIsClosingCard(false);
+      setActiveAnn(ann ?? null);
+      setAssistantScene(scene);
+      setAssistantLabel(label);
+      setAssistantOpen(true);
+    },
+    [drawerOpen, kpOpen, closeDrawer, closeKp]
+  );
+
+  // 练习卡等子组件经上下文唤起：练习抽屉保持打开，助教面板浮于其上
+  const openAssistantFromChild = useCallback(
+    (scene: AssistantSceneContext, label: string) => {
+      clearCloseTimer("card");
+      setIsClosingCard(false);
+      setActiveAnn(null);
+      setAssistantScene(scene);
+      setAssistantLabel(label);
+      setAssistantOpen(true);
+    },
+    []
+  );
 
   const isRightPanelOpen = Boolean(
     isCardOpen ||
@@ -394,7 +425,7 @@ export default function ReaderPage() {
         }
         setSelection(null);
         setReAnchoring(null);
-        if (activeAnn) closeAnnotation();
+        if (activeAnn || assistantOpen) closeAnnotation();
         if (drawerOpen) closeDrawer();
         if (exerciseOpen) {
           // 全屏时 Esc 仅退出全屏（与 ExerciseDrawer 语义一致），非全屏才关闭抽屉
@@ -417,6 +448,7 @@ export default function ReaderPage() {
   }, [
     captureSelection,
     activeAnn,
+    assistantOpen,
     drawerOpen,
     exerciseOpen,
     isExerciseFullscreen,
@@ -431,19 +463,31 @@ export default function ReaderPage() {
   const createAnnotation = useMutation({
     mutationFn: async (openCard: boolean) => {
       if (!selection || !documentId) return null;
+      const anchor = selection.anchor;
       const res = await api.annotations.create(documentId, {
-        ...selection.anchor,
+        ...anchor,
         color: toolbarColor,
       });
-      return { res, openCard };
+      return { res, openCard, anchor };
     },
     onSuccess: (data) => {
       if (!data) return;
       window.getSelection()?.removeAllRanges();
       setSelection(null);
-      setConvIdCache((prev) => ({ ...prev, [data.res.annotation.id]: data.res.conversation_id }));
       invalidate();
-      if (data.openCard) openAnnotation(data.res.annotation, data.res.conversation_id);
+      if (data.openCard) {
+        openAssistantPanel(
+          {
+            kind: "reading",
+            document_id: documentId ?? undefined,
+            section_id: data.anchor.section_id,
+            selected_text: data.anchor.exact,
+            annotation_id: data.res.annotation.id,
+          },
+          "📖 划线提问",
+          data.res.annotation
+        );
+      }
     },
     onError: (e) => alert((e as Error).message),
   });
@@ -483,28 +527,19 @@ export default function ReaderPage() {
   };
 
   // ===== 卡片与定位 =====
-  const openAnnotation = async (a: Annotation, knownConvId?: string) => {
-    if (drawerOpen) closeDrawer();
+  const openAnnotation = async (a: Annotation) => {
     if (exerciseOpen) closeExercise();
-    if (kpOpen) closeKp();
-    clearCloseTimer("card");
-    setIsClosingCard(false);
-    setActiveAnn(a);
-    const cached = knownConvId ?? convIdCache[a.id];
-    if (cached) {
-      setConvId(cached);
-      return;
-    }
-    const reqId = ++annReqRef.current;
-    setConvId(null); // 先清空旧会话，避免新卡片短暂显示上一个标注的对话
-    try {
-      const r = await api.annotations.conversation(a.id);
-      if (reqId !== annReqRef.current) return; // 已切换到其他标注，丢弃过期响应
-      setConvIdCache((prev) => ({ ...prev, [a.id]: r.conversation_id }));
-      setConvId(r.conversation_id);
-    } catch {
-      if (reqId === annReqRef.current) setConvId(null);
-    }
+    openAssistantPanel(
+      {
+        kind: "reading",
+        document_id: documentId ?? undefined,
+        section_id: a.section_id,
+        selected_text: a.exact,
+        annotation_id: a.id,
+      },
+      "📖 划线提问",
+      a
+    );
   };
 
   const jumpTo = (sectionId: string, annId?: string) => {
@@ -620,9 +655,8 @@ export default function ReaderPage() {
   // ===== 切换章节时重置章节级 UI 状态，防止上一章的抽屉/卡片/错误提示残留 =====
   useEffect(() => {
     setActiveAnn(null);
-    setConvId(null);
-    setConvIdCache({});
-    annReqRef.current += 1;
+    setAssistantOpen(false);
+    setAssistantScene(null);
     setSelection(null);
     setDrawerOpen(false);
     setIsClosingDrawer(false);
@@ -726,7 +760,10 @@ export default function ReaderPage() {
   const activeKps = kpsQuery.data ?? [];
   const orphanCount = annotations.filter((a) => a.status === "orphan").length;
 
+  const assistantApi = useMemo(() => ({ openAssistant: openAssistantFromChild }), [openAssistantFromChild]);
+
   return (
+    <ReaderAssistantContext.Provider value={assistantApi}>
     <div
       className="flex h-full w-full bg-white dark:bg-gray-900 overflow-hidden"
       style={{
@@ -1175,19 +1212,6 @@ export default function ReaderPage() {
         />
       )}
 
-      {/* 提问卡片 */}
-      {currentActiveAnn && convId && (
-        <AnnotationCard
-          key={currentActiveAnn.id}
-          annotation={currentActiveAnn}
-          conversationId={convId}
-          closing={isClosingCard}
-          onClose={closeAnnotation}
-          onJump={(a) => jumpTo(a.section_id, a.id)}
-          fontSize={courseFontSize}
-        />
-      )}
-
       {/* 重新生成对话框 */}
       <Modal open={regenOpen} onClose={() => setRegenOpen(false)} title="重新生成本章">
         <p className="text-sm text-gray-600 dark:text-gray-400">
@@ -1305,6 +1329,41 @@ export default function ReaderPage() {
           }}
         />
       )}
+
+      {/* 统一 AI 助教面板：划线提问（阅读场景）与练习辅导（练习场景）共用，上下文跨讲义/练习延续 */}
+      {(assistantOpen || currentActiveAnn) && (
+        <AssistantPanel
+          open={assistantOpen || !!currentActiveAnn}
+          closing={isClosingCard}
+          contextType="document"
+          contextId={doc.id}
+          contextLabel={assistantLabel || "📖 本章讲义"}
+          scene={assistantScene}
+          annotation={currentActiveAnn}
+          fontSize={courseFontSize}
+          onClose={closeAnnotation}
+          onJumpAnnotation={(a) => jumpTo(a.section_id, a.id)}
+          onColorChange={(a, c) => {
+            api.annotations
+              .update(a.id, { color: c })
+              .then(() => invalidate())
+              .catch((e) => alert((e as Error).message));
+          }}
+          onNoteSave={(a, note) => {
+            api.annotations
+              .update(a.id, { note })
+              .then(() => invalidate())
+              .catch((e) => alert((e as Error).message));
+          }}
+          onDeleteAnnotation={(a) => {
+            api.annotations
+              .remove(a.id)
+              .then(() => invalidate())
+              .catch((e) => alert((e as Error).message));
+          }}
+        />
+      )}
     </div>
+    </ReaderAssistantContext.Provider>
   );
 }

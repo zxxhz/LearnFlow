@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api import (
     annotations,
+    assistant,
     bank,
     conversations,
     courses,
@@ -42,6 +43,7 @@ api_router.include_router(study.router)
 api_router.include_router(search.router)
 api_router.include_router(system.router)
 api_router.include_router(tutor.router)
+api_router.include_router(assistant.router)
 api_router.include_router(solve.router)
 api_router.include_router(relay.router)
 

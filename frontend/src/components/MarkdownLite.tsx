@@ -1,9 +1,11 @@
 // 轻量 markdown 渲染（消息/卡片背面共用）：markdown-it + KaTeX auto-render + 函数图像自动渲染
-import { useEffect, useRef } from "react";
+// v0.5.0：新增 mindmap（交互导图）与 quiz（随堂微测卡）富块，由 assistantBlocks 装配
+import { useEffect, useRef, useState } from "react";
 import MarkdownIt from "markdown-it";
 import renderMathInElement from "katex/contrib/auto-render";
 import { api } from "../lib/api";
 import { sanitizeSvg } from "../lib/sanitize";
+import { attachAssistantBlocks, MINDMAP_ZOOM_EVENT } from "./assistantBlocks";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 
@@ -12,6 +14,7 @@ const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 const plotSvgCache = new Map<string, string>();
 const PLOT_SVG_CACHE_MAX = 50;
 const PLOT_LANGS = new Set(["plot", "math-plot", "绘图"]);
+const MINDMAP_LANGS = new Set(["mindmap", "导图"]);
 
 function cachePlotSvg(key: string, svg: string): string {
   const clean = sanitizeSvg(svg);
@@ -56,6 +59,25 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   </div>
 </div>`;
   }
+  if (MINDMAP_LANGS.has(lang)) {
+    const code = token.content;
+    const encoded = encodeURIComponent(code);
+    return `<div class="mindmap-container my-3 rounded-lg border border-sky-200 dark:border-sky-800/80 bg-sky-50/40 dark:bg-sky-950/30 overflow-hidden shadow-sm" data-mindmap="${encoded}">
+  <div class="flex items-center justify-between px-3 py-1.5 bg-sky-50 dark:bg-sky-950/40 border-b border-sky-100 dark:border-sky-900/60 text-xs text-sky-700 dark:text-sky-300 font-medium">
+    <span class="flex items-center gap-1.5">🗺️ 思维导图</span>
+    <button type="button" class="mindmap-zoom-btn shrink-0 rounded border border-sky-200 dark:border-sky-700 px-1.5 py-0.5 text-[11px] text-sky-600 dark:text-sky-300 hover:bg-sky-100 dark:hover:bg-sky-900/50">⛶ 放大查看</button>
+  </div>
+  <div class="mindmap-body px-3 py-2 text-gray-800 dark:text-gray-200"></div>
+</div>`;
+  }
+  if (lang === "quiz") {
+    const code = token.content.trim();
+    const encoded = encodeURIComponent(code);
+    return `<div class="quiz-container my-3 rounded-lg border border-emerald-200 dark:border-emerald-800/80 bg-emerald-50/40 dark:bg-emerald-950/30 overflow-hidden shadow-sm" data-quiz="${encoded}">
+  <div class="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/40 border-b border-emerald-100 dark:border-emerald-900/60 text-xs text-emerald-700 dark:text-emerald-300 font-medium">🧪 随堂微测（点选即验）</div>
+  <div class="quiz-body px-3 py-2 text-gray-800 dark:text-gray-200"></div>
+</div>`;
+  }
   return defaultFenceRender(tokens, idx, options, env, self);
 };
 
@@ -78,6 +100,17 @@ export default function MarkdownLite({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const html = md.render(text ?? "");
+  // 导图全屏放大覆盖层（经 window 事件从任意 MarkdownLite 实例的 DOM 按钮唤起）
+  const [zoom, setZoom] = useState<{ html: string; title: string } | null>(null);
+
+  useEffect(() => {
+    const onZoom = (e: Event) => {
+      const detail = (e as CustomEvent<{ html: string; title: string }>).detail;
+      if (detail?.html) setZoom({ html: detail.html, title: detail.title || "思维导图" });
+    };
+    window.addEventListener(MINDMAP_ZOOM_EVENT, onZoom);
+    return () => window.removeEventListener(MINDMAP_ZOOM_EVENT, onZoom);
+  }, []);
 
   useEffect(() => {
     if (!ref.current) return;
@@ -90,6 +123,9 @@ export default function MarkdownLite({
         console.warn("KaTeX render error in MarkdownLite:", e);
       }
     }
+
+    // 1.5 助教富块（思维导图 / 随堂微测卡）装配
+    attachAssistantBlocks(ref.current);
 
     // 2. 异步自动绘制并装配所有函数图像
     const plotContainers = ref.current.querySelectorAll<HTMLDivElement>(".math-plot-container[data-plot]");
@@ -150,5 +186,33 @@ export default function MarkdownLite({
     });
   }, [html, deferMath]);
 
-  return <div ref={ref} className={`msg-md ${className}`} dangerouslySetInnerHTML={{ __html: html }} />;
+  return (
+    <>
+      <div ref={ref} className={`msg-md ${className}`} dangerouslySetInnerHTML={{ __html: html }} />
+      {zoom && (
+        <div
+          className="fixed inset-0 z-[90] flex items-center justify-center bg-black/50 p-6"
+          onClick={() => setZoom(null)}
+        >
+          <div
+            className="max-h-full w-full max-w-2xl overflow-auto rounded-xl border border-gray-200 bg-white p-5 shadow-2xl dark:border-gray-700 dark:bg-gray-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-sm font-semibold text-gray-700 dark:text-gray-200">🗺️ {zoom.title}</span>
+              <button
+                type="button"
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                onClick={() => setZoom(null)}
+              >
+                ✕
+              </button>
+            </div>
+            {/* 覆盖层内容来自已构建的 DOM 安全树（textContent 转义链路），无注入面 */}
+            <div className="mindmap-zoom-body text-gray-800 dark:text-gray-200" dangerouslySetInnerHTML={{ __html: zoom.html }} />
+          </div>
+        </div>
+      )}
+    </>
+  );
 }

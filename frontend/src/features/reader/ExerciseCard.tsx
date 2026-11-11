@@ -1,12 +1,12 @@
 // 单题卡片：闯关代码关（看提示→从零手写→运行→stdout 判定）/ 概念题（LLM 评分）/ 单选·填空（本地判定）（PRD §5.10）
+// v0.5.0：卡内旧辅导框下线，统一「问 AI 助教」唤起右侧 AssistantPanel（同一章节内上下文延续）
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
 import type { Exercise, ExerciseAttempt } from "../../lib/types";
 import { Badge, Button, Spinner } from "../../components/ui";
 import MarkdownLite from "../../components/MarkdownLite";
-import { createStreamFlusher } from "../../lib/streamFlusher";
-import { sanitizeSvg } from "../../lib/sanitize";
+import { useReaderAssistant } from "./assistantContext";
 
 interface Props {
   exercise: Exercise;
@@ -38,6 +38,7 @@ export function parseOptions(exercise: Exercise): string[] {
 
 export default function ExerciseCard({ exercise, documentId, level }: Props) {
   const queryClient = useQueryClient();
+  const assistant = useReaderAssistant();
   const isCode = exercise.kind === "code";
   const isChoice = exercise.kind === "choice";
   const isFill = exercise.kind === "fill";
@@ -53,22 +54,27 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
   const [isDoubtful, setIsDoubtful] = useState(false);
   const adoptedAttempt = useRef<string | null>(null);
 
-  // 助教伴学诊断状态
-  const [tutorOpen, setTutorOpen] = useState(false);
-  const [tutorLoading, setTutorLoading] = useState(false);
-  const [tutorText, setTutorText] = useState("");
-  const [tutorQuestion, setTutorQuestion] = useState("");
-  const [tutorMode, setTutorMode] = useState<"socratic" | "direct">("socratic");
-  const [tutorStatus, setTutorStatus] = useState<string | null>(null);
-  const [tutorPlot, setTutorPlot] = useState<string>("");
-  const tutorAbortRef = useRef<AbortController | null>(null);
+  const attempt: ExerciseAttempt | null = exercise.latest_attempt;
 
-  // 卸载时中断进行中的助教 SSE，防止后台空烧 Token
-  useEffect(() => {
-    return () => {
-      tutorAbortRef.current?.abort();
-    };
-  }, []);
+  /** 唤起右侧统一 AI 助教：随附题目、当前作答与最新判题状态（场景护栏按未通过/已通过自动切换） */
+  const askAssistant = () => {
+    if (!assistant) return;
+    const userCode = isCode ? (draft ?? exercise.latest_attempt?.content ?? "") : "";
+    const userAnswer = isChoice ? (choicePick ?? "") : isCode ? "" : answer;
+    const judgeStatus =
+      attempt?.passed === true ? "passed" : attempt?.passed === false ? "failed" : "pending";
+    assistant.openAssistant(
+      {
+        kind: "exercise",
+        document_id: documentId,
+        exercise_id: exercise.id,
+        user_code: userCode || undefined,
+        user_answer: userAnswer || undefined,
+        judge_status: judgeStatus,
+      },
+      `💻 练习：${exercise.title}`
+    );
+  };
 
 
 
@@ -86,8 +92,6 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exercise.latest_attempt?.id]);
-
-  const attempt: ExerciseAttempt | null = exercise.latest_attempt;
 
   const submit = useMutation({
     mutationFn: () => {
@@ -158,170 +162,6 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
     }
   };
 
-  const requestTutor = async (questionText = "") => {
-    let codeContent = isCode
-      ? (draft ?? exercise.latest_attempt?.content ?? "")
-      : isChoice
-      ? (choicePick ?? "")
-      : answer;
-    if (!codeContent.trim()) {
-      codeContent = "（学员正在思考解题思路，尚未编写作答内容）";
-    }
-    tutorAbortRef.current?.abort();
-    const ctrl = new AbortController();
-    tutorAbortRef.current = ctrl;
-    setTutorOpen(true);
-    setTutorLoading(true);
-    setTutorStatus(null);
-    // 流式增量缓冲：delta 只进 ref，120ms 批量刷新进 state，避免每 token 全量重渲染
-    const flusher = createStreamFlusher((text) => setTutorText(text));
-    let acc: string;
-    if (!questionText) {
-      acc = "";
-      setTutorText("");
-      setTutorPlot("");
-    } else {
-      acc = tutorText + `\n\n**追问：${questionText}**\n\n`;
-      setTutorText(acc);
-    }
-
-    try {
-      await api.tutor.diagnoseSSE(
-        { exercise_id: exercise.id, content: codeContent, question: questionText, mode: tutorMode },
-        (ev) => {
-          if (ev.type === "tool_call") {
-            if (ev.name === "run_sandbox_code") setTutorStatus("⚙️ 助教正在沙箱中实测代码...");
-            else if (ev.name === "render_math_plot") setTutorStatus("📐 助教正在绘制函数图像...");
-            else setTutorStatus(`🛠️ 助教正在调用工具 ${ev.name}...`);
-          } else if (ev.type === "tool_result") {
-            setTutorStatus(null);
-            // 助教绘制的函数图像实时渲染在助教面板内
-            if (ev.name === "render_math_plot" && ev.result?.svg) {
-              setTutorPlot(ev.result.svg);
-            }
-          } else if (ev.type === "delta" && ev.text) {
-            setTutorStatus(null);
-            acc += ev.text;
-            flusher.push(acc);
-          } else if (ev.type === "error") {
-            setTutorStatus(null);
-            flusher.flushNow();
-            setTutorText((prev) => prev + `\n\n> ⚠️ ${ev.detail || "助教诊断失败"}`);
-            setTutorLoading(false);
-          } else if (ev.type === "done") {
-            setTutorStatus(null);
-            flusher.flushNow();
-            setTutorLoading(false);
-          }
-        },
-        ctrl.signal
-      );
-    } catch (err: any) {
-      if (err.name === "AbortError") {
-        flusher.cancel();
-      } else {
-        flusher.flushNow();
-        setTutorStatus(null);
-        setTutorText((prev) => prev + `\n\n> ⚠️ ${err.message || "连接失败"}`);
-      }
-    } finally {
-      setTutorLoading(false);
-      setTutorStatus(null);
-    }
-  };
-
-  const renderTutorPanel = () =>
-    tutorOpen && (
-      <div className="mt-2 rounded-lg border border-amber-200 dark:border-amber-800/80 bg-amber-50/50 dark:bg-amber-950/30 p-3 space-y-2 exercise-tutor-box">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-[0.88em] font-semibold text-amber-800 dark:text-amber-200">
-            <span>💡</span>
-            <span>助教观察与启发点拨</span>
-            {tutorLoading && <Spinner className="h-3 w-3 border-amber-500 border-t-transparent" />}
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-0.5 rounded bg-amber-100/80 dark:bg-amber-900/50 p-0.5 text-[0.8em]">
-              <button
-                type="button"
-                onClick={() => setTutorMode("socratic")}
-                className={`px-1.5 py-0.5 rounded transition ${
-                  tutorMode === "socratic"
-                    ? "bg-white dark:bg-gray-800 text-amber-900 dark:text-amber-200 font-medium shadow-xs"
-                    : "text-amber-700 dark:text-amber-400"
-                }`}
-              >
-                💡 启发
-              </button>
-              <button
-                type="button"
-                onClick={() => setTutorMode("direct")}
-                className={`px-1.5 py-0.5 rounded transition ${
-                  tutorMode === "direct"
-                    ? "bg-white dark:bg-gray-800 text-amber-900 dark:text-amber-200 font-medium shadow-xs"
-                    : "text-amber-700 dark:text-amber-400"
-                }`}
-              >
-                📖 直答
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => setTutorOpen(false)}
-              className="text-[0.8em] text-amber-700 dark:text-amber-300 hover:underline"
-            >
-              收起
-            </button>
-          </div>
-        </div>
-        {tutorStatus && (
-          <div className="flex items-center gap-1.5 text-[0.88em] text-amber-700 dark:text-amber-300 font-mono py-1 animate-pulse">
-            <Spinner className="h-3 w-3 border-amber-500 border-t-transparent" />
-            <span>{tutorStatus}</span>
-          </div>
-        )}
-        {tutorPlot && (
-          <div
-            className="rounded-md border border-amber-100 dark:border-amber-900/50 bg-white p-2 dark:bg-gray-900/80 [&_svg]:h-auto [&_svg]:max-w-full"
-            dangerouslySetInnerHTML={{ __html: sanitizeSvg(tutorPlot) }}
-          />
-        )}
-        {tutorText && (
-          <div className="msg-md text-[0.9em] leading-relaxed text-gray-800 dark:text-gray-200 bg-white/80 dark:bg-gray-900/80 rounded-md p-2.5 border border-amber-100 dark:border-amber-900/50">
-            <MarkdownLite text={tutorText} deferMath={tutorLoading} />
-          </div>
-        )}
-        <div className="flex items-center gap-1.5 pt-1">
-          <input
-            type="text"
-            value={tutorQuestion}
-            onChange={(e) => setTutorQuestion(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && tutorQuestion.trim() && !tutorLoading) {
-                const q = tutorQuestion.trim();
-                setTutorQuestion("");
-                requestTutor(q);
-              }
-            }}
-            placeholder="向助教提问（如：思路卡住了 / 这道题怎么破局？）…"
-            disabled={tutorLoading}
-            className="flex-1 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-2.5 py-1 text-[0.9em] text-gray-800 dark:text-gray-200 focus:outline-none focus:border-amber-500"
-          />
-          <Button
-            variant="ghost"
-            disabled={tutorLoading || !tutorQuestion.trim()}
-            onClick={() => {
-              const q = tutorQuestion.trim();
-              setTutorQuestion("");
-              requestTutor(q);
-            }}
-            className="px-2.5 py-1 text-[0.88em] text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50"
-          >
-            提问
-          </Button>
-        </div>
-      </div>
-    );
-
   const renderAttemptResult = () =>
     attempt && (
       <div className="mt-2 space-y-2">
@@ -336,21 +176,18 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
             </div>
           )
         )}
-        {attempt.passed === false && !tutorOpen && (
+        {attempt.passed === false && (
           <div className="mt-2">
             <button
               type="button"
-              onClick={() => requestTutor()}
-              disabled={tutorLoading}
+              onClick={askAssistant}
               className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50/80 dark:bg-amber-950/40 px-2.5 py-1.5 text-[0.85em] font-medium text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/60 transition-colors shadow-sm"
             >
-              <span>💡</span>
-              <span>呼叫助教启发诊断</span>
-              {tutorLoading && <Spinner className="h-3 w-3 border-amber-500 border-t-transparent" />}
+              <span>🤖</span>
+              <span>问 AI 助教：卡在哪一步了？</span>
             </button>
           </div>
         )}
-
 
         {isCode && (attempt.stdout || attempt.stderr) && (
           <div className="rounded-lg bg-gray-900/95 p-2.5 font-mono text-[0.85em]">
@@ -449,26 +286,17 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
               <span>{exercise.is_hard_bone ? "已标硬骨头" : "硬骨头跳过"}</span>
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => {
-              if (!tutorOpen) {
-                setTutorOpen(true);
-                if (!tutorText) requestTutor();
-              } else {
-                setTutorOpen(false);
-              }
-            }}
-            className={`inline-flex items-center gap-1 text-[0.8em] px-2 py-0.5 rounded border transition font-medium ${
-              tutorOpen
-                ? "border-amber-400 bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200"
-                : "border-amber-300 dark:border-amber-700/80 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 shadow-xs"
-            }`}
-            title="遇到卡点？呼叫苏格拉底伴学助教"
-          >
-            <span>💡</span>
-            <span>伴学助教</span>
-          </button>
+          {assistant && (
+            <button
+              type="button"
+              onClick={askAssistant}
+              className="inline-flex items-center gap-1 text-[0.8em] px-2 py-0.5 rounded border transition font-medium border-amber-300 dark:border-amber-700/80 bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 shadow-xs"
+              title="在右侧 AI 助教中连续追问本题（自动带上当前作答与判题状态）"
+            >
+              <span>🤖</span>
+              <span>问 AI 助教</span>
+            </button>
+          )}
           <button
             className="text-[0.75em] text-gray-300 dark:text-gray-600 hover:text-red-500 dark:hover:text-red-400"
             title="删除此题"
@@ -758,8 +586,6 @@ export default function ExerciseCard({ exercise, documentId, level }: Props) {
           )}
         </>
       )}
-      {/* 伴学助教面板：任何题型、作答前后均可展示（作答前呼叫时后端会以“思考中”作上下文） */}
-      {renderTutorPanel()}
     </div>
   );
 }

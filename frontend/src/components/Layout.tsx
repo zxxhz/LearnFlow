@@ -8,6 +8,7 @@ import { safeSessionStorage, safeStorage } from "../lib/safeStorage";
 import { isTauri, openExternalUrl } from "../lib/updater";
 import UpdateDialog from "./UpdateDialog";
 import ServerUpdateDialog from "./ServerUpdateDialog";
+import AssistantPanel from "./AssistantPanel";
 import { Toast } from "./ui";
 import type { ToastPayload } from "../lib/toast";
 import RelayStatusBadge from "./RelayStatusBadge";
@@ -22,11 +23,27 @@ const NAV_ITEMS = [
   { to: "/settings", label: "设置", icon: "⚙️" },
 ];
 
-function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+function NavLinks({ onNavigate, onOpenAssistant }: { onNavigate?: () => void; onOpenAssistant?: () => void }) {
   const { pathname } = useLocation();
 
   return (
     <nav className="flex-1 space-y-1 px-3">
+      {/* 全局 AI 助教入口（非路由按钮，Ctrl+J 同效） */}
+      {onOpenAssistant && (
+        <button
+          type="button"
+          onClick={() => {
+            onOpenAssistant();
+            onNavigate?.();
+          }}
+          className="mb-2 flex w-full items-center gap-2 rounded-lg border border-brand-200 bg-brand-50/70 px-3 py-2 text-sm font-medium text-brand-700 transition hover:bg-brand-100 dark:border-brand-800 dark:bg-brand-950/40 dark:text-brand-300 dark:hover:bg-brand-900/50"
+          title="唤起 AI 助教 (Ctrl+J)"
+        >
+          <span>🤖</span>
+          <span className="flex-1 text-left">AI 助教</span>
+          <kbd className="rounded bg-white/70 px-1 text-[10px] text-gray-400 dark:bg-gray-800/80">Ctrl J</kbd>
+        </button>
+      )}
       {NAV_ITEMS.map((item) => {
         // 首页统辖课程树（课程详情 / 章节阅读 / 新建课程 / 导入课程）均视为首页处于激活态
         const isActive =
@@ -85,7 +102,15 @@ function NavActions({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 /** 移动端导航抽屉：蒙层淡入 + 抽屉从左滑入/滑出（与阅读页抽屉一致的 20ms 挂载 + 过渡 + 延迟卸载模式） */
-function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+function MobileNavDrawer({
+  open,
+  onClose,
+  onOpenAssistant,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onOpenAssistant: () => void;
+}) {
   const [render, setRender] = useState(open);
   const [shown, setShown] = useState(false);
 
@@ -120,7 +145,7 @@ function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () => void
             ✕
           </button>
         </div>
-        <NavLinks onNavigate={onClose} />
+        <NavLinks onNavigate={onClose} onOpenAssistant={onOpenAssistant} />
         <NavActions onNavigate={onClose} />
         <div className="p-3 border-t border-gray-100 dark:border-gray-800">
           <RelayStatusBadge />
@@ -259,6 +284,42 @@ export default function Layout() {
     return () => window.removeEventListener("learnflow:toast", onToast);
   }, []);
 
+  // v0.5.0 全局 AI 助教：任意页面 Ctrl+J 唤起 / Esc 关闭（global 会话，跨课程提问与学情咨询）
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantClosing, setAssistantClosing] = useState(false);
+  const closeGlobalAssistant = () => {
+    setAssistantClosing(true);
+    setTimeout(() => {
+      setAssistantOpen(false);
+      setAssistantClosing(false);
+    }, 300);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
+        if (e.repeat) return;
+        const target = e.target as HTMLElement | null;
+        if (
+          target &&
+          (target.tagName === "INPUT" ||
+            target.tagName === "TEXTAREA" ||
+            target.tagName === "SELECT" ||
+            target.isContentEditable)
+        ) {
+          return;
+        }
+        e.preventDefault();
+        setAssistantClosing(false);
+        setAssistantOpen(true);
+      } else if (e.key === "Escape" && assistantOpen) {
+        closeGlobalAssistant();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assistantOpen]);
+
   // 桌面壳模式下全局拦截 target="_blank" 外部链接，唤起系统默认浏览器
   useEffect(() => {
     if (!isTauri()) return;
@@ -317,7 +378,7 @@ export default function Layout() {
                 </svg>
               </button>
             </div>
-            <NavLinks />
+            <NavLinks onOpenAssistant={() => setAssistantOpen(true)} />
             <NavActions />
             <div className="flex flex-col gap-2 border-t border-gray-100 dark:border-gray-800 p-3">
               <div className="flex items-center justify-between">
@@ -339,7 +400,13 @@ export default function Layout() {
       )}
 
       {/* 移动端抽屉（带进出场动画） */}
-      {!isImmersive && <MobileNavDrawer open={navOpen} onClose={() => setNavOpen(false)} />}
+      {!isImmersive && (
+        <MobileNavDrawer
+          open={navOpen}
+          onClose={() => setNavOpen(false)}
+          onOpenAssistant={() => setAssistantOpen(true)}
+        />
+      )}
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* 顶栏：移动端常驻；平板/桌面端在左侧导航折叠后出现展开按钮 */}
@@ -401,6 +468,18 @@ export default function Layout() {
         <ServerUpdateDialog
           update={dialogServerUpdate}
           onClose={closeServerUpdateDialog}
+        />
+      )}
+      {/* 全局 AI 助教抽屉（Ctrl+J / 侧栏入口）：global 会话 */}
+      {(assistantOpen || assistantClosing) && (
+        <AssistantPanel
+          open={assistantOpen}
+          closing={assistantClosing}
+          contextType="global"
+          contextId="global"
+          contextLabel="🧭 全局提问"
+          scene={null}
+          onClose={closeGlobalAssistant}
         />
       )}
       {globalToast && (

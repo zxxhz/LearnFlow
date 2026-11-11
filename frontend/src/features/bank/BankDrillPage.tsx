@@ -15,8 +15,9 @@ import AddQuestionModal from "./AddQuestionModal";
 import EditQuestionModal from "./EditQuestionModal";
 import ReplaceBankModal from "./ReplaceBankModal";
 import MarkdownLite from "../../components/MarkdownLite";
+import AssistantPanel from "../../components/AssistantPanel";
 import { createStreamFlusher } from "../../lib/streamFlusher";
-import type { Bank, BankAttemptResult, BankQuestion, BankRound, BankWrongQuestion } from "../../lib/types";
+import type { AssistantSceneContext, Bank, BankAttemptResult, BankQuestion, BankRound, BankWrongQuestion } from "../../lib/types";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 const KATEX_DELIMITERS = [
@@ -94,6 +95,16 @@ export default function BankDrillPage() {
   const [promptOpen, setPromptOpen] = useState(false);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
+  // v0.5.0 统一 AI 助教（bank_question 会话：单题连续追问，支持画导图/关联已学课程）
+  const [assistant, setAssistant] = useState<{ scene: AssistantSceneContext; label: string } | null>(null);
+  const [assistantClosing, setAssistantClosing] = useState(false);
+  const closeAssistant = () => {
+    setAssistantClosing(true);
+    setTimeout(() => {
+      setAssistant(null);
+      setAssistantClosing(false);
+    }, 300);
+  };
 
   const handleAddSuccess = (addedCount: number) => {
     qc.invalidateQueries({ queryKey: ["banks"] });
@@ -377,6 +388,14 @@ export default function BankDrillPage() {
             onAiExplained={(text) => handleAiExplained(current.id, text)}
             onAnswered={(r) => onAnswered(current.id, r)}
             onQuestionUpdated={handleQuestionUpdated}
+            onAskAssistant={(userAnswer, judgeStatus) => {
+              setAssistant({ scene: {
+                kind: "bank",
+                bank_question_id: current.id,
+                user_answer: userAnswer.join(",") || undefined,
+                judge_status: judgeStatus,
+              }, label: `📝 题库第 ${current.seq} 题` });
+            }}
           />
         </div>
         <div className="mt-4 flex justify-end">
@@ -392,6 +411,19 @@ export default function BankDrillPage() {
         </div>
 
         <Toast message={toastMsg} onDone={() => setToastMsg("")} />
+
+        {/* 统一 AI 助教面板：单题会话，浮于刷题视图之上 */}
+        {assistant && (
+          <AssistantPanel
+            open
+            closing={assistantClosing}
+            contextType="bank_question"
+            contextId={assistant.scene.bank_question_id ?? ""}
+            contextLabel={assistant.label}
+            scene={assistant.scene}
+            onClose={closeAssistant}
+          />
+        )}
       </div>
     );
   }

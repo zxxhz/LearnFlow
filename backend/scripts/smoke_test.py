@@ -850,6 +850,80 @@ def main() -> None:
     s, body = call(base, f"/api/courses/{course_id}", "PATCH", {"title": orig_course["title"]})
     check("课程改名还原", s == 200 and body["title"] == orig_course["title"])
 
+    # 6.68 统一 AI 助教（v0.5.0）：L0 已学知识目录 / 会话幂等 / 检索工具 / 流式端点路由
+    async def _test_assistant_chain():
+        from app.core.db import async_session_factory as _dbf
+        from app.services.context import build_learned_knowledge_index
+        from app.services.assistant import get_or_create_assistant_session
+        from app.services.agent_tools.registry import execute_tool
+
+        async with _dbf() as s:
+            idx = await build_learned_knowledge_index(s, exclude_document_id=document_id)
+            conv1 = await get_or_create_assistant_session(s, "document", document_id)
+            conv2 = await get_or_create_assistant_session(s, "document", document_id)
+            conv_g1 = await get_or_create_assistant_session(s, "global", "")
+            conv_g2 = await get_or_create_assistant_session(s, "global", "")
+            learned = await execute_tool("lookup_learned_section", {"keyword": "指针"}, db=s)
+            excluded = await execute_tool(
+                "lookup_learned_section", {"keyword": "指针"}, db=s, context={"exclude_document_id": document_id}
+            )
+            mistakes = await execute_tool("lookup_past_mistakes", {"keyword": "指针"}, db=s)
+            return idx, conv1.id, conv2.id, conv_g1.id, conv_g2.id, learned, excluded, mistakes
+
+    idx, conv_a, conv_b, conv_g1, conv_g2, learned, excluded, mistakes = asyncio.run(_test_assistant_chain())
+    check(
+        "L0 已学知识目录：含课程/章节/KP 与掌握度且受长度预算约束",
+        "冒烟测试课程" in idx
+        and "指针概念" in idx
+        and "第一章 指针入门" in idx
+        and any(m in idx for m in ("已掌握", "学习中", "未测"))
+        and len(idx) <= 4500,
+        f"len={len(idx)} head={idx[:80]!r}",
+    )
+    check(
+        "助教会话按归属域幂等（同章同会话、全局独立）",
+        conv_a == conv_b and conv_g1 == conv_g2 and conv_g1 != conv_a,
+        f"doc={conv_a[:8]} global={conv_g1[:8]}",
+    )
+    check(
+        "lookup_learned_section：命中已学章节并带来源引用",
+        learned.get("status") == "success"
+        and len(learned.get("hits", [])) >= 1
+        and bool(learned["hits"][0].get("references")),
+        json.dumps(learned, ensure_ascii=False)[:160],
+    )
+    check(
+        "lookup_learned_section：排除当前章节（防把正在读的内容当旧知）",
+        excluded.get("status") == "not_found",
+        json.dumps(excluded, ensure_ascii=False)[:120],
+    )
+    check(
+        "lookup_past_mistakes：命中历史错题（课程练习）",
+        mistakes.get("status") == "success" and len(mistakes.get("hits", [])) >= 1,
+        json.dumps(mistakes, ensure_ascii=False)[:160],
+    )
+    s, body = call(base, "/api/assistant/session", "POST", {"context_type": "document", "context_id": document_id})
+    check(
+        "助教会话 API 幂等取回（与直连服务层同 ID）",
+        s == 200 and body.get("conversation_id") == conv_a,
+        str(body)[:120],
+    )
+    s, body = call(base, "/api/assistant/session", "POST", {"context_type": "bogus", "context_id": ""})
+    check("助教会话非法归属域 → 400", s == 400, str(body)[:120])
+    s, body = call(
+        base,
+        f"/api/conversations/{conv_a}/messages/stream",
+        "POST",
+        {"content": "指针和引用有什么区别？", "scene": {"kind": "reading", "document_id": document_id}},
+    )
+    check(
+        "助教流式端点未配 LLM → 400 快速失败",
+        s == 400 and "LLM" in str(body.get("detail", "")),
+        str(body)[:120],
+    )
+    s, body = call(base, f"/api/conversations/{conv_id}/messages/stream", "POST", {"content": "hi"})
+    check("划线会话拒绝走助教端点 → 400", s == 400, str(body)[:120])
+
     # 6.7 搜索 / 学习时长 / 仪表盘扩展 / 导出 / 备份
     s, body = call(base, "/api/search", )
     check("空搜索词 → 400", s == 400, str(body)[:80])
