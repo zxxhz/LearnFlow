@@ -65,7 +65,6 @@ import type {
   MindMapNodeDetailSSEEvent,
   MindMapNodeQASSEEvent,
   SolveSSEEvent,
-  TutorSSEEvent,
   TodayStudyHubOut,
   RelayConfig,
   RelayStatus,
@@ -191,7 +190,8 @@ export async function saveBlobAs(
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  // click 同步建立下载引用后即可回收，10s 长延迟在极慢设备上反而可能 revoke 于取流前
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 
   showToast(`✅ 导出成功：已保存至系统“下载”目录（${name}）`, {
     action: {
@@ -820,13 +820,6 @@ export const api = {
   },
   dashboard: {
     summary: () => request<DashboardSummary>("/dashboard/summary"),
-  },
-  tutor: {
-    diagnoseSSE: (
-      body: { exercise_id: string; content: string; question?: string; mode?: "socratic" | "direct" },
-      onEvent: (ev: TutorSSEEvent) => void,
-      signal?: AbortSignal
-    ) => streamSSE<TutorSSEEvent>("/tutor/diagnose", body, onEvent, signal),
   },
   solve: {
     photoSSE: (

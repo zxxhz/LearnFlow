@@ -117,6 +117,11 @@ export function Spinner({ className = "" }: { className?: string }) {
 // 栈为空时直接放行，不影响阅读页抽屉等原有 Esc 行为。
 type EscEntry = { token: symbol; onEsc: () => void };
 const _escStack: EscEntry[] = [];
+
+/** 供全局快捷键判断当前是否有模态/抽屉打开（打开时屏蔽 Ctrl+B/Ctrl+J 等穿透快捷键） */
+export function isModalOpen(): boolean {
+  return _escStack.length > 0;
+}
 if (typeof window !== "undefined") {
   window.addEventListener(
     "keydown",

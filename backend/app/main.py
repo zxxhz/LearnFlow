@@ -217,10 +217,12 @@ def _is_trusted_host(h_host: str) -> bool:
     if h_host in _TRUSTED_HOSTS:
         return True
     try:
-        ipaddress.ip_address(h_host)
-        return True
+        ip = ipaddress.ip_address(h_host)
     except ValueError:
         return False
+    # 收紧（v0.5.2 体检 P3）：只放行回环/私网/链路本地，公网 IP 字面量（8.8.8.8 等）
+    # 不再天然受信；正常访问面 = 本机回环 + 局域网私网地址，不受影响
+    return ip.is_loopback or ip.is_private or ip.is_link_local
 
 
 class _AccessGuard:

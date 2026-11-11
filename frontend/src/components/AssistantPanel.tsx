@@ -102,6 +102,7 @@ export default function AssistantPanel({
   // 模型自主沙箱运行的一次性授权卡（v0.5.1 体检 P1）：后端挂起等待，超时/拒绝即跳过
   const [pendingConfirm, setPendingConfirm] = useState<{ name: string; seq: number } | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmError, setConfirmError] = useState("");
   // 标注管理（仅阅读页划线入口）
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState(annotation?.note ?? "");
@@ -228,11 +229,27 @@ export default function AssistantPanel({
             acc += ev.text;
             flusher.push(acc);
           } else if (ev.type === "error") {
-            flusher.flushNow();
+            flusher.cancel();
             setIsThinking(false);
             setToolStatus(null);
             setStreamErr(ev.detail ?? "生成失败，请重试");
-            if (!acc) setStreaming("");
+            // 半截文本压入 localMsgs：以 deferMath=false 完整渲染（公式/富块补渲染），
+            // 否则残留 streaming 永久停在 deferMath 占位（v0.5.2 体检 P3）
+            if (acc) {
+              setLocalMsgs((prev) => [
+                ...prev,
+                {
+                  id: `partial-asst-${Date.now()}`,
+                  conversation_id: convId,
+                  role: "assistant",
+                  content: `${acc}
+
+> ⚠️ 回复在此中断（${ev.detail ?? "生成失败"}），以上为已完成部分。`,
+                  created_at: new Date().toISOString(),
+                },
+              ]);
+            }
+            setStreaming("");
           } else if (ev.type === "done") {
             flusher.cancel(); // 最终全文走 localMsgs 的 MarkdownLite 完整渲染
             const assistantText = acc || ev.content || "";
@@ -262,6 +279,9 @@ export default function AssistantPanel({
         setIsThinking(false);
         setToolStatus(null);
         setStreamErr(`网络错误：${(e as Error).message}`);
+      } else {
+        // 中止流：取消残留 flush 定时器，防止 ≤120ms 后旧残文闪入新回合（v0.5.2 体检 P3）
+        flusher.cancel();
       }
     } finally {
       // 服务端干净关流但未发 done/error（如静默断连）时不能永久卡在思考态
@@ -276,10 +296,17 @@ export default function AssistantPanel({
     setConfirmBusy(true);
     try {
       await api.assistant.confirmTool(convId, { approve, remember });
-    } catch {
-      /* 409（超时已被服务端跳过）等竞态：收起卡片即可 */
+      setPendingConfirm(null);
+    } catch (e) {
+      // 仅 409（超时已被服务端跳过）静默收起；网络/服务异常保留卡片提示重试，
+      // 否则表现为「点了没反应、AI 卡 3 分钟超时」（v0.5.2 体检 P2）
+      const status = (e as { status?: number }).status;
+      if (status === 409) {
+        setPendingConfirm(null);
+      } else {
+        setConfirmError("授权提交失败，请重试");
+      }
     }
-    setPendingConfirm(null);
     setConfirmBusy(false);
   };
 
@@ -413,6 +440,7 @@ export default function AssistantPanel({
               <p className="mt-1 text-[0.82em] leading-relaxed text-gray-600 dark:text-gray-400">
                 代码将在本地真实执行，经你授权后才会运行；3 分钟未确认将自动跳过。
               </p>
+              {confirmError && <p className="mt-1 text-[0.82em] font-medium text-red-600 dark:text-red-400">{confirmError}</p>}
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <Button
                   className="bg-amber-600 text-white hover:bg-amber-700"

@@ -660,10 +660,10 @@ def main() -> None:
         check("删除练习题", s == 200)
         s, body = call(base, f"/api/exercises?document_id={document_id}")
         check("删除后列表剩 5 题", s == 200 and len(body) == 5)
-        s, body = call(base, "/api/tutor/diagnose", "POST", {"exercise_id": ex_code["id"], "content": "   "})
-        check("助教诊断空内容 → 400", s == 400, str(body)[:120])
-        s, body = call(base, "/api/tutor/diagnose", "POST", {"exercise_id": "nonexistent", "content": "print(1)"})
-        check("助教诊断不存在题目 → 404", s == 404, str(body)[:120])
+        s, body = call(base, f"/api/conversations/{conv_id}/messages/stream", "POST", {"content": "   "})
+        check("助教流式空内容 → 400", s == 400, str(body)[:120])
+        s, body = call(base, "/api/conversations/nonexistent/messages/stream", "POST", {"content": "hi"})
+        check("助教流式不存在会话 → 404", s == 404, str(body)[:120])
 
         # 6.61 学习者画像与认知诊断模型验证
         async def _test_learner_models():
@@ -924,6 +924,36 @@ def main() -> None:
     s, body = call(base, f"/api/conversations/{conv_id}/messages/stream", "POST", {"content": "hi"})
     check("划线会话拒绝走助教端点 → 400", s == 400, str(body)[:120])
 
+    # 6.69 api_key 落盘 DPAPI 加密（v0.5.2 体检 P1：沙箱同用户可读宿主文件，明文密钥可被直接提取）
+    s, body = call(base, "/api/settings", "PUT", {"llm": {"base_url": "https://canary.example.com/v1", "api_key": "sk-test-canary-9527", "model": "canary-model"}})
+    check("canary key 写入设置", s == 200, str(body)[:120])
+
+    async def _read_stored_llm():
+        from app.core.db import async_session_factory as _dbf3
+        from app.models import AppSetting
+
+        async with _dbf3() as s3:
+            row = await s3.get(AppSetting, "local")
+            return json.loads(row.llm) if row and row.llm else {}
+
+    cfg_stored = asyncio.run(_read_stored_llm())
+    stored_key = str((cfg_stored or {}).get("api_key", ""))
+    check(
+        "api_key 落盘为 DPAPI 密文（非明文）",
+        stored_key.startswith("dpapi:") and "sk-test-canary-9527" not in json.dumps(cfg_stored),
+        f"prefix={stored_key[:12]!r}",
+    )
+    from app.services.secretbox import decrypt_secret as _decrypt_secret
+
+    check(
+        "DPAPI 解密还原明文密钥",
+        _decrypt_secret(stored_key) == "sk-test-canary-9527",
+        "roundtrip",
+    )
+    # 还原为未配置态（api_key 继承语义下 model 置空即可让后续「LLM 未配置 → 400」检查成立）
+    s, body = call(base, "/api/settings", "PUT", {"llm": {"base_url": "", "api_key": "", "model": ""}})
+    check("设置还原为未配置态", s == 200, str(body)[:120])
+
     # 6.7 搜索 / 学习时长 / 仪表盘扩展 / 导出 / 备份
     s, body = call(base, "/api/search", )
     check("空搜索词 → 400", s == 400, str(body)[:80])
@@ -1010,8 +1040,10 @@ def main() -> None:
     check("组卷(LLM未配置) → 400", s == 400, str(body)[:120])
     s, body = call(base, f"/api/courses/{course_id}/ask", "POST", {"question": "指针是什么"})
     check("全课问答(LLM未配置) → 400", s == 400, str(body)[:120])
-    s, body = call(base, "/api/tutor/diagnose", "POST", {"exercise_id": ex_code["id"], "content": "print(1)"})
-    check("助教诊断(LLM未配置) → 400", s == 400, str(body)[:120])
+    s, body = call(base, "/api/assistant/session", "POST", {"context_type": "global", "context_id": ""})
+    g_conv = body.get("conversation_id", "")
+    s, body = call(base, f"/api/conversations/{g_conv}/messages/stream", "POST", {"content": "你好"})
+    check("助教答疑(LLM未配置) → 400", s == 400, str(body)[:120])
 
     # 9. 高数图形化（PRD §5.9）：SymPy + Matplotlib 渲染
     s, body = call(base, "/api/math/render", "POST", {"expressions": "sin(x)/x\ntan(x)", "x_min": -6.5, "x_max": 6.5})

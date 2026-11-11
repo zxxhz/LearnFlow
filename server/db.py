@@ -6,6 +6,7 @@
 3. 纯 Python 标准库 sqlite3 实现，开启 WAL 模式保证高并发读性能与极致稳定性。
 """
 import asyncio
+import threading
 import json
 import logging
 import sqlite3
@@ -27,6 +28,8 @@ class RelayDatabase:
 
     def __init__(self, db_path: Optional[Path] = None):
         self.db_path = db_path or (settings.data_dir / "relay.db")
+
+    _profile_lock = threading.Lock()
 
     def _get_connection(self) -> sqlite3.Connection:
         if str(self.db_path) != ":memory:":
@@ -965,28 +968,33 @@ class RelayDatabase:
         background_summary: Optional[str] = None,
         socratic_mode: Optional[bool] = None,
     ) -> dict[str, Any]:
-        """更新学习者认知画像设置（背景描述与苏格拉底模式）。"""
-        current = self.get_learner_profile_sync()
-        if background_summary is not None:
-            current["background_summary"] = str(background_summary).strip()
-        if socratic_mode is not None:
-            current["socratic_mode"] = bool(socratic_mode)
-        now_str = _now_iso()
-        current["updated_at"] = now_str
+        """更新学习者认知画像设置（背景描述与苏格拉底模式）。
 
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO learner_profile (id, data, updated_at)
-                VALUES ('local', ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    data = excluded.data,
-                    updated_at = excluded.updated_at
-                """,
-                (json.dumps(current, ensure_ascii=False), now_str),
-            )
-            conn.commit()
+        读改写收进进程内互斥锁（v0.5.2 体检 P2）：此前跨两个连接读-改-写，
+        与并发 push/save_sync_payload 交错时互相整包覆盖（丢更新/复活已删盲区）。
+        """
+        with self._profile_lock:
+            current = self.get_learner_profile_sync()
+            if background_summary is not None:
+                current["background_summary"] = str(background_summary).strip()
+            if socratic_mode is not None:
+                current["socratic_mode"] = bool(socratic_mode)
+            now_str = _now_iso()
+            current["updated_at"] = now_str
+
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO learner_profile (id, data, updated_at)
+                    VALUES ('local', ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        data = excluded.data,
+                        updated_at = excluded.updated_at
+                    """,
+                    (json.dumps(current, ensure_ascii=False), now_str),
+                )
+                conn.commit()
         return current
 
     async def update_learner_profile(

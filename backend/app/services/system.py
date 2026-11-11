@@ -214,7 +214,8 @@ def create_backup() -> Path:
     snapshot.unlink(missing_ok=True)
     try:
         with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
-            engine.sync_engine.dispose()
+            # 不 dispose 共享连接池（v0.5.2 体检 P3）：VACUUM INTO 用独立连接即可拿到
+            # 一致快照；dispose 清掉空闲连接会让备份瞬间的并发请求全部重建连接抖动
             import sqlite3
 
             consistent = settings.db_path.exists() and _vacuum_snapshot(snapshot)

@@ -44,7 +44,8 @@ class AssistantSessionRequest(BaseModel):
 
 
 class AssistantMessageRequest(BaseModel):
-    content: str
+    # 与 MessageCreate(max_length=8000) 对齐：原始未限长消息全文落库会持久膨胀
+    content: str = Field(max_length=8000)
     # 每条消息附带的现场上下文（阅读划选 / 练习代码与判题 / 题库作答），场景护栏按此切换
     scene: dict = Field(default_factory=dict)
 
@@ -118,10 +119,14 @@ async def assistant_message_stream(
         yield f"data: {json.dumps({'type': 'user_ack', 'message': user_msg_dict}, ensure_ascii=False)}\n\n"
         buffer: list[str] = []
         stream_finished = False
+        # 已落库的消息 id（finally 与正常路径共用，幂等防重复保存）
+        saved_msg_id: list[int | None] = [None]
         agent_stream = stream_assistant_reply(db, conv, scene, adapter)
 
         async def persist_reply() -> int | None:
             """已生成的回复（含断连/异常时的半截）落库，保证 user/assistant 成对。"""
+            if saved_msg_id[0] is not None:
+                return saved_msg_id[0]
             full_content = "".join(buffer)
             if not full_content.strip():
                 return None
@@ -135,6 +140,7 @@ async def assistant_message_stream(
                 )
                 s.add(saved)
                 await s.commit()
+                saved_msg_id[0] = saved.id
                 return saved.id
 
         try:
@@ -146,13 +152,8 @@ async def assistant_message_stream(
                     stream_finished = True
                     break
                 yield f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
-        except asyncio.CancelledError:
-            # 客户端断连：半截回复也要落库（v0.5.1 体检 P2——LLM 已消耗的 token 不能凭空蒸发）
-            await persist_reply()
-            raise
         except Exception:  # noqa: BLE001
             logger.exception("助教 SSE 事件转发异常")
-            await persist_reply()
             yield f"data: {json.dumps({'type': 'error', 'detail': '服务异常，请稍后重试'}, ensure_ascii=False)}\n\n"
             return
         finally:
@@ -160,8 +161,15 @@ async def assistant_message_stream(
                 await agent_stream.aclose()
             except Exception:
                 pass
+            # 断连/异常/正常结束统一在此落库（v0.5.2 体检 P2 实证：Starlette 断连走
+            # GeneratorExit/GC 终结器而非 CancelledError，except 分支覆盖不到主流断连时序；
+            # finally 是生成器唯一的确定性收尾点，LLM 已消耗的半截回复不能凭空蒸发）
+            try:
+                await persist_reply()
+            except Exception:  # noqa: BLE001
+                logger.exception("半截回复落库失败（忽略，不影响流已发内容）")
 
-        msg_id = await persist_reply()
+        msg_id = saved_msg_id[0] or await persist_reply()
         full_content = "".join(buffer)
 
         # 画像演进：轻量解析学科域（不重跑上下文组装/沙箱），盖章 + 证据溯源到该会话

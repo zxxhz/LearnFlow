@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Course, Document, Exercise, ExerciseAttempt, KnowledgePoint
@@ -787,7 +788,13 @@ async def submit(
         )
 
     db.add(attempt)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        # 并发清理（组卷重生成/练习替换）删掉了本题：作答流水失去 FK 归宿，
+        # 转成明确的 409 语义而不是裸 500（v0.5.2 体检 P2）
+        await db.rollback()
+        raise LookupError("题目刚被清理（组卷重新生成或练习替换），请刷新后重试") from e
     # 盲区证据闭环：独立做对（未存疑）时自动关闭挂在该题上的盲区
     if passed and not is_doubtful:
         trigger_misconception_auto_resolve(MISCONCEPTION_SOURCE_EXERCISE, exercise.id)

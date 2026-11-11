@@ -268,6 +268,12 @@ def _bank_lock(bank_id: str) -> asyncio.Lock:
     return lock
 
 
+def bank_lock(bank_id: str) -> asyncio.Lock:
+    """公共访问器：relay pull 等跨模块写路径与本服务共用同一把库级锁，
+    防止云端合并绕过本地写锁造成丢失更新（v0.5.2 体检 P1）。"""
+    return _bank_lock(bank_id)
+
+
 async def append_questions(
     db: AsyncSession, bank: QuestionBank, formatted_questions: list[dict]
 ) -> int:
@@ -1009,6 +1015,8 @@ async def delete_bank(db: AsyncSession, bank: QuestionBank) -> None:
     全程持写锁防止与并发追加、替换或作答提交冲突。
     """
     async with _bank_lock(bank.id):
+        # 不从 _bank_locks pop（v0.5.2 体检 P3）：已排队的协程持旧锁对象时，
+        # pop 会让新请求建新锁立刻获得 → 同一 bank 两段并行临界区
         await db.execute(
             BankAttempt.__table__.delete().where(BankAttempt.bank_id == bank.id)
         )
@@ -1017,7 +1025,6 @@ async def delete_bank(db: AsyncSession, bank: QuestionBank) -> None:
         )
         await db.delete(bank)
         await db.commit()
-        _bank_locks.pop(bank.id, None)
 
     bank_dir = settings.data_dir / "banks" / bank.id
     trash_dir = settings.data_dir / "banks" / f".trash-{bank.id}"

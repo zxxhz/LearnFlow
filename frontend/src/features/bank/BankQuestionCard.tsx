@@ -209,8 +209,11 @@ export default function BankQuestionCard({
         ctrl.signal
       );
     } catch (e) {
-      flusher.flushNow();
-      if ((e as Error).name !== "AbortError") {
+      if ((e as Error).name === "AbortError") {
+        // 用户主动中止：丢弃缓冲，不把半截解析当终稿回调落草稿（v0.5.2 体检 P2）
+        flusher.cancel();
+      } else {
+        flusher.flushNow();
         setAiThinking(false);
         setAiStreaming(false);
         setAiError(`网络或服务异常：${(e as Error).message}`);

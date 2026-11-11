@@ -1,4 +1,5 @@
 """随堂小测（PRD §5.10 延伸）：跨知识点组卷，只出可自动判定的题型，复用练习判定。"""
+import asyncio
 import json
 import logging
 
@@ -26,7 +27,28 @@ async def _kp_texts(db: AsyncSession, kp: KnowledgePoint, cap: int = 1200) -> st
     return joined[:cap]
 
 
+# 同章组卷互斥（v0.5.2 体检 P2）：两个并发 /quizzes/generate 各自只清理进入时
+# 记录的旧 quiz id，后提交者看不到先提交者新建的 quiz → 同章节两套并行小测。
+# 进程内字典锁与 _bank_lock 同款模式（单 uvicorn worker 拓扑）。
+_quiz_locks: dict[str, asyncio.Lock] = {}
+
+
+def _quiz_lock(document_id: str) -> asyncio.Lock:
+    lock = _quiz_locks.get(document_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _quiz_locks[document_id] = lock
+    return lock
+
+
 async def generate_quiz(
+    db: AsyncSession, document_id: str, kp_ids: list[str], language: str, per_kp: int
+) -> Quiz:
+    async with _quiz_lock(document_id):
+        return await _generate_quiz_locked(db, document_id, kp_ids, language, per_kp)
+
+
+async def _generate_quiz_locked(
     db: AsyncSession, document_id: str, kp_ids: list[str], language: str, per_kp: int
 ) -> Quiz:
     document = await db.get(Document, document_id)

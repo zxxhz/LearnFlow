@@ -3,6 +3,8 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
+
+from app.core.sse import SSE_HEADERS
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -405,4 +407,4 @@ async def progress(course_id: str, db: AsyncSession = Depends(get_db)):
         finally:
             pipeline.unsubscribe(course_id, queue)
 
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(gen(), media_type="text/event-stream", headers=SSE_HEADERS)

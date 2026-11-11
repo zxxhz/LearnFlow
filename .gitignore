@@ -47,3 +47,6 @@ latest*.json
 
 # review/测试实证脚本残留的临时 sqlite 目录
 tmp_*/
+
+# 并发审查进程残留的数据目录
+lf_cc_*/

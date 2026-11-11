@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation, Link } from "react-router-dom";
 import Layout from "./components/Layout";
 import ErrorBoundary from "./components/ErrorBoundary";
 import AuthGate from "./components/AuthGate";
@@ -24,33 +24,145 @@ function BankDrillRoute() {
   return <BankDrillPage key={bankId} />;
 }
 
+/** 路由粒度错误边界（v0.5.2 体检 P1）：key 随路径变化强制重挂载，
+ * 任一页面渲染崩溃后站内导航即可自救，不再瘫痪整个 Layout 外壳；全局兜底边界保留。 */
+function RoutedErrorBoundary({ children }: { children: React.ReactNode }) {
+  const location = useLocation();
+  return <ErrorBoundary key={location.pathname}>{children}</ErrorBoundary>;
+}
+
+/** 404 兜底：给迷路用户一个回得去的入口 */
+function NotFoundRoute() {
+  return (
+    <div className="p-10 text-center text-gray-500 dark:text-gray-400">
+      <p>页面不存在</p>
+      <Link to="/" className="mt-3 inline-block text-brand-600 underline dark:text-brand-400">
+        返回首页
+      </Link>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
       <AuthGate />
       <Routes>
         <Route element={<Layout />}>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/mindmap" element={<MindMapListPage />} />
-          <Route path="/mindmap/:mapId" element={<MindMapCanvasPage />} />
-          <Route path="/courses/new" element={<NewCoursePage />} />
-          <Route path="/import" element={<ImportPage />} />
-          <Route path="/solve" element={<SnapSolvePage />} />
-          <Route path="/courses/:courseId" element={<CourseDetailPage />} />
-          <Route path="/read/:documentId" element={<ReaderPage />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/wrongbook" element={<WrongBookPage />} />
-          <Route path="/search" element={<SearchPage />} />
-          <Route path="/bank" element={<BankListPage />} />
+          <Route
+            path="/"
+            element={
+              <RoutedErrorBoundary>
+                <HomePage />
+              </RoutedErrorBoundary>
+            }
+          />
+          <Route
+            path="/mindmap"
+            element={
+              <RoutedErrorBoundary>
+                <MindMapListPage />
+              </RoutedErrorBoundary>
+            }
+          />
+          <Route
+            path="/mindmap/:mapId"
+            element={
+              <RoutedErrorBoundary>
+                <MindMapCanvasPage />
+              </RoutedErrorBoundary>
+            }
+          />
+          <Route
+            path="/courses/new"
+            element={
+              <RoutedErrorBoundary>
+                <NewCoursePage />
+              </RoutedErrorBoundary>
+            }
+          />
+          <Route
+            path="/import"
+            element={
+              <RoutedErrorBoundary>
+                <ImportPage />
+              </RoutedErrorBoundary>
+            }
+          />
+          <Route
+            path="/solve"
+            element={
+              <RoutedErrorBoundary>
+                <SnapSolvePage />
+              </RoutedErrorBoundary>
+            }
+          />
+          <Route
+            path="/courses/:courseId"
+            element={
+              <RoutedErrorBoundary>
+                <CourseDetailPage />
+              </RoutedErrorBoundary>
+            }
+          />
+          <Route
+            path="/read/:documentId"
+            element={
+              <RoutedErrorBoundary>
+                <ReaderPage />
+              </RoutedErrorBoundary>
+            }
+          />
+          <Route
+            path="/dashboard"
+            element={
+              <RoutedErrorBoundary>
+                <DashboardPage />
+              </RoutedErrorBoundary>
+            }
+          />
+          <Route
+            path="/wrongbook"
+            element={
+              <RoutedErrorBoundary>
+                <WrongBookPage />
+              </RoutedErrorBoundary>
+            }
+          />
+          <Route
+            path="/search"
+            element={
+              <RoutedErrorBoundary>
+                <SearchPage />
+              </RoutedErrorBoundary>
+            }
+          />
+          <Route
+            path="/bank"
+            element={
+              <RoutedErrorBoundary>
+                <BankListPage />
+              </RoutedErrorBoundary>
+            }
+          />
           {/* bankId 变化时强制重挂载：做题草稿/轮次/错题解析等整套状态不跨题库残留 */}
           <Route
             path="/bank/:bankId"
             element={
-              <BankDrillRoute />
+              <RoutedErrorBoundary>
+                <BankDrillRoute />
+              </RoutedErrorBoundary>
             }
           />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="*" element={<div className="p-10 text-gray-500 dark:text-gray-400">页面不存在</div>} />
+          <Route
+            path="/settings"
+            element={
+              <RoutedErrorBoundary>
+                <SettingsPage />
+              </RoutedErrorBoundary>
+            }
+          />
+          <Route path="*" element={<NotFoundRoute />} />
         </Route>
       </Routes>
     </ErrorBoundary>

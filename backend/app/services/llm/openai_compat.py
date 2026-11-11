@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.settings import AppSetting
 from app.services.llm.base import LLMAdapter
+from app.services.secretbox import decrypt_llm_config
 from app.services.llm.errors import (
     LLMAuthError,
     LLMConnectionError,
@@ -262,6 +263,8 @@ async def create_adapter_from_settings(
     except json.JSONDecodeError:
         # 损坏的设置 JSON 不能让所有 LLM 功能 500 且无法自愈：按未配置处理，设置页保存即覆盖修复
         cfg = {}
+    # api_key 落盘为 DPAPI 密文（v0.5.2 体检 P1）：适配层消费前统一解密，兼容明文存量
+    cfg = decrypt_llm_config(cfg)
     merged = {
         "base_url": cfg.get("base_url", ""),
         "api_key": cfg.get("api_key", ""),

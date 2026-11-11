@@ -159,6 +159,16 @@ async def _extract_kp(
         return None
 
 
+# 拍照解码全局并发闸（v0.5.2 体检 P3）：单请求 8 张×60MP 的解码瞬态内存可观，
+# LAN 多端同时导入再叠多层就是 GB 级；限 2 路并发放大上限
+_PHOTO_DECODE_SEM = asyncio.Semaphore(2)
+
+
+async def _run_photo_decode(fn, *args):
+    async with _PHOTO_DECODE_SEM:
+        return await asyncio.to_thread(fn, *args)
+
+
 async def _vision_transcribe_markdown(
     db: AsyncSession, data_urls: list[str], hint: str, source_label: str
 ) -> str:
@@ -172,7 +182,7 @@ async def _vision_transcribe_markdown(
             detail="尚未配置 LLM 服务，请先到「设置」页填写 base_url、API Key 和模型名",
         ) from e
 
-    system_prompt = render_prompt("import_transcribe", HINT=hint.strip() or "（未填写）")
+    system_prompt = render_prompt("import_transcribe", HINT=(hint or "").strip()[:2_000] or "（未填写）")
     instruction = (
         f"请将以下 {len(data_urls)} 张{source_label}转写为 Markdown 学习材料，"
         "按系统规则处理（忠实转写 + 概念通俗解释扩充 + 例题补全解题过程）。"
@@ -219,8 +229,8 @@ async def import_photo_transcribe(
     返回 {content}；前端将其合成 File 复用现有 analyze/confirm 建课链路。
     """
     # Pillow 解码/缩放是秒级 CPU 活：放线程池跑，避免冻结事件循环（SSE/心跳全停）
-    data_urls = await asyncio.to_thread(compress_to_data_urls, images, MAX_PHOTO_IMAGES)
-    content = await _vision_transcribe_markdown(db, data_urls, hint, "书籍页面照片")
+    data_urls = await _run_photo_decode(compress_to_data_urls, images, MAX_PHOTO_IMAGES)
+    content = await _vision_transcribe_markdown(db, data_urls, (hint or "").strip()[:2_000], "书籍页面照片")
     return {"content": content}
 
 

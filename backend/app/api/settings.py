@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
+from app.core.sse import SSE_HEADERS
 from app.models import AppSetting
 from app.models.base import utcnow_iso
 from app.schemas.settings import (
@@ -21,6 +22,7 @@ from app.schemas.settings import (
     SettingsUpdate,
 )
 from app.services.llm import create_adapter_from_settings
+from app.services.secretbox import decrypt_llm_config, encrypt_llm_config
 from app.services.llm.errors import LLMError
 
 logger = logging.getLogger(__name__)
@@ -63,7 +65,8 @@ def _load_llm_json(row: AppSetting) -> dict:
     except (json.JSONDecodeError, TypeError) as e:
         logger.warning("本地设置 llm 字段损坏（%s），已回落默认配置", e)
         return dict(DEFAULT_LLM)
-    return data if isinstance(data, dict) else dict(DEFAULT_LLM)
+    # api_key 落盘为 DPAPI 密文（v0.5.2 体检 P1）：读取时统一解密，读路径兼容明文存量
+    return decrypt_llm_config(data) if isinstance(data, dict) else dict(DEFAULT_LLM)
 
 
 def _masked_out(row: AppSetting) -> SettingsOut:
@@ -123,7 +126,9 @@ async def update_settings(body: SettingsUpdate, db: AsyncSession = Depends(get_d
         }
     if body.preferences is not None:
         row.preferences = json.dumps(body.preferences.model_dump())
-    row.llm = json.dumps(current)
+    # 落库前统一加密 api_key（主配置 + 场景槽位）：沙箱同用户可读宿主文件，
+    # 明文密钥可被沙箱代码直接提取（v0.5.2 体检 P1 金丝雀实证）
+    row.llm = json.dumps(encrypt_llm_config(current))
     row.updated_at = utcnow_iso()
     await db.commit()
     return _masked_out(row)
@@ -393,9 +398,5 @@ async def in_app_install(request: Request, target_version: str, url: str | None 
     return StreamingResponse(
         stream_download_and_install(target_version, url),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers=SSE_HEADERS,
     )

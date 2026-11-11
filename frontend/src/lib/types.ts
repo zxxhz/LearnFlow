@@ -521,16 +521,6 @@ export interface ChatSSEEvent {
   suggest_evaluate?: boolean;
 }
 
-/** 助教伴学诊断 SSE：含工具调用事件（tool_result.result 可能携带 render_math_plot 的 svg） */
-export interface TutorSSEEvent {
-  type: "tool_call" | "tool_result" | "delta" | "done" | "error";
-  name?: string;
-  args?: Record<string, unknown>;
-  result?: { svg?: string; [key: string]: unknown };
-  text?: string;
-  detail?: string;
-}
-
 /** 拍照解题 SSE 事件（/solve/photo） */
 export interface SolveSSEEvent {
   type: "delta" | "done" | "error";

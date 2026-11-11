@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import codecs
 import json
 import logging
 from collections.abc import Callable, Coroutine
@@ -42,6 +43,27 @@ _HOP_BY_HOP_OR_SENSITIVE_HEADERS = {
     "upgrade",
 }
 
+# 云端隧道回源黑名单（v0.5.2 体检 P1）：worker 回源 127.0.0.1 天然绕过 _AccessGuard
+# （回环免令牌 + Origin/Host 被剥离），恶意/被接管的中转服务器不得借隧道触达
+# 沙箱执行、应用内更新、系统备份、LLM 配置改写与中转配置本身。GET 只读豁免
+# （全站 42 个 GET 路由经审查无状态变更）。
+_RELAY_BLOCKED_PREFIXES = (
+    "/api/executions",
+    "/api/runtime",
+    "/api/update",
+    "/api/system",
+    "/api/settings",
+    "/api/relay",
+    "/api/import",
+)
+
+
+def _relay_path_allowed(method: str, path: str) -> bool:
+    if method == "GET":
+        return True
+    lowered = path.lower()
+    return not lowered.startswith(_RELAY_BLOCKED_PREFIXES)
+
 
 async def handle_relay_request(
     send_fn: Callable[[dict[str, Any]], Coroutine[Any, Any, None]],
@@ -69,6 +91,16 @@ async def handle_relay_request(
     path = message.get("path") or "/"
     if not path.startswith("/"):
         path = "/" + path
+
+    if not _relay_path_allowed(method, path):
+        logger.warning("拒绝隧道回源黑名单请求: id=%s %s %s", request_id, method, path)
+        await send_fn({
+            "type": "chunk",
+            "request_id": request_id,
+            "data": '{"detail":"该接口不允许经云端隧道调用"}',
+        })
+        await send_fn({"type": "end", "request_id": request_id, "status_code": 403, "headers": {"content-type": "application/json"}})
+        return
 
     raw_headers = message.get("headers") or {}
     query_params = message.get("query_params") or None
@@ -125,11 +157,14 @@ async def handle_relay_request(
 
             # 逐 chunk 流式读取并实时推送回云端
             try:
+                # 增量 UTF-8 解码器（v0.5.2 体检 P2）：按块独立 decode 会在 TCP 块边界
+                # 劈开多字节中文字符产生 U+FFFD 永久乱码；增量解码器跨块保留半字符状态
+                decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
                 async for chunk in resp.aiter_bytes():
                     if not chunk:
                         continue
                     # LearnFlow 的 AI 响应大多为 SSE (text/event-stream) 或 JSON 文本
-                    chunk_str = chunk.decode("utf-8", errors="replace")
+                    chunk_str = decoder.decode(chunk)
                     await send_fn({
                         "type": "chunk",
                         "request_id": request_id,

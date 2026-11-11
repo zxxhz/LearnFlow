@@ -9,7 +9,7 @@ import { isTauri, openExternalUrl } from "../lib/updater";
 import UpdateDialog from "./UpdateDialog";
 import ServerUpdateDialog from "./ServerUpdateDialog";
 import AssistantPanel from "./AssistantPanel";
-import { Toast } from "./ui";
+import { Toast, isModalOpen } from "./ui";
 import type { ToastPayload } from "../lib/toast";
 import RelayStatusBadge from "./RelayStatusBadge";
 
@@ -125,6 +125,16 @@ function MobileNavDrawer({
     return () => clearTimeout(t);
   }, [open]);
 
+  // 打开期间 Esc 关闭（v0.5.2 体检 P2：移动端抽屉此前无键盘出口）
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!render) return null;
   return (
     <div className="fixed inset-0 z-50 md:hidden" onClick={onClose}>
@@ -141,7 +151,11 @@ function MobileNavDrawer({
       >
         <div className="flex items-center justify-between px-5 py-5">
           <span className="text-xl font-bold text-brand-600">LearnFlow</span>
-          <button className="text-gray-400 dark:text-gray-500" onClick={onClose}>
+          <button
+            className="text-gray-400 dark:text-gray-500"
+            onClick={onClose}
+            aria-label="关闭菜单"
+          >
             ✕
           </button>
         </div>
@@ -184,6 +198,7 @@ export default function Layout() {
       if (isImmersive) return;
       if (e.repeat) return; // 长按连发会高频抖动侧栏与 localStorage
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "b") {
+        if (isModalOpen()) return; // 模态打开时不折叠背景侧栏（v0.5.2 体检 P3）
         const target = e.target as HTMLElement | null;
         if (
           target &&
@@ -273,11 +288,14 @@ export default function Layout() {
 
   // 全局轻量 Toast 反馈（导出完成、系统提示等）
   const [globalToast, setGlobalToast] = useState<ToastPayload | null>(null);
+  const toastSeqRef = useRef(0);
   useEffect(() => {
     const onToast = (e: Event) => {
       const detail = (e as CustomEvent<ToastPayload>).detail;
       if (detail && detail.message) {
-        setGlobalToast(detail);
+        // 递增 seq：连续相同文案时 key 变化强制重挂载，第二条独立计时（v0.5.2 体检 P3）
+        toastSeqRef.current += 1;
+        setGlobalToast({ ...detail, seq: toastSeqRef.current });
       }
     };
     window.addEventListener("learnflow:toast", onToast);
@@ -310,6 +328,7 @@ export default function Layout() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
         if (e.repeat) return;
+        if (isModalOpen()) return; // 模态打开时唤起的助手面板会被 z-50 弹窗盖住，直接不响应
         const target = e.target as HTMLElement | null;
         if (
           target &&
@@ -495,6 +514,7 @@ export default function Layout() {
       )}
       {globalToast && (
         <Toast
+          key={globalToast.seq}
           message={globalToast.message}
           duration={globalToast.duration ?? 4500}
           action={globalToast.action}

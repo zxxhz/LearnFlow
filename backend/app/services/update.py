@@ -451,7 +451,8 @@ async def stream_download_and_install(target_version: str, direct_url: str | Non
 
     完整性 fail-closed（真实现）：仅当能从 GitHub API 取到官方 sha256 时才允许下载；
     下载完成后强比对，取不到官方 sha256 时直接拒绝安装并引导手动下载。
-    镜像不再参与安装包下载（仅保留为 check_update 的 latest.json 回退源）。
+    镜像可参与安装包下载以提升可达性，但 SHA-256 强比对是唯一完整性锚点，
+    镜像与官方源不共享任何信任根；latest.json 回退链仅限官方域。
     """
     import hashlib
     import json
