@@ -249,6 +249,36 @@ async def get_mindmap_detail(mindmap_id: str):
     raise HTTPException(status_code=404, detail="思维导图不存在")
 
 
+@app.get("/api/settings")
+async def get_server_settings():
+    """获取系统设置。
+
+    若本地 Worker 在线优先代理获取；
+    若本地 Worker 离线，安全降级返回云端服务端当前配置，避免纯 Web 模式下设置页 503 报错。
+    """
+    if tunnel_manager.is_worker_online():
+        try:
+            status_code, _, body = await tunnel_manager.dispatch_full("GET", "/api/settings")
+            return Response(content=body, status_code=status_code, media_type="application/json")
+        except Exception:
+            pass
+
+    return {
+        "llm": {
+            "base_url": settings.server_llm_base_url,
+            "model": settings.server_llm_model,
+        },
+        "scenes": {},
+        "preferences": {
+            "chapter_length": 3000,
+            "exercises_per_kp": 3,
+            "highlight_colors": {},
+            "auto_highlight": False,
+            "adhd_mode": "off",
+        },
+    }
+
+
 # ----------------------------------------------------
 # 4. 智能路由：AI 生成、助教与沙箱执行（接入 dispatch_ai_request 统一调度）
 # ----------------------------------------------------

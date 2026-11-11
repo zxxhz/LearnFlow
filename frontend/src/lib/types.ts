@@ -833,6 +833,13 @@ export interface RelayConfig {
   last_sync_at?: string | null;
   last_error?: string | null;
   latency_ms?: number | null;
+  is_relay_server?: boolean;
+  role?: string;
+  service?: string;
+  worker_online?: boolean;
+  server_llm_configured?: boolean;
+  server_llm_model?: string;
+  server_llm_base_url?: string;
 }
 
 export interface RelayStatus {
@@ -846,6 +853,23 @@ export interface RelayStatus {
   last_error?: string | null;
   latency_ms?: number | null;
   message?: string;
+  is_relay_server?: boolean;
+  role?: string;
+  service?: string;
+  worker_online?: boolean;
+  server_llm_configured?: boolean;
+  tunnel?: {
+    worker_online?: boolean;
+    worker_count?: number;
+    worker_info?: any;
+  };
+  ai?: {
+    mode?: RelayAiMode;
+    effective_mode?: "cloud" | "local";
+    server_llm_configured?: boolean;
+    server_llm_model?: string;
+    server_llm_base_url?: string;
+  };
 }
 
 export interface RelayTestResult {

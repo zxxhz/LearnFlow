@@ -175,7 +175,16 @@ def test_auth_and_api():
     assert r.status_code == 200
     data = r.json()
     assert data["status"] == "running"
+    assert data["is_relay_server"] is True
     assert data["auth"]["enabled"] is False
+
+    # 测试 /api/relay/config
+    r_cfg = client.get("/api/relay/config")
+    assert r_cfg.status_code == 200
+    cfg_data = r_cfg.json()
+    assert cfg_data["is_relay_server"] is True
+    assert cfg_data["status"] == "running"
+    assert cfg_data["worker_online"] is False
 
     # 2. 测试开启鉴权模式
     settings.relay_auth_required = True

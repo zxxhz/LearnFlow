@@ -161,13 +161,99 @@ async def test_server_llm_connection(
     return result
 
 
+class RelayConfigUpdateRequest(BaseModel):
+    ai_mode: Optional[str] = None
+    enabled: Optional[bool] = None
+    server_url: Optional[str] = None
+    server_token: Optional[str] = None
+    token: Optional[str] = None
+    auto_sync: Optional[bool] = None
+
+
+@router.get("/config")
+async def relay_server_config():
+    """获取云端服务端视角下的中转与运行配置。
+
+    使 Web 前端直接访问云端服务端时，能够明确感知自身运行在 Relay Server 上，
+    避免将本地 Worker 未连接误判为中转断开，并自适应隐藏客户端专用配置项。
+    """
+    tunnel_status = tunnel_manager.get_status()
+    worker_online = tunnel_status["online"]
+    configured_ai_mode = settings.ai_mode
+    effective_ai_mode = (
+        "local"
+        if (configured_ai_mode == "local" and worker_online) or (configured_ai_mode == "auto" and worker_online)
+        else "cloud"
+    )
+
+    return {
+        "is_relay_server": True,
+        "role": "server",
+        "service": "LearnFlow-Relay-Server",
+        "enabled": True,
+        "status": "running",
+        "server_url": "",
+        "token": "",
+        "ai_mode": configured_ai_mode,
+        "effective_ai_mode": effective_ai_mode,
+        "worker_online": worker_online,
+        "server_llm_configured": settings.is_server_llm_configured(),
+        "server_llm_model": settings.server_llm_model,
+        "server_llm_base_url": settings.server_llm_base_url,
+    }
+
+
+@router.post("/config")
+@router.put("/config")
+async def update_relay_server_config(
+    req: RelayConfigUpdateRequest,
+    _: bool = Depends(require_token),
+):
+    """更新云端服务端 AI 模式等配置。"""
+    if req.ai_mode is not None:
+        mode = req.ai_mode.strip().lower()
+        if mode in ("auto", "local", "cloud"):
+            settings.ai_mode = mode
+            save_persisted_config({"ai_mode": mode})
+
+    tunnel_status = tunnel_manager.get_status()
+    worker_online = tunnel_status["online"]
+    configured_ai_mode = settings.ai_mode
+    effective_ai_mode = (
+        "local"
+        if (configured_ai_mode == "local" and worker_online) or (configured_ai_mode == "auto" and worker_online)
+        else "cloud"
+    )
+
+    return {
+        "is_relay_server": True,
+        "role": "server",
+        "service": "LearnFlow-Relay-Server",
+        "enabled": True,
+        "status": "running",
+        "ai_mode": configured_ai_mode,
+        "effective_ai_mode": effective_ai_mode,
+        "worker_online": worker_online,
+        "server_llm_configured": settings.is_server_llm_configured(),
+    }
+
+
 @router.get("/status")
 async def relay_status():
     """获取中转服务器运行状态（包括 Worker 在线情况、AI 模式与数据存储指标）。"""
     tunnel_status = tunnel_manager.get_status()
     db_stats = await relay_db.get_db_stats()
+    worker_online = tunnel_status["online"]
+    configured_ai_mode = settings.ai_mode
+    effective_ai_mode = (
+        "local"
+        if (configured_ai_mode == "local" and worker_online) or (configured_ai_mode == "auto" and worker_online)
+        else "cloud"
+    )
 
     return {
+        "is_relay_server": True,
+        "role": "server",
         "status": "running",
         "service": "LearnFlow-Relay-Server",
         "version": "1.0.0",
@@ -178,15 +264,18 @@ async def relay_status():
         },
         "ai": {
             "mode": settings.ai_mode,
+            "effective_mode": effective_ai_mode,
             "server_llm_configured": settings.is_server_llm_configured(),
             "server_llm_model": settings.server_llm_model,
             "server_llm_base_url": settings.server_llm_base_url,
         },
         "tunnel": {
-            "worker_online": tunnel_status["online"],
+            "worker_online": worker_online,
             "worker_count": tunnel_status["worker_count"],
             "worker_info": tunnel_status["worker_info"],
         },
+        "worker_online": worker_online,
+        "effective_ai_mode": effective_ai_mode,
         "storage": {
             "db_path": str(relay_db.db_path),
             "stats": db_stats,
