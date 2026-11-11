@@ -22,6 +22,7 @@ export const LearnerProfileSection: React.FC = () => {
   const [socraticMode, setSocraticMode] = useState(true);
   const [confirmReset, setConfirmReset] = useState(false);
   const [feedback, setFeedback] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [misconceptionsOpen, setMisconceptionsOpen] = useState(false); // 易错盲区卡片默认折叠收起
 
   const showFeedback = (type: "success" | "error", text: string) => {
     setFeedback({ type, text });
@@ -267,9 +268,13 @@ export const LearnerProfileSection: React.FC = () => {
             </button>
           </div>
 
-          {/* 薄弱点与易错概念池 */}
+          {/* 薄弱点与易错概念池（默认折叠，支持一键展开/收起） */}
           <div className="pt-2 border-t border-gray-100 dark:border-gray-800">
-            <div className="flex items-center justify-between mb-3">
+            <button
+              type="button"
+              onClick={() => setMisconceptionsOpen(!misconceptionsOpen)}
+              className="flex w-full items-center justify-between py-1.5 text-left hover:opacity-85 transition cursor-pointer select-none"
+            >
               <div className="flex items-center gap-2">
                 <span className="text-sm">🎯</span>
                 <h3 className="text-sm font-medium text-gray-800 dark:text-gray-200">
@@ -279,77 +284,88 @@ export const LearnerProfileSection: React.FC = () => {
                   {profile?.misconceptions?.length || 0}
                 </span>
               </div>
-              <span className="text-xs text-gray-400">点击「掌握」可将已理解概念从画像中剔除</span>
-            </div>
-
-            {(!profile?.misconceptions || profile.misconceptions.length === 0) ? (
-              <div className="py-6 px-4 rounded-xl border border-dashed border-gray-200 dark:border-gray-800 text-center">
-                <p className="text-xs text-gray-400 dark:text-gray-500">
-                  暂无记录。随着你在课程划线提问、伴学助教对话或错题复盘，系统将自动汇总易错卡点。
-                </p>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-400 hidden sm:inline">
+                  {misconceptionsOpen ? "点击「掌握」可将已理解概念从画像中剔除" : "点击展开卡片明细"}
+                </span>
+                <span className="text-xs text-brand-600 dark:text-brand-400 font-medium">
+                  {misconceptionsOpen ? "收起 ▾" : "展开卡片 ▸"}
+                </span>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                {profile.misconceptions.map((item: LearnerMisconception) => {
-                  const scope = scopeMeta(item.scope);
-                  return (
-                    <div
-                      key={item.id}
-                      className="flex flex-col justify-between p-3.5 rounded-xl border border-gray-200/80 dark:border-gray-800 bg-white dark:bg-gray-900/60 shadow-xs hover:border-brand-300 dark:hover:border-brand-700/60 transition group"
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-semibold text-gray-800 dark:text-gray-100 line-clamp-1">
-                            {item.topic}
-                          </span>
-                          <span className="flex items-center gap-1 shrink-0">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded border ${scope.cls}`}>
-                              {scope.label}
-                            </span>
-                            {item.tag && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800/60">
-                                {item.tag}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                        {item.evidence && (
-                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5 line-clamp-2 leading-relaxed">
-                            {item.evidence}
-                          </p>
-                        )}
-                      </div>
+            </button>
 
-                      <div className="mt-3 pt-2.5 border-t border-gray-100 dark:border-gray-800/80 flex items-center justify-between gap-2">
-                        <span className="min-w-0 flex-1">
-                          {item.source_label ? (
-                            item.source_href ? (
-                              <button
-                                type="button"
-                                onClick={() => navigate(item.source_href!)}
-                                title="点击回溯到当时的原始作答或划线对话"
-                                className="text-[11px] text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 truncate max-w-full block text-left transition"
-                              >
-                                🔍 {item.source_label}
-                              </button>
-                            ) : (
-                              <span className="text-[11px] text-gray-400 truncate max-w-full block">
-                                🔍 {item.source_label}
-                              </span>
-                            )
-                          ) : null}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteMisconception(item.id, item.topic)}
-                          className="text-[11px] text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300 flex items-center gap-1 font-medium transition shrink-0"
+            {misconceptionsOpen && (
+              <div className="mt-2.5">
+                {(!profile?.misconceptions || profile.misconceptions.length === 0) ? (
+                  <div className="py-6 px-4 rounded-xl border border-dashed border-gray-200 dark:border-gray-800 text-center">
+                    <p className="text-xs text-gray-400 dark:text-gray-500">
+                      暂无记录。随着你在课程划线提问、伴学助教对话或错题复盘，系统将自动汇总易错卡点。
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {profile.misconceptions.map((item: LearnerMisconception) => {
+                      const scope = scopeMeta(item.scope);
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex flex-col justify-between p-3.5 rounded-xl border border-gray-200/80 dark:border-gray-800 bg-white dark:bg-gray-900/60 shadow-xs hover:border-brand-300 dark:hover:border-brand-700/60 transition group"
                         >
-                          <span>✓</span> 已掌握，移除
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                          <div>
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs font-semibold text-gray-800 dark:text-gray-100 line-clamp-1">
+                                {item.topic}
+                              </span>
+                              <span className="flex items-center gap-1 shrink-0">
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded border ${scope.cls}`}>
+                                  {scope.label}
+                                </span>
+                                {item.tag && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800/60">
+                                    {item.tag}
+                                  </span>
+                                )}
+                              </span>
+                            </div>
+                            {item.evidence && (
+                              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1.5 line-clamp-2 leading-relaxed">
+                                {item.evidence}
+                              </p>
+                            )}
+                          </div>
+
+                          <div className="mt-3 pt-2.5 border-t border-gray-100 dark:border-gray-800/80 flex items-center justify-between gap-2">
+                            <span className="min-w-0 flex-1">
+                              {item.source_label ? (
+                                item.source_href ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => navigate(item.source_href!)}
+                                    title="点击回溯到当时的原始作答或划线对话"
+                                    className="text-[11px] text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 truncate max-w-full block text-left transition"
+                                  >
+                                    🔍 {item.source_label}
+                                  </button>
+                                ) : (
+                                  <span className="text-[11px] text-gray-400 truncate max-w-full block">
+                                    🔍 {item.source_label}
+                                  </span>
+                                )
+                              ) : null}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteMisconception(item.id, item.topic)}
+                              className="text-[11px] text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300 flex items-center gap-1 font-medium transition shrink-0"
+                            >
+                              <span>✓</span> 已掌握，移除
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
