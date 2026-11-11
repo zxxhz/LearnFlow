@@ -260,7 +260,19 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     throw new Error(detail);
   }
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  const data = (await res.json()) as T;
+  // 兜底：某些中间层（如云端隧道旧版本）会把本地 4xx 错误体以 HTTP 200 包裹返回，
+  // 形如 { detail: "..." }。若不当抛错，错误体会被当业务数据渲染直接崩溃。
+  if (
+    data &&
+    typeof data === "object" &&
+    !Array.isArray(data) &&
+    Object.keys(data as Record<string, unknown>).length === 1 &&
+    typeof (data as Record<string, unknown>).detail === "string"
+  ) {
+    throw new Error((data as Record<string, unknown>).detail as string);
+  }
+  return data;
 }
 
 function jsonBody(body: unknown): RequestInit {

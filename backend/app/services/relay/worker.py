@@ -18,7 +18,10 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 不向本地 127.0.0.1 转发的请求头（避免触发 Host/CSRF 门禁误拒或底层传输冲突）
+# 不向本地 127.0.0.1 转发的请求头（避免触发 Host/CSRF 门禁误拒或底层传输冲突）。
+# forwarded 头族必须剥离：云端前置层注入的 X-Forwarded-For 一旦透传，
+# 本地 uvicorn（proxy_headers 默认放行回环来源）会采信它把请求来源改写为外部 IP，
+# 导致 _AccessGuard 将回环 worker 误判为"局域网设备"而 403。
 _HOP_BY_HOP_OR_SENSITIVE_HEADERS = {
     "host",
     "origin",
@@ -27,6 +30,12 @@ _HOP_BY_HOP_OR_SENSITIVE_HEADERS = {
     "sec-fetch-mode",
     "sec-fetch-dest",
     "content-length",
+    "x-forwarded-for",
+    "x-real-ip",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "forwarded",
     "connection",
     "keep-alive",
     "transfer-encoding",
@@ -95,7 +104,9 @@ async def handle_relay_request(
     timeout = httpx.Timeout(timeout=300.0, connect=10.0)
 
     try:
-        async with httpx.AsyncClient(base_url=local_base_url, timeout=timeout) as client:
+        # trust_env=False：绝不读取代理环境变量，防止本地系统代理（Clash 等）劫持
+        # worker 对 127.0.0.1:8420 的内部回源请求（与 v0.4.71 websockets proxy=None 同理）
+        async with httpx.AsyncClient(base_url=local_base_url, timeout=timeout, trust_env=False) as client:
             req = client.build_request(
                 method=method,
                 url=path,

@@ -27,9 +27,9 @@ export function TodayStudyHub() {
 
   const hasAction =
     !!data.last_read ||
-    data.hard_bones.length > 0 ||
+    (data.hard_bones?.length ?? 0) > 0 ||
     data.bank_wrong_count > 0 ||
-    data.active_misconceptions.length > 0;
+    (data.active_misconceptions?.length ?? 0) > 0;
 
   return (
     <div className="mb-8 rounded-2xl border border-brand-200/70 dark:border-brand-800/50 bg-gradient-to-br from-brand-50/40 via-white to-indigo-50/30 dark:from-gray-900/60 dark:via-gray-900/40 dark:to-brand-950/30 p-5 shadow-sm transition-all">
@@ -74,16 +74,16 @@ export function TodayStudyHub() {
         )}
 
         {/* 2. 待攻克硬骨头关卡 */}
-        {data.hard_bones.length > 0 && (
+        {(data.hard_bones?.length ?? 0) > 0 && (
           <div className="bg-amber-50/50 dark:bg-amber-950/20 p-3 rounded-xl border border-amber-200/80 dark:border-amber-900/40 text-xs">
             <div className="flex items-center justify-between mb-2 font-semibold text-amber-900 dark:text-amber-200">
               <span className="flex items-center gap-1.5">
                 <span>🦴</span>
-                <span>暂存待攻克硬骨头 ({data.hard_bones.length} 关)</span>
+                <span>暂存待攻克硬骨头 ({data.hard_bones?.length ?? 0} 关)</span>
               </span>
             </div>
             <div className="flex flex-wrap gap-2">
-              {data.hard_bones.map((hb) => (
+              {(data.hard_bones ?? []).map((hb) => (
                 <button
                   key={hb.id}
                   onClick={() => navigate(`/read/${hb.document_id}`)}
@@ -122,14 +122,14 @@ export function TodayStudyHub() {
         )}
 
         {/* 4. 活跃认知盲区 */}
-        {data.active_misconceptions.length > 0 && (
+        {(data.active_misconceptions?.length ?? 0) > 0 && (
           <div className="flex items-center justify-between gap-2 bg-indigo-50/40 dark:bg-indigo-950/20 p-2.5 rounded-xl border border-indigo-200/60 dark:border-indigo-900/40 text-xs">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="font-semibold text-indigo-900 dark:text-indigo-200 flex items-center gap-1">
                 <span>🧑‍🎓</span>
                 <span>待攻坚认知盲区：</span>
               </span>
-              {data.active_misconceptions.map((m) => (
+              {(data.active_misconceptions ?? []).map((m) => (
                 <span
                   key={m.id}
                   className="rounded-md bg-white dark:bg-gray-800 border border-indigo-200 dark:border-indigo-800 px-2 py-0.5 text-[11px] font-medium text-indigo-800 dark:text-indigo-300"

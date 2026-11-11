@@ -667,6 +667,121 @@ class RelayDatabase:
     async def get_document(self, doc_id: str) -> Optional[dict[str, Any]]:
         return await asyncio.to_thread(self.get_document_sync, doc_id)
 
+    # 题库统计的"判断题"题型常量，与桌面端 QUESTION_JUDGE 保持一致（指纹去重口径需要）
+    _JUDGE_QTYPE = "judge"
+
+    def _compute_bank_stats_sync(self, bank_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """聚合题库统计，口径与桌面端 bulk_bank_stats 严格对齐。
+
+        错题池口径 = 每题最近一次作答「未通过或存疑」；new_count = 指纹去重后从未作答的题数。
+        纯 Web 题库页读取 stats.question_count / stats.new_count 等字段，
+        云端直答若缺该结构会直接渲染崩溃（reading 'question_count' / 'new_count'）。
+        """
+        out: dict[str, dict[str, Any]] = {
+            bid: {
+                "question_count": 0,
+                "answered": 0,
+                "new_count": 0,
+                "attempts": 0,
+                "correct": 0,
+                "accuracy": 0,
+                "wrong_count": 0,
+                "by_type": {},
+            }
+            for bid in bank_ids
+        }
+        if not bank_ids:
+            return out
+
+        placeholders = ",".join("?" * len(bank_ids))
+
+        def _dedup_key(qtype: str, title: str, options: Any, answer: str) -> tuple:
+            """题目内容归一化指纹，与桌面端 _question_dedup_key 同规则（含 answer）。"""
+            norm_title = " ".join((title or "").split())
+            norm_opts: tuple = ()
+            if qtype != self._JUDGE_QTYPE and options:
+                try:
+                    raw = json.loads(options) if isinstance(options, str) else options
+                    if isinstance(raw, list):
+                        norm_opts = tuple(" ".join(str(o).split()) for o in raw if str(o).strip())
+                except Exception:
+                    norm_opts = (" ".join(str(options).split()),)
+            return (qtype, norm_title, norm_opts, " ".join((answer or "").split()))
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # 1) 全量作答次数/正确次数（accuracy 用全量口径）
+            cursor.execute(
+                f"SELECT bank_id, COUNT(*), COALESCE(SUM(is_correct), 0) FROM bank_attempts "
+                f"WHERE bank_id IN ({placeholders}) GROUP BY bank_id",
+                bank_ids,
+            )
+            attempt_rows = cursor.fetchall()
+            total_attempts = {r[0]: int(r[1] or 0) for r in attempt_rows}
+            correct_attempts = {r[0]: int(r[2] or 0) for r in attempt_rows}
+
+            # 2) 每题最近一次作答（窗口函数取 rn=1；平局随机与桌面端窗口排序一致）
+            cursor.execute(
+                f"SELECT bank_id, question_id, is_correct, is_doubtful FROM ("
+                f"  SELECT bank_id, question_id, is_correct, is_doubtful,"
+                f"         ROW_NUMBER() OVER (PARTITION BY bank_id, question_id "
+                f"                            ORDER BY created_at DESC) AS rn"
+                f"  FROM bank_attempts WHERE bank_id IN ({placeholders})"
+                f") WHERE rn = 1",
+                bank_ids,
+            )
+            latest: dict[str, dict[str, tuple[int, int]]] = {}
+            for r in cursor.fetchall():
+                latest.setdefault(r[0], {})[r[1]] = (int(r[2] or 0), int(r[3] or 0))
+
+            # 3) 题目轻量列（统计分布 + 指纹去重，不拉解析长文本）
+            cursor.execute(
+                f"SELECT bank_id, id, qtype, title, options, answer FROM bank_questions "
+                f"WHERE bank_id IN ({placeholders})",
+                bank_ids,
+            )
+            questions: dict[str, list[tuple]] = {}
+            for r in cursor.fetchall():
+                questions.setdefault(r[0], []).append(r[1:])
+
+        for bid in bank_ids:
+            qs = questions.get(bid, [])
+            lat = latest.get(bid, {})
+            question_count = len(qs)
+            answered = len(lat)
+            wrong_count = sum(1 for ok, doubtful in lat.values() if ok == 0 or doubtful == 1)
+            correct_latest = sum(1 for ok, doubtful in lat.values() if ok == 1 and doubtful == 0)
+
+            by_type: dict[str, dict[str, int]] = {}
+            fp_by_id: dict[str, tuple] = {}
+            for qid, qtype, title, options, answer in qs:
+                entry = by_type.setdefault(qtype, {"total": 0, "wrong": 0})
+                entry["total"] += 1
+                last = lat.get(qid)
+                if last and (last[0] == 0 or last[1] == 1):
+                    entry["wrong"] += 1
+                fp_by_id[qid] = _dedup_key(qtype, title, options, answer)
+
+            # new_count：指纹去重后从未作答的题数（重复题算 1 道，与桌面端口径一致）
+            new_count = question_count
+            if question_count and answered:
+                answered_fp = {fp_by_id[qid] for qid in lat if qid in fp_by_id}
+                new_count = len({k for k in fp_by_id.values() if k not in answered_fp})
+
+            ta = total_attempts.get(bid, 0)
+            out[bid] = {
+                "question_count": question_count,
+                "answered": answered,
+                "new_count": new_count,
+                "attempts": ta,
+                "correct": correct_latest,
+                "accuracy": round(correct_attempts.get(bid, 0) / ta * 100, 1) if ta else 0,
+                "wrong_count": wrong_count,
+                "by_type": by_type,
+            }
+        return out
+
     def list_banks_sync(self) -> list[dict[str, Any]]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -674,7 +789,20 @@ class RelayDatabase:
                 SELECT id, name, source_file, question_count, ai_prompt, created_at, updated_at
                 FROM question_banks ORDER BY created_at DESC
             """)
-            return [dict(r) for r in cursor.fetchall()]
+            rows = [dict(r) for r in cursor.fetchall()]
+        stats_map = self._compute_bank_stats_sync([r["id"] for r in rows])
+        for r in rows:
+            r["stats"] = stats_map.get(r["id"]) or {
+                "question_count": 0,
+                "answered": 0,
+                "new_count": 0,
+                "attempts": 0,
+                "correct": 0,
+                "accuracy": 0,
+                "wrong_count": 0,
+                "by_type": {},
+            }
+        return rows
 
     async def list_banks(self) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self.list_banks_sync)
@@ -684,7 +812,21 @@ class RelayDatabase:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM question_banks WHERE id = ?", (bank_id,))
             row = cursor.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            d = dict(row)
+        stats_map = self._compute_bank_stats_sync([bank_id])
+        d["stats"] = stats_map.get(bank_id) or {
+            "question_count": 0,
+            "answered": 0,
+            "new_count": 0,
+            "attempts": 0,
+            "correct": 0,
+            "accuracy": 0,
+            "wrong_count": 0,
+            "by_type": {},
+        }
+        return d
 
     async def get_bank(self, bank_id: str) -> Optional[dict[str, Any]]:
         return await asyncio.to_thread(self.get_bank_sync, bank_id)

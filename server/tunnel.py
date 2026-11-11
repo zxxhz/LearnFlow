@@ -37,6 +37,23 @@ class WorkerRequestTimeoutError(Exception):
     pass
 
 
+# 下发本地 Worker 前必须剥离的代理链请求头。
+# VPS 前置 TLS 终结层会为所有入站请求注入 X-Forwarded-For（真实客户端公网 IP），
+# 若透传到本地后端，本地 uvicorn（proxy_headers 默认开启且放行回环来源）会采信该头
+# 把请求来源改写为外部 IP，导致本地 _AccessGuard 将回环 worker 误判为"局域网设备"而 403。
+_FORWARDED_HEADERS = frozenset({
+    "x-forwarded-for",
+    "x-real-ip",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "forwarded",
+})
+
+# 回传给云端调用方时需要丢弃的响应头（逐跳头与长度头由 ASGI 层自行生成）
+_DROP_RESPONSE_HEADERS = frozenset({"transfer-encoding", "content-length", "connection"})
+
+
 @dataclass
 class WorkerConnection:
     worker_id: str
@@ -220,10 +237,15 @@ class TunnelManager:
         query_params: Optional[dict[str, Any]] = None,
         body: Any = None,
         timeout: float = 180.0,
+        meta_out: Optional[dict[str, Any]] = None,
     ) -> AsyncIterator[bytes]:
         """将请求打包通过 WebSocket 派发给本地 Worker，并以异步迭代器流式返回字节块。
 
         适配 FastAPI 的 StreamingResponse。
+
+        meta_out：可选的元信息回填字典。Worker 回传的响应头（"start"/"end" 帧）会写入
+        {"status_code": int, "headers": dict}；流式调用方可忽略，聚合调用方（dispatch_full）
+        依赖它还原本地真实 HTTP 状态码。
         """
         worker = self.get_active_worker()
         if not worker:
@@ -253,7 +275,7 @@ class TunnelManager:
         if headers:
             for k, v in headers.items():
                 k_lower = k.lower()
-                if k_lower not in ("host", "content-length", "connection"):
+                if k_lower not in ("host", "content-length", "connection") and k_lower not in _FORWARDED_HEADERS:
                     safe_headers[k] = v
 
         request_payload = {
@@ -285,12 +307,18 @@ class TunnelManager:
                 if event_type == "chunk":
                     yield payload
                 elif event_type == "end":
+                    if meta_out is not None:
+                        meta_out["status_code"] = payload.get("status_code", 200)
+                        meta_out["headers"] = payload.get("headers", {}) or {}
                     break
                 elif event_type == "error":
                     err_text = f"data: {{\"type\":\"error\",\"detail\":{json.dumps(str(payload))}}}\n\n"
                     yield err_text.encode("utf-8")
                     break
                 elif event_type == "start":
+                    if meta_out is not None:
+                        meta_out["status_code"] = payload.get("status_code", 200)
+                        meta_out["headers"] = payload.get("headers", {}) or {}
                     # 元信息已记录，继续等待 chunk
                     continue
         finally:
@@ -313,24 +341,29 @@ class TunnelManager:
         if not worker:
             raise WorkerOfflineError("本地 AI 节点未连接，请启动本地 LearnFlow 客户端。")
 
+        meta: dict[str, Any] = {}
         chunks: list[bytes] = []
-        resp_status = 200
-        resp_headers: dict[str, str] = {}
 
-        try:
-            async for chunk in self.dispatch_request(
-                method=method,
-                path=path,
-                headers=headers,
-                query_params=query_params,
-                body=body,
-                timeout=timeout,
-            ):
-                chunks.append(chunk)
-        except Exception as e:
-            raise e
+        async for chunk in self.dispatch_request(
+            method=method,
+            path=path,
+            headers=headers,
+            query_params=query_params,
+            body=body,
+            timeout=timeout,
+            meta_out=meta,
+        ):
+            chunks.append(chunk)
 
         full_body = b"".join(chunks)
+        # 还原本地 Worker 回传的真实状态码与响应头（此前硬编码 200，
+        # 导致本地 403/401 等错误体被云端以 200 包裹，前端把错误体当业务数据渲染直接崩溃）
+        resp_status = meta.get("status_code", 200)
+        resp_headers = {
+            k: v
+            for k, v in (meta.get("headers") or {}).items()
+            if k.lower() not in _DROP_RESPONSE_HEADERS
+        }
         return resp_status, resp_headers, full_body
 
 

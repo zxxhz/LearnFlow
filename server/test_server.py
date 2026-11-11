@@ -153,9 +153,13 @@ def test_database():
 def test_auth_and_api():
     print(">>> 正在测试 server.auth 与 API 路由模块...")
     from server.config import settings
+    from server.db import relay_db
     from server.main import app
 
     client = TestClient(app)
+    # 裸 TestClient 不触发 lifespan（内含 relay_db.init_db），需显式建表；
+    # 否则依赖本地残留 relay.db 的表结构，在新环境必挂 no such table
+    relay_db.init_db_sync()
 
     # 1. 默认开放模式测试 (RELAY_AUTH_REQUIRED=False 且 Token 为空)
     settings.relay_auth_required = False
@@ -325,6 +329,169 @@ def test_tunnel():
     print("✅ server.tunnel 反向隧道与流式转发测试全部通过！")
 
 
+# 3.5 隧道状态码透传与 forwarded 头剥离回归（修复纯 Web 经云端转发必崩问题）
+def test_tunnel_status_and_forwarded_headers():
+    print(">>> 正在测试 dispatch_full 状态码透传与 forwarded 头剥离...")
+    from server.tunnel import tunnel_manager
+
+    class MockWebSocket:
+        def __init__(self):
+            self.sent_messages = []
+            self.closed = False
+            self.close_code = None
+
+        async def send_text(self, text: str):
+            self.sent_messages.append(text)
+
+        async def close(self, code: int = 1000, reason: str = ""):
+            self.closed = True
+            self.close_code = code
+
+    async def async_status_tests():
+        mock_ws = MockWebSocket()
+        worker = await tunnel_manager.register(mock_ws, {"client_id": "local-node-2"})
+
+        # A. dispatch_request 必须剥离 forwarded 头族（VPS 前置注入的 XFF 透传会让
+        #    本地 _AccessGuard 把回环 worker 误判为局域网设备而 403）
+        chunks: list[bytes] = []
+
+        async def do_dispatch():
+            async for chunk in tunnel_manager.dispatch_request(
+                method="GET",
+                path="/api/study/today",
+                headers={
+                    "x-forwarded-for": "203.0.113.9",
+                    "x-real-ip": "203.0.113.9",
+                    "forwarded": "for=203.0.113.9",
+                    "x-access-token": "business-token",
+                    "content-type": "application/json",
+                },
+                timeout=5.0,
+            ):
+                chunks.append(chunk)
+
+        task = asyncio.create_task(do_dispatch())
+        await asyncio.sleep(0.02)
+        frame = json.loads(mock_ws.sent_messages[-1])
+        assert frame["type"] == "request"
+        hdrs = {k.lower(): v for k, v in frame["headers"].items()}
+        assert "x-forwarded-for" not in hdrs, f"XFF 泄漏: {hdrs}"
+        assert "x-real-ip" not in hdrs
+        assert "forwarded" not in hdrs
+        assert hdrs.get("x-access-token") == "business-token"  # 业务头保留
+        req_id = frame["request_id"]
+        # 本地 403 错误体回传
+        await tunnel_manager.handle_message(
+            worker,
+            json.dumps({"type": "chunk", "request_id": req_id, "data": json.dumps({"detail": "局域网访问已在设置中关闭"}, ensure_ascii=False)}),
+        )
+        await tunnel_manager.handle_message(
+            worker,
+            json.dumps({"type": "end", "request_id": req_id, "status_code": 403, "headers": {"content-type": "application/json"}}),
+        )
+        await task
+        assert "局域网访问" in b"".join(chunks).decode("utf-8", errors="replace")
+
+        # B. dispatch_full 必须还原本地真实状态码（此前硬编码 200，403 错误体被 200 包裹）
+        async def do_full():
+            return await tunnel_manager.dispatch_full(
+                method="GET",
+                path="/api/dashboard/summary",
+                headers={"x-forwarded-for": "198.51.100.7"},
+                timeout=5.0,
+            )
+
+        task2 = asyncio.create_task(do_full())
+        await asyncio.sleep(0.02)
+        frame2 = json.loads(mock_ws.sent_messages[-1])
+        hdrs2 = {k.lower(): v for k, v in frame2["headers"].items()}
+        assert "x-forwarded-for" not in hdrs2, f"XFF 泄漏: {hdrs2}"
+        rid = frame2["request_id"]
+        await tunnel_manager.handle_message(
+            worker,
+            json.dumps({"type": "chunk", "request_id": rid, "data": "部分数据"}),
+        )
+        await tunnel_manager.handle_message(
+            worker,
+            json.dumps({
+                "type": "end",
+                "request_id": rid,
+                "status_code": 403,
+                "headers": {"content-type": "application/json", "transfer-encoding": "chunked"},
+            }),
+        )
+        status, resp_headers, body = await task2
+        assert status == 403, f"应透传本地 403，实际 {status}"
+        assert body.decode("utf-8") == "部分数据"
+        assert "transfer-encoding" not in {k.lower() for k in resp_headers}
+        assert resp_headers.get("content-type") == "application/json"
+
+        await tunnel_manager.unregister(worker.worker_id)
+        assert tunnel_manager.is_worker_online() is False
+
+    asyncio.run(async_status_tests())
+    print("✅ 隧道状态码透传与 forwarded 头剥离测试全部通过！")
+
+
+# 3.6 云端直答题库 stats 聚合回归（此前缺 stats 致题库页 reading 'question_count' 崩溃）
+def test_database_banks_stats():
+    print(">>> 正在测试云端题库 stats 聚合...")
+    import sqlite3
+
+    from server.db import RelayDatabase
+
+    tmp_dir = tempfile.mkdtemp(prefix="lf-stats-test-")
+    db = RelayDatabase(db_path=Path(tmp_dir) / "relay.db")
+    db.init_db_sync()
+    try:
+        with sqlite3.connect(str(db.db_path)) as conn:
+            conn.execute(
+                "INSERT INTO question_banks (id, name, question_count) VALUES ('b1', '测试库', 4)"
+            )
+            # 4 题：q1 单选（最新一次对但存疑→计错题池）、q2 单选（最新一次错）、
+            # q3 判断（未作答）、q4 单选（与 q2 指纹相同，验证 new_count 去重口径）
+            conn.executemany(
+                "INSERT INTO bank_questions (id, bank_id, seq, qtype, title, options, answer) VALUES (?,?,?,?,?,?,?)",
+                [
+                    ("q1", "b1", 1, "single", "1+1=?", '["1","2","3","4"]', "2"),
+                    ("q2", "b1", 2, "single", "2+2=?", '["3","4","5","6"]', "4"),
+                    ("q3", "b1", 3, "judge", "对吗", "[]", "对"),
+                    ("q4", "b1", 4, "single", " 2+2=? ", '["3"," 4 ","5","6"]', " 4 "),
+                ],
+            )
+            conn.executemany(
+                "INSERT INTO bank_attempts (id, bank_id, question_id, is_correct, is_doubtful, created_at) VALUES (?,?,?,?,?,?)",
+                [
+                    ("a1", "b1", "q1", 0, 0, "2026-01-01T00:00:00"),
+                    ("a2", "b1", "q1", 1, 0, "2026-01-02T00:00:00"),
+                    ("a3", "b1", "q2", 0, 0, "2026-01-03T00:00:00"),
+                    ("a4", "b1", "q1", 1, 1, "2026-01-04T00:00:00"),
+                ],
+            )
+
+        banks = db.list_banks_sync()
+        assert len(banks) == 1
+        stats = banks[0]["stats"]
+        assert stats["question_count"] == 4
+        assert stats["answered"] == 2  # 仅 q1/q2 有作答
+        assert stats["wrong_count"] == 2  # q1 存疑 + q2 错
+        assert stats["correct"] == 0  # 最近一次无"对且不存疑"
+        assert stats["attempts"] == 4
+        assert stats["accuracy"] == 50.0  # 全量 4 次作答 2 次正确
+        assert stats["new_count"] == 1  # 仅 q3（q4 与 q2 指纹同道且已答）
+        assert stats["by_type"]["single"] == {"total": 3, "wrong": 2}
+        assert stats["by_type"]["judge"] == {"total": 1, "wrong": 0}
+
+        detail = db.get_bank_sync("b1")
+        assert detail is not None
+        assert detail["stats"]["question_count"] == 4
+        assert detail["stats"]["new_count"] == 1
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    print("✅ 云端题库 stats 聚合测试全部通过！")
+
+
 # 4. 测试云端大模型模式与完整数据拉取 (task-4)
 def test_cloud_ai_and_sync():
     print(">>> 正在测试云端 AI 模式调度与全量数据 Pull...")
@@ -334,6 +501,8 @@ def test_cloud_ai_and_sync():
     from server.main import app
 
     client = TestClient(app)
+    # 裸 TestClient 不触发 lifespan，显式建表保证 sync pull 等数据接口可用
+    relay_db.init_db_sync()
 
     # 1. 测试 AI 模式查询与更新 API
     r = client.get("/api/relay/ai-mode")
@@ -421,9 +590,11 @@ def test_cloud_ai_and_sync():
 # 5. 测试系统版本检测与在线更新接口
 def test_system_version_and_update():
     print(">>> 正在测试 server.api_system 模块...")
+    from server.db import relay_db
     from server.main import app
 
     client = TestClient(app)
+    relay_db.init_db_sync()  # 裸 TestClient 不触发 lifespan，显式建表
 
     # 1. 测试版本查询端点
     r = client.get("/api/relay/system/version")
@@ -474,8 +645,10 @@ def test_system_version_and_update():
 
 if __name__ == "__main__":
     test_database()
+    test_database_banks_stats()
     test_auth_and_api()
     test_tunnel()
+    test_tunnel_status_and_forwarded_headers()
     test_cloud_ai_and_sync()
     test_system_version_and_update()
     print("\n🎉🎉🎉 全部模块自动化测试验证成功！")
