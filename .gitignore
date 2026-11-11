@@ -44,3 +44,6 @@ backend/data-smoke*/
 # 发版临时更新元数据草稿（不入库）
 latest*.json
 
+
+# review/测试实证脚本残留的临时 sqlite 目录
+tmp_*/
