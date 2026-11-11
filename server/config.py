@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 # 服务端版本号（随发版工作流 sync_versions 同步更新，亦支持容器环境变量 SERVER_VERSION 显式覆盖）
-SERVER_VERSION: str = "0.4.79"
+SERVER_VERSION: str = "0.5.0"
 
 def _get_bool_env(name: str, default: bool = False) -> bool:
     val = os.getenv(name)
