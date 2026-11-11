@@ -597,6 +597,9 @@ export default function SettingsPage() {
       {/* 自建云端中转服务器配置 */}
       <RelaySettingsCard />
 
+      {/* 云端服务端在线更新（桌面端独立卡片：经透明代理远程查看 VPS 状态并一键升级；云端模式内嵌进底部「关于」区块） */}
+      {!isRelayServer && <ServerUpdateCard />}
+
       {/* 下载源测速与智能路由（仅桌面客户端/局域网模式展示，云端VPS网页端隐藏） */}
       {!isRelayServer && <DownloadMirrorsSection />}
 
