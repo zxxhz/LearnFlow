@@ -164,6 +164,78 @@ class RelayDatabase:
             );
             """)
 
+            # 轻量迁移：create 风格 DDL 不给已存在的表加列，按列名探测补齐（幂等）
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(bank_attempts)")
+            if "is_revoked" not in {row[1] for row in cursor.fetchall()}:
+                cursor.execute("ALTER TABLE bank_attempts ADD COLUMN is_revoked INTEGER DEFAULT 0")
+
+            # v0.5.5 一次性数据修复：撤回历史误触重答流水（marker 门控，幂等）
+            self._revoke_misclick_double_submissions(cursor)
+
+    def _revoke_misclick_double_submissions(self, cursor) -> None:
+        """撤回「误触提交后退出重进重答」产生的错误流水（与桌面端 core/db.py 同签名同阈值）。
+
+        Web 端刷题走服务端原生引擎，同样受恢复草稿重复提交 bug 影响。签名：同题
+        「连续错误段 + 紧随正确收尾」总跨度 ≤ 10 分钟；一次性执行后落 sync_metadata
+        标记，此后错题重刷等正常场景的快速答对绝不误撤。除 is_revoked 列外同步改写
+        raw_json，使下次客户端 pull 时标记一并携带回桌面端。
+        """
+        key = "v0.5.5_revoke_misclick_double_submissions"
+        if cursor.execute("SELECT 1 FROM sync_metadata WHERE key = ?", (key,)).fetchone():
+            return
+
+        rows = cursor.execute(
+            "SELECT id, question_id, is_correct, created_at, raw_json FROM bank_attempts "
+            "ORDER BY question_id, created_at"
+        ).fetchall()
+        by_q: dict = {}
+        for aid, qid, ok, ts, raw in rows:
+            by_q.setdefault(qid, []).append((aid, int(ok or 0), ts, raw))
+
+        to_revoke: list[tuple[str, str]] = []  # (id, 新 raw_json)
+        for seq in by_q.values():
+            i = 0
+            while i < len(seq):
+                if seq[i][1] == 0:  # 连续错误段起点
+                    j = i
+                    while j < len(seq) and seq[j][1] == 0:
+                        j += 1
+                    if j < len(seq) and seq[j][1] == 1:  # 紧随正确收尾
+                        try:
+                            span = (
+                                datetime.fromisoformat(seq[j][2]) - datetime.fromisoformat(seq[i][2])
+                            ).total_seconds()
+                        except ValueError:
+                            span = -1.0  # 时间戳畸形宁可漏放不可误撤
+                        if 0 <= span <= 600:
+                            for k in range(i, j):
+                                aid, _, _, raw = seq[k]
+                                try:
+                                    doc = json.loads(raw) if raw else {}
+                                except Exception:
+                                    doc = {}
+                                doc["is_revoked"] = True
+                                to_revoke.append((aid, json.dumps(doc, ensure_ascii=False)))
+                    i = j
+                else:
+                    i += 1
+
+        for aid, raw in to_revoke:
+            cursor.execute(
+                "UPDATE bank_attempts SET is_revoked = 1, raw_json = ? WHERE id = ?",
+                (raw, aid),
+            )
+        cursor.execute(
+            "INSERT OR REPLACE INTO sync_metadata (key, value, updated_at) VALUES (?, ?, ?)",
+            (key, "done", datetime.now(timezone.utc).isoformat()),
+        )
+        if to_revoke:
+            logging.getLogger(__name__).info(
+                "数据修复：已撤回 %d 条误触重答流水（签名：错误 → 10 分钟内同题答对）",
+                len(to_revoke),
+            )
+
     async def init_db(self):
         """异步初始化数据库。"""
         await asyncio.to_thread(self.init_db_sync)
@@ -378,12 +450,13 @@ class RelayDatabase:
                 passed_val = att.get("passed", att.get("is_correct", True))
                 cursor.execute(
                     """
-                    INSERT INTO bank_attempts (id, bank_id, question_id, user_answer, is_correct, is_doubtful, created_at, raw_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO bank_attempts (id, bank_id, question_id, user_answer, is_correct, is_doubtful, is_revoked, created_at, raw_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         user_answer = excluded.user_answer,
                         is_correct = excluded.is_correct,
                         is_doubtful = excluded.is_doubtful,
+                        is_revoked = excluded.is_revoked,
                         raw_json = excluded.raw_json
                     """,
                     (
@@ -393,6 +466,7 @@ class RelayDatabase:
                         str(user_ans),
                         1 if passed_val else 0,
                         1 if att.get("is_doubtful", False) else 0,
+                        1 if att.get("is_revoked", False) else 0,
                         att.get("created_at", now_str),
                         json.dumps(att, ensure_ascii=False),
                     ),
@@ -726,23 +800,23 @@ class RelayDatabase:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # 1) 全量作答次数/正确次数（accuracy 用全量口径）
+            # 1) 全量作答次数/正确次数（accuracy 用全量口径，排除已撤回）
             cursor.execute(
                 f"SELECT bank_id, COUNT(*), COALESCE(SUM(is_correct), 0) FROM bank_attempts "
-                f"WHERE bank_id IN ({placeholders}) GROUP BY bank_id",
+                f"WHERE bank_id IN ({placeholders}) AND is_revoked = 0 GROUP BY bank_id",
                 bank_ids,
             )
             attempt_rows = cursor.fetchall()
             total_attempts = {r[0]: int(r[1] or 0) for r in attempt_rows}
             correct_attempts = {r[0]: int(r[2] or 0) for r in attempt_rows}
 
-            # 2) 每题最近一次作答（窗口函数取 rn=1；平局随机与桌面端窗口排序一致）
+            # 2) 每题最近一次作答（窗口函数取 rn=1；平局随机与桌面端窗口排序一致；排除已撤回）
             cursor.execute(
                 f"SELECT bank_id, question_id, is_correct, is_doubtful FROM ("
                 f"  SELECT bank_id, question_id, is_correct, is_doubtful,"
                 f"         ROW_NUMBER() OVER (PARTITION BY bank_id, question_id "
                 f"                            ORDER BY created_at DESC) AS rn"
-                f"  FROM bank_attempts WHERE bank_id IN ({placeholders})"
+                f"  FROM bank_attempts WHERE bank_id IN ({placeholders}) AND is_revoked = 0"
                 f") WHERE rn = 1",
                 bank_ids,
             )

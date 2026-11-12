@@ -398,6 +398,15 @@ export default function BankDrillPage() {
             question={current}
             initialAiExplain={aiExplains[current.id] || current.ai_explanation}
             initialResult={results[current.id] ?? null}
+            onRevoked={(qId) => {
+              // 撤回后清掉本轮结果：下一题重新锁定，草稿随 results 变化自动落盘
+              setResults((prev) => {
+                const next = { ...prev };
+                delete next[qId];
+                return next;
+              });
+              qc.invalidateQueries({ queryKey: ["banks"] });
+            }}
             onAiExplained={(text) => handleAiExplained(current.id, text)}
             onAnswered={(r) => onAnswered(current.id, r)}
             onQuestionUpdated={handleQuestionUpdated}

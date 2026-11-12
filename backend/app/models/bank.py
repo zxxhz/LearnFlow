@@ -57,3 +57,6 @@ class BankAttempt(UUIDPk, UserIdMixin, CreatedAt, Base):
     content: Mapped[str] = mapped_column(String(40), default="")  # 提交字母，多选 "A,C"
     passed: Mapped[bool] = mapped_column(Boolean, default=False)
     is_doubtful: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 软撤回（误触撤回）：置 True 后统计口径整体排除。不物理删除：同步链路是
+    # upsert-only 合并，本地删行会被云端快照拉回复活，字段更新才能自然传播（对齐纠错重判）
+    is_revoked: Mapped[bool] = mapped_column(Boolean, default=False)

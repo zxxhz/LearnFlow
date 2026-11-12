@@ -713,6 +713,10 @@ export const api = {
         method: "POST",
         ...jsonBody({ question_id: questionId, content, is_doubtful: is_doubtful ?? false }),
       }),
+    revokeAttempt: (attemptId: string) =>
+      request<{ ok: boolean; question_id: string }>(`/banks/attempts/${attemptId}/revoke`, {
+        method: "POST",
+      }),
     wrong: (id: string) => request<BankWrongQuestion[]>(`/banks/${id}/wrong`),
     rename: (id: string, name: string) =>
       request<Bank>(`/banks/${id}`, {

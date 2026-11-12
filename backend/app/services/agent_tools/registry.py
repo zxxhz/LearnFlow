@@ -916,6 +916,7 @@ async def _tool_lookup_past_mistakes(
                 .join(BankQuestion, BankQuestion.id == BankAttempt.question_id)
                 .where(
                     BankAttempt.passed.is_(False),
+                    BankAttempt.is_revoked.is_(False),
                     or_(
                         BankQuestion.title.like(like),
                         BankQuestion.ai_explanation.like(like),

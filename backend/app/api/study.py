@@ -156,7 +156,9 @@ async def get_today_hub(db: AsyncSession = Depends(get_db)):
             BankAttempt.passed.label("ok"),
             BankAttempt.is_doubtful.label("is_doubtful"),
             rn,
-        ).subquery()
+        )
+        .where(BankAttempt.is_revoked.is_(False))
+        .subquery()
     )
     latest_attempts = select(sq.c.qid, sq.c.ok, sq.c.is_doubtful).where(sq.c.rn == 1).subquery()
     bank_wrong_count = (

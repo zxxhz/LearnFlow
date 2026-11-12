@@ -65,9 +65,9 @@ class BankStatsOut(BaseModel):
     question_count: int
     answered: int  # 答过（有作答记录）的题数
     new_count: int = 0  # 未作答的新题数
-    attempts: int  # 作答流水总数
+    attempts: int  # 作答流水总数（不含已撤回）
     correct: int  # 最近一次作答正确的题数
-    accuracy: float  # 全部流水的累计正确率（%）
+    accuracy: float  # 全部未撤回流水的累计正确率（%；已撤回的误触作答不计入）
     wrong_count: int  # 错题池大小
     by_type: dict[str, dict]
 

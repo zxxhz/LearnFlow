@@ -734,7 +734,7 @@ async def latest_attempts(db: AsyncSession, bank_id: str) -> dict[str, BankAttem
     attempts = (
         await db.scalars(
             select(BankAttempt)
-            .where(BankAttempt.bank_id == bank_id)
+            .where(BankAttempt.bank_id == bank_id, BankAttempt.is_revoked.is_(False))
             .order_by(BankAttempt.created_at)
         )
     ).all()
@@ -766,20 +766,20 @@ async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
             BankAttempt.is_doubtful.label("is_doubtful"),
             rn,
         )
-        .where(BankAttempt.bank_id == bank.id)
+        .where(BankAttempt.bank_id == bank.id, BankAttempt.is_revoked.is_(False))
         .subquery()
     )
     latest = (
         select(ranked.c.qid, ranked.c.ok, ranked.c.is_doubtful).where(ranked.c.rn == 1).subquery().alias("latest")
     )
 
-    # 总作答次数与正确次数（全量 attempt 聚合）
+    # 总作答次数与正确次数（全量 attempt 聚合，排除已撤回）
     totals = (
         await db.execute(
             select(
                 func.count().label("n"),
                 func.sum(case((BankAttempt.passed.is_(True), 1), else_=0)).label("ok"),
-            ).where(BankAttempt.bank_id == bank.id)
+            ).where(BankAttempt.bank_id == bank.id, BankAttempt.is_revoked.is_(False))
         )
     ).one()
     total_attempts = int(totals.n or 0)
@@ -890,13 +890,13 @@ async def bulk_bank_stats(db: AsyncSession, bank_ids: list[str]) -> dict[str, di
                 func.count().label("n"),
                 func.sum(case((BankAttempt.passed.is_(True), 1), else_=0)).label("ok"),
             )
-            .where(BankAttempt.bank_id.in_(bank_ids))
+            .where(BankAttempt.bank_id.in_(bank_ids), BankAttempt.is_revoked.is_(False))
             .group_by(BankAttempt.bank_id)
         )
     ).all()
     attempts_by_bank = {r.bid: (int(r.n or 0), int(r.ok or 0)) for r in totals}
 
-    # 2) 每题最近一次作答（窗口函数 rn=1，一次取全部库）
+    # 2) 每题最近一次作答（窗口函数 rn=1，一次取全部库；排除已撤回）
     rn = func.row_number().over(
         partition_by=BankAttempt.question_id, order_by=BankAttempt.created_at.desc()
     ).label("rn")
@@ -908,7 +908,7 @@ async def bulk_bank_stats(db: AsyncSession, bank_ids: list[str]) -> dict[str, di
             BankAttempt.is_doubtful.label("is_doubtful"),
             rn,
         )
-        .where(BankAttempt.bank_id.in_(bank_ids))
+        .where(BankAttempt.bank_id.in_(bank_ids), BankAttempt.is_revoked.is_(False))
         .subquery()
     )
     latest_rows = (

@@ -435,6 +435,37 @@ async def submit_attempt(
     )
 
 
+@router.post("/attempts/{attempt_id}/revoke")
+async def revoke_attempt(attempt_id: str, db: AsyncSession = Depends(get_db)):
+    """误触撤回：撤销本题最近一次作答（软删 is_revoked=True，统计口径整体排除）。
+
+    仅放行本题当前最近一次作答：撤回后上一条自动回到「最近」位置，可连续撤回
+    逐条清掉误触历史；历史中间记录不允许跳着撤，避免「最近一次」口径被绕过。
+    """
+    att = await db.get(BankAttempt, attempt_id)
+    if att is None or att.is_revoked:
+        raise HTTPException(status_code=404, detail="作答记录不存在或已撤回")
+    async with bank_service._bank_lock(att.bank_id):
+        # 锁内重读，防并发撤回/题目替换交错
+        fresh = await db.get(BankAttempt, attempt_id)
+        if fresh is None or fresh.is_revoked:
+            raise HTTPException(status_code=404, detail="作答记录不存在或已撤回")
+        latest_id = await db.scalar(
+            select(BankAttempt.id)
+            .where(
+                BankAttempt.question_id == fresh.question_id,
+                BankAttempt.is_revoked.is_(False),
+            )
+            .order_by(BankAttempt.created_at.desc())
+            .limit(1)
+        )
+        if latest_id != fresh.id:
+            raise HTTPException(status_code=409, detail="只能撤回本题最近一次作答")
+        fresh.is_revoked = True
+        await db.commit()
+    return {"ok": True, "question_id": fresh.question_id}
+
+
 @router.get("/{bank_id}/wrong", response_model=list[BankWrongQuestionOut])
 async def wrong_book(bank_id: str, db: AsyncSession = Depends(get_db)):
     """错题池浏览（含答案与解析）：最近一次作答未通过或存疑的题，seq 升序。

@@ -39,12 +39,15 @@ export default function BankQuestionCard({
   onAiExplained,
   onQuestionUpdated,
   onAskAssistant,
+  onRevoked,
 }: {
   question: BankQuestion;
   onAnswered: (result: BankAttemptResult, picked: string[]) => void;
   initialAiExplain?: string;
   /** 草稿恢复：带入上次已提交的判分，锁定作答区防止对同一题重复提交（v0.5.5 体检） */
   initialResult?: BankAttemptResult | null;
+  /** 撤回成功后通知页面清除该题本轮结果（下一题重新锁定，统计实时刷新） */
+  onRevoked?: (questionId: string) => void;
   onAiExplained?: (text: string) => void;
   onQuestionUpdated?: (updatedQ: BankQuestion, updatedRes?: BankAttemptResult | null) => void;
   /** v0.5.0：唤起右侧统一 AI 助教（带上当前作答与判题状态，连续追问本题） */
@@ -179,6 +182,25 @@ export default function BankQuestionCard({
       setError((e as Error).message);
     } finally {
       setPending(false);
+    }
+  }
+
+  // 误触撤回：撤销本题最近一次作答（软删，不计入统计），卡片回到未作答态可重新提交
+  const [revoking, setRevoking] = useState(false);
+  async function revoke() {
+    if (!result?.attempt_id || revoking) return;
+    setRevoking(true);
+    setError("");
+    try {
+      await api.banks.revokeAttempt(result.attempt_id);
+      setResult(null);
+      setPicked([]);
+      setIsDoubtful(false);
+      onRevoked?.(curQuestion.id);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRevoking(false);
     }
   }
 
@@ -319,6 +341,15 @@ export default function BankQuestionCard({
                 🤔 存疑作答（已留存强化）
               </span>
             )}
+            <button
+              type="button"
+              onClick={revoke}
+              disabled={revoking}
+              className="ml-auto text-[11px] text-gray-400 hover:text-brand-600 dark:hover:text-brand-400 disabled:opacity-50 px-1"
+              title="误触提交？撤回本题这次作答（不计入统计，可重新作答）"
+            >
+              {revoking ? "撤回中…" : "↩ 撤回作答"}
+            </button>
           </div>
           {result.explanation && (
             <p className="drill-explanation-text mt-1.5 whitespace-pre-wrap leading-relaxed text-gray-600 dark:text-gray-400">

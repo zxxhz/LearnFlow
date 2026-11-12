@@ -91,6 +91,9 @@ async def collect_local_sync_payload(since: str | None = None) -> dict[str, Any]
         # 4. 汇总错题清单（提取未通过或存疑的作答记录）
         mistakes = []
         for ba in bank_attempts:
+            # 已撤回的误触作答不再进错题清单（与统计口径一致）
+            if ba.get("is_revoked"):
+                continue
             if not ba.get("passed") or ba.get("is_doubtful"):
                 mistakes.append({
                     "source": "bank",
@@ -493,11 +496,13 @@ async def pull_cloud_data_to_local(
                         content = a.get("content") or a.get("user_answer") or ""
                         passed = bool(a.get("passed") if "passed" in a else a.get("is_correct", True))
                         is_doubtful = bool(a.get("is_doubtful", False))
+                        is_revoked = bool(a.get("is_revoked", False))
                         existing_att = await db.get(BankAttempt, aid)
                         if existing_att:
                             existing_att.content = content
                             existing_att.passed = passed
                             existing_att.is_doubtful = is_doubtful
+                            existing_att.is_revoked = is_revoked
                         else:
                             db.add(
                                 BankAttempt(
@@ -507,6 +512,7 @@ async def pull_cloud_data_to_local(
                                     content=content,
                                     passed=passed,
                                     is_doubtful=is_doubtful,
+                                    is_revoked=is_revoked,
                                     created_at=a.get("created_at") or utcnow_iso(),
                                     user_id=a.get("user_id", "local"),
                                 )

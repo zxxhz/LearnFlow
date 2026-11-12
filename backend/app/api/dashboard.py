@@ -146,7 +146,7 @@ async def summary(db: AsyncSession = Depends(get_db)):
 
     _acc((await db.execute(_daily_counts(Message, Message.role == "user"))).all())
     _acc((await db.execute(_daily_counts(ExerciseAttempt))).all())
-    _acc((await db.execute(_daily_counts(BankAttempt))).all())
+    _acc((await db.execute(_daily_counts(BankAttempt, BankAttempt.is_revoked.is_(False)))).all())
     heatmap = []
     for i in range(83, -1, -1):
         day = today - timedelta(days=i)

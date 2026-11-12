@@ -43,6 +43,80 @@ async def get_db():
         yield session
 
 
+# ---------------- v0.5.5 一次性数据修复：误触重答流水撤回 ----------------
+
+# 恢复草稿曾把已答题重新解锁（v0.5.5 已修复），误触提交 → 退出重进 → 重答正确
+# 会留下一条不出池、却永久拖低累计正确率的错误流水。签名：同题「连续错误段 +
+# 紧随的正确作答收尾」且总跨度 ≤ 10 分钟——正常轮内答错后 UI 本不允许重答，
+# 该签名只可能来自上述 bug。真实库实测误触对全部落在 5.8s~210s（含一例连错两次），
+# 唯一一例真实错题重刷间隔 13.5h，600s 阈值两边留足边际。一次性执行后落
+# data_fixes 标记：此后错题重刷等正常场景的快速答对不再被扫描，绝不误撤。
+_MISCCLICK_FIX_KEY = "v0.5.5_revoke_misclick_double_submissions"
+_MISCCLICK_FIX_SPAN_S = 600
+
+
+async def _revoke_misclick_double_submissions(conn) -> None:
+    from sqlalchemy import text
+
+    done = (
+        await conn.execute(
+            text("SELECT 1 FROM data_fixes WHERE key = :k"), {"k": _MISCCLICK_FIX_KEY}
+        )
+    ).first()
+    if done:
+        return
+    from datetime import datetime, timezone
+
+    rows = (
+        await conn.execute(
+            text(
+                "SELECT id, question_id, passed, created_at FROM bank_attempts "
+                "ORDER BY question_id, created_at"
+            )
+        )
+    ).all()
+    by_q: dict[str, list[tuple[str, bool, str]]] = {}
+    for aid, qid, passed, ts in rows:
+        by_q.setdefault(qid, []).append((aid, bool(passed), ts))
+
+    to_revoke: list[str] = []
+    for seq in by_q.values():
+        i = 0
+        while i < len(seq):
+            if not seq[i][1]:  # 连续错误段起点
+                j = i
+                while j < len(seq) and not seq[j][1]:
+                    j += 1
+                if j < len(seq) and seq[j][1]:  # 紧随正确收尾
+                    try:
+                        span = (
+                            datetime.fromisoformat(seq[j][2])
+                            - datetime.fromisoformat(seq[i][2])
+                        ).total_seconds()
+                    except ValueError:
+                        span = -1.0  # 时间戳畸形宁可漏放不可误撤
+                    if 0 <= span <= _MISCCLICK_FIX_SPAN_S:
+                        to_revoke.extend(seq[k][0] for k in range(i, j))
+                i = j
+            else:
+                i += 1
+
+    if to_revoke:
+        await conn.execute(
+            text("UPDATE bank_attempts SET is_revoked = 1 WHERE id = :aid"),
+            [{"aid": aid} for aid in to_revoke],
+        )
+    await conn.execute(
+        text("INSERT INTO data_fixes (key, applied_at) VALUES (:k, :t)"),
+        {"k": _MISCCLICK_FIX_KEY, "t": datetime.now(timezone.utc).isoformat()},
+    )
+    if to_revoke:
+        logger.info(
+            "数据修复：已撤回 %d 条误触重答流水（签名：错误 → 10 分钟内同题答对）",
+            len(to_revoke),
+        )
+
+
 async def init_db() -> None:
     from app.models import Base  # noqa: F401  确保全部模型已注册
 
@@ -97,6 +171,10 @@ async def init_db() -> None:
             # v0.5.1 助教会话归属唯一性：并发首访不再产生重复会话（消息黑洞）；
             # 服务层配合 IntegrityError 重查兜底。存量若已有重复行，本条创建失败仅告警不阻断
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_conversations_assistant ON conversations(kind, context_type, context_id) WHERE kind = 'assistant'",
+            # v0.5.5 作答软撤回（误触撤回不计入统计）：物理删除会被同步 upsert 拉回复活，走字段标记
+            "ALTER TABLE bank_attempts ADD COLUMN is_revoked INTEGER DEFAULT 0",
+            # v0.5.5 一次性数据修复的完成标记（幂等 DDL；修复本体见 _revoke_misclick_double_submissions）
+            "CREATE TABLE IF NOT EXISTS data_fixes (key TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
         ]
         for ddl in migrations:
             try:
@@ -109,6 +187,9 @@ async def init_db() -> None:
                     continue
                 logger.error("轻量迁移执行失败，中止启动: %s；原因: %s", ddl, e)
                 raise
+
+        # v0.5.5 一次性数据修复：撤回历史误触重答流水（marker 门控，幂等）
+        await _revoke_misclick_double_submissions(conn)
 
     # v0.4.0 移除费曼/复习模块的老库清理。须在 foreign_keys=OFF 的独立连接上做：
     # feynman 对话连带消息先删 → DROP 三张表；conversations 里指向已删表的
