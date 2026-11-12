@@ -9,12 +9,16 @@ import asyncio
 import threading
 import json
 import logging
+import random
+import re
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from server.config import settings
+from server.prompt import format_correct_answer, judge_answer
 
 logger = logging.getLogger("server.db")
 
@@ -842,26 +846,70 @@ class RelayDatabase:
     async def get_bank(self, bank_id: str) -> Optional[dict[str, Any]]:
         return await asyncio.to_thread(self.get_bank_sync, bank_id)
 
+    def get_bank_stats_sync(self, bank_id: str) -> Optional[dict[str, Any]]:
+        stats_map = self._compute_bank_stats_sync([bank_id])
+        return stats_map.get(bank_id)
+
+    async def get_bank_stats(self, bank_id: str) -> Optional[dict[str, Any]]:
+        return await asyncio.to_thread(self.get_bank_stats_sync, bank_id)
+
     def get_bank_questions_sync(self, bank_id: str) -> list[dict[str, Any]]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT id, bank_id, seq, qtype, title, options, answer, analysis, difficulty, created_at
+                SELECT id, bank_id, seq, qtype, title, options, answer, analysis, difficulty, created_at, raw_json
                 FROM bank_questions WHERE bank_id = ? ORDER BY seq ASC
             """, (bank_id,))
             rows = cursor.fetchall()
             res = []
             for r in rows:
                 d = dict(r)
+                if d.get("raw_json"):
+                    try:
+                        raw_d = json.loads(d["raw_json"])
+                        for k in ("answer_raw", "explanation", "ai_explanation"):
+                            if k in raw_d and not d.get(k):
+                                d[k] = raw_d[k]
+                    except Exception:
+                        pass
+                if not d.get("explanation") and d.get("analysis"):
+                    d["explanation"] = d["analysis"]
                 try:
-                    d["options"] = json.loads(d["options"])
+                    d["options"] = json.loads(d["options"]) if isinstance(d["options"], str) else d["options"]
                 except Exception:
-                    pass
+                    d["options"] = []
                 res.append(d)
             return res
 
     async def get_bank_questions(self, bank_id: str) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self.get_bank_questions_sync, bank_id)
+
+    def get_question_by_id_sync(self, question_id: str) -> Optional[dict[str, Any]]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM bank_questions WHERE id = ?", (question_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            if d.get("raw_json"):
+                try:
+                    raw_d = json.loads(d["raw_json"])
+                    for k in ("answer_raw", "explanation", "ai_explanation"):
+                        if k in raw_d and not d.get(k):
+                            d[k] = raw_d[k]
+                except Exception:
+                    pass
+            if not d.get("explanation") and d.get("analysis"):
+                d["explanation"] = d["analysis"]
+            try:
+                d["options"] = json.loads(d["options"]) if isinstance(d["options"], str) else d["options"]
+            except Exception:
+                d["options"] = []
+            return d
+
+    async def get_question_by_id(self, question_id: str) -> Optional[dict[str, Any]]:
+        return await asyncio.to_thread(self.get_question_by_id_sync, question_id)
 
     def count_bank_wrong_questions_sync(self) -> int:
         """全部题库错题总数：与错题池同口径（每题最近一次作答未过或存疑）。"""
@@ -879,7 +927,13 @@ class RelayDatabase:
                 """
             )
             row = cursor.fetchone()
-            return int(row[0]) if row else 0
+            count = int(row[0]) if row else 0
+            if count == 0:
+                cursor.execute("SELECT COUNT(*) FROM mistakes")
+                mrow = cursor.fetchone()
+                if mrow and mrow[0]:
+                    count = int(mrow[0])
+            return count
 
     async def count_bank_wrong_questions(self) -> int:
         return await asyncio.to_thread(self.count_bank_wrong_questions_sync)
@@ -889,6 +943,7 @@ class RelayDatabase:
 
         此前直接 JOIN 永不清理的 mistakes 表：历史失败行永存、exercise 来源塌缩为 None_None，
         且与 _compute_bank_stats_sync 的统计口径互相矛盾。改为从 bank_attempts 窗口函数现算。
+        兼容回退：若该题库尚无 bank_attempts 作答流水，回退读取历史 mistakes 记录。
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -916,9 +971,32 @@ class RelayDatabase:
                 (bank_id, bank_id, bank_id),
             )
             rows = cursor.fetchall()
+            if not rows:
+                cursor.execute(
+                    """
+                    SELECT q.*, m.wrong_count, m.last_attempt_at
+                    FROM mistakes m
+                    JOIN bank_questions q ON m.question_id = q.id
+                    WHERE m.bank_id = ?
+                    ORDER BY m.last_attempt_at DESC
+                    """,
+                    (bank_id,),
+                )
+                rows = cursor.fetchall()
+
             res = []
             for r in rows:
                 d = dict(r)
+                if d.get("raw_json"):
+                    try:
+                        raw_d = json.loads(d["raw_json"])
+                        for k in ("answer_raw", "explanation", "ai_explanation"):
+                            if k in raw_d and not d.get(k):
+                                d[k] = raw_d[k]
+                    except Exception:
+                        pass
+                if not d.get("explanation") and d.get("analysis"):
+                    d["explanation"] = d["analysis"]
                 try:
                     d["options"] = json.loads(d["options"])
                 except Exception:
@@ -1102,6 +1180,382 @@ class RelayDatabase:
 
     async def get_db_stats(self) -> dict[str, int]:
         return await asyncio.to_thread(self.get_db_stats_sync)
+
+    def draw_bank_round_sync(
+        self, bank_id: str, mode: str, size: int
+    ) -> tuple[list[dict[str, Any]], int, Optional[dict[str, Any]]]:
+        """云端服务端独立抽题组轮（当本地 Worker 离线或纯 Web 模式直接运行）。"""
+        bank = self.get_bank_sync(bank_id)
+        if not bank:
+            return [], 0, None
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, bank_id, seq, qtype, title, options, answer, analysis, difficulty, created_at, raw_json
+                FROM bank_questions WHERE bank_id = ? ORDER BY seq ASC
+                """,
+                (bank_id,),
+            )
+            raw_rows = cursor.fetchall()
+            all_questions = []
+            for r in raw_rows:
+                d = dict(r)
+                if d.get("raw_json"):
+                    try:
+                        raw_d = json.loads(d["raw_json"])
+                        for k in ("answer_raw", "explanation", "ai_explanation"):
+                            if k in raw_d and not d.get(k):
+                                d[k] = raw_d[k]
+                    except Exception:
+                        pass
+                if not d.get("explanation") and d.get("analysis"):
+                    d["explanation"] = d["analysis"]
+                try:
+                    d["options"] = json.loads(d["options"]) if isinstance(d["options"], str) else (d["options"] or [])
+                except Exception:
+                    d["options"] = []
+                all_questions.append(d)
+
+            # 查询每题最近一次作答状态（rn = 1）
+            cursor.execute(
+                """
+                SELECT question_id, is_correct, is_doubtful
+                FROM (
+                    SELECT question_id, is_correct, is_doubtful,
+                           ROW_NUMBER() OVER (PARTITION BY question_id ORDER BY created_at DESC) AS rn
+                    FROM bank_attempts WHERE bank_id = ?
+                ) WHERE rn = 1
+                """,
+                (bank_id,),
+            )
+            latest = {r[0]: (int(r[1] or 0), int(r[2] or 0)) for r in cursor.fetchall()}
+
+        def _dedup_key(q: dict) -> tuple:
+            norm_title = " ".join((q.get("title") or "").split())
+            norm_opts = ()
+            if q.get("qtype") != "judge" and q.get("options"):
+                norm_opts = tuple(" ".join(str(o).split()) for o in q["options"] if str(o).strip())
+            return (q.get("qtype"), norm_title, norm_opts, " ".join((q.get("answer") or "").split()))
+
+        if mode == "wrong":
+            candidates = [
+                q for q in all_questions
+                if latest.get(q["id"]) and (latest[q["id"]][0] == 0 or latest[q["id"]][1] == 1)
+            ]
+        elif mode == "new":
+            attempted_ids = set(latest.keys())
+            attempted_keys = {_dedup_key(q) for q in all_questions if q["id"] in attempted_ids}
+            candidates = [
+                q for q in all_questions
+                if q["id"] not in attempted_ids and _dedup_key(q) not in attempted_keys
+            ]
+        else:
+            candidates = all_questions
+
+        # 题目指纹去重（保证同一套题内无重复题）
+        seen = set()
+        unique_candidates = []
+        for q in candidates:
+            k = _dedup_key(q)
+            if k not in seen:
+                seen.add(k)
+                unique_candidates.append(q)
+
+        pool_size = len(unique_candidates)
+        if not unique_candidates:
+            return [], 0, bank
+
+        if size and pool_size > size:
+            picked = random.sample(unique_candidates, size)
+        else:
+            picked = list(unique_candidates)
+            random.shuffle(picked)
+
+        outs = []
+        for q in picked:
+            is_passed = bool(latest.get(q["id"]) and latest[q["id"]][0] == 1)
+            ai_exp = q.get("ai_explanation") or "" if is_passed else ""
+            outs.append({
+                "id": q["id"],
+                "seq": q.get("seq", 0),
+                "qtype": q.get("qtype", "single"),
+                "title": q.get("title", ""),
+                "options": q.get("options", []),
+                "difficulty": q.get("difficulty", ""),
+                "ai_explanation": ai_exp,
+            })
+
+        return outs, pool_size, bank
+
+    async def draw_bank_round(
+        self, bank_id: str, mode: str, size: int
+    ) -> tuple[list[dict[str, Any]], int, Optional[dict[str, Any]]]:
+        return await asyncio.to_thread(self.draw_bank_round_sync, bank_id, mode, size)
+
+    def submit_bank_attempt_sync(
+        self, question_id: str, content: list[str], is_doubtful: bool = False
+    ) -> dict[str, Any]:
+        """云端服务端独立判题与作答落库。"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM bank_questions WHERE id = ?", (question_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise LookupError("题目不存在或已被移除")
+
+            q = dict(row)
+            if q.get("raw_json"):
+                try:
+                    raw_d = json.loads(q["raw_json"])
+                    for k in ("answer_raw", "explanation", "ai_explanation"):
+                        if k in raw_d and not q.get(k):
+                            q[k] = raw_d[k]
+                except Exception:
+                    pass
+            if not q.get("explanation") and q.get("analysis"):
+                q["explanation"] = q["analysis"]
+
+            answer = q.get("answer", "")
+            qtype = q.get("qtype", "single")
+            passed = judge_answer(qtype, answer, content)
+            user_ans = ",".join(x.strip().upper() for x in content if x and x.strip())
+            aid = f"att_{uuid.uuid4().hex[:12]}"
+            now_str = _now_iso()
+
+            attempt_dict = {
+                "id": aid,
+                "bank_id": q["bank_id"],
+                "question_id": q["id"],
+                "content": user_ans,
+                "passed": passed,
+                "is_doubtful": is_doubtful,
+                "created_at": now_str,
+                "user_id": "local",
+            }
+
+            cursor.execute(
+                """
+                INSERT INTO bank_attempts (id, bank_id, question_id, user_answer, is_correct, is_doubtful, created_at, raw_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    aid,
+                    q["bank_id"],
+                    q["id"],
+                    user_ans,
+                    1 if passed else 0,
+                    1 if is_doubtful else 0,
+                    now_str,
+                    json.dumps(attempt_dict, ensure_ascii=False),
+                ),
+            )
+            conn.commit()
+
+            return {
+                "attempt_id": aid,
+                "passed": passed,
+                "is_doubtful": is_doubtful,
+                "user_answer": user_ans,
+                "answer": answer,
+                "correct_answer": format_correct_answer(qtype, answer),
+                "answer_raw": q.get("answer_raw") or answer,
+                "explanation": q.get("explanation") or "",
+                "ai_explanation": q.get("ai_explanation") or "",
+            }
+
+    async def submit_bank_attempt(
+        self, question_id: str, content: list[str], is_doubtful: bool = False
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self.submit_bank_attempt_sync, question_id, content, is_doubtful
+        )
+
+    def update_bank_question_sync(
+        self, question_id: str, updates: dict[str, Any]
+    ) -> dict[str, Any]:
+        """云端服务端独立支持题目纠错改题与答案重判。"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM bank_questions WHERE id = ?", (question_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise LookupError("题目不存在")
+            q = dict(row)
+            raw_d = json.loads(q["raw_json"]) if q.get("raw_json") else {}
+
+            title = updates.get("title")
+            options = updates.get("options")
+            answer = updates.get("answer")
+            explanation = updates.get("explanation")
+            difficulty = updates.get("difficulty")
+
+            if title is not None and str(title).strip():
+                q["title"] = str(title).strip()
+                raw_d["title"] = q["title"]
+
+            content_changed = False
+            if options is not None:
+                opts_json = json.dumps(options, ensure_ascii=False) if isinstance(options, list) else str(options)
+                if opts_json != q.get("options"):
+                    content_changed = True
+                q["options"] = opts_json
+                raw_d["options"] = options
+
+            if answer is not None and str(answer).strip():
+                ans_str = str(answer).strip().upper()
+                if ans_str != q.get("answer"):
+                    content_changed = True
+                q["answer"] = ans_str
+                raw_d["answer"] = ans_str
+                raw_d["answer_raw"] = ans_str.replace(",", "、")
+
+            if explanation is not None:
+                q["analysis"] = str(explanation).strip()
+                q["explanation"] = str(explanation).strip()
+                raw_d["explanation"] = q["explanation"]
+
+            if difficulty is not None:
+                q["difficulty"] = str(difficulty).strip()
+                raw_d["difficulty"] = q["difficulty"]
+
+            if content_changed:
+                q["ai_explanation"] = ""
+                raw_d["ai_explanation"] = ""
+
+            cursor.execute(
+                """
+                UPDATE bank_questions
+                SET title = ?, options = ?, answer = ?, analysis = ?, difficulty = ?, raw_json = ?
+                WHERE id = ?
+                """,
+                (
+                    q["title"],
+                    q["options"],
+                    q["answer"],
+                    q.get("analysis", ""),
+                    q.get("difficulty", ""),
+                    json.dumps(raw_d, ensure_ascii=False),
+                    question_id,
+                ),
+            )
+
+            recalibrated_attempt = None
+            if content_changed:
+                cursor.execute(
+                    """
+                    SELECT id, user_answer, is_correct, is_doubtful
+                    FROM bank_attempts WHERE question_id = ?
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    (question_id,),
+                )
+                att_row = cursor.fetchone()
+                if att_row:
+                    att_id = att_row[0]
+                    u_ans = att_row[1] or ""
+                    submitted = [x.strip() for x in u_ans.split(",") if x.strip()]
+                    new_passed = judge_answer(q["qtype"], q["answer"], submitted)
+                    cursor.execute(
+                        "UPDATE bank_attempts SET is_correct = ? WHERE id = ?",
+                        (1 if new_passed else 0, att_id),
+                    )
+                    recalibrated_attempt = {
+                        "attempt_id": att_id,
+                        "passed": new_passed,
+                        "is_doubtful": bool(att_row[3]),
+                        "user_answer": u_ans,
+                        "answer": q["answer"],
+                        "correct_answer": format_correct_answer(q["qtype"], q["answer"]),
+                        "answer_raw": raw_d.get("answer_raw") or q["answer"],
+                        "explanation": q.get("explanation") or "",
+                    }
+
+            conn.commit()
+
+            q_out = dict(q)
+            if q_out.get("raw_json"):
+                try:
+                    raw_d = json.loads(q_out["raw_json"])
+                    for k in ("answer_raw", "explanation", "ai_explanation"):
+                        if k in raw_d and not q_out.get(k):
+                            q_out[k] = raw_d[k]
+                except Exception:
+                    pass
+            try:
+                q_out["options"] = json.loads(q_out["options"]) if isinstance(q_out["options"], str) else q_out["options"]
+            except Exception:
+                pass
+            return {
+                "question": q_out,
+                "recalibrated_result": recalibrated_attempt,
+            }
+
+    async def update_bank_question(
+        self, question_id: str, updates: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self.update_bank_question_sync, question_id, updates)
+
+    def save_question_ai_explanation_sync(self, question_id: str, ai_explanation: str) -> None:
+        """持久化保存云端生成的错题 AI 解析。"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT raw_json FROM bank_questions WHERE id = ?", (question_id,))
+            row = cursor.fetchone()
+            if not row:
+                return
+            raw_d = json.loads(row[0]) if row[0] else {}
+            raw_d["ai_explanation"] = ai_explanation
+            cursor.execute(
+                "UPDATE bank_questions SET raw_json = ? WHERE id = ?",
+                (json.dumps(raw_d, ensure_ascii=False), question_id),
+            )
+            conn.commit()
+
+    async def save_question_ai_explanation(self, question_id: str, ai_explanation: str) -> None:
+        await asyncio.to_thread(self.save_question_ai_explanation_sync, question_id, ai_explanation)
+
+    def update_bank_prompt_sync(self, bank_id: str, ai_prompt: str) -> bool:
+        """更新题库自定义 AI 提示词。"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT raw_json FROM question_banks WHERE id = ?", (bank_id,))
+            row = cursor.fetchone()
+            if not row:
+                return False
+            raw_d = json.loads(row[0]) if row[0] else {}
+            raw_d["ai_prompt"] = ai_prompt
+            now_str = _now_iso()
+            cursor.execute(
+                "UPDATE question_banks SET ai_prompt = ?, raw_json = ?, updated_at = ? WHERE id = ?",
+                (ai_prompt, json.dumps(raw_d, ensure_ascii=False), now_str, bank_id),
+            )
+            conn.commit()
+            return True
+
+    async def update_bank_prompt(self, bank_id: str, ai_prompt: str) -> bool:
+        return await asyncio.to_thread(self.update_bank_prompt_sync, bank_id, ai_prompt)
+
+    def record_study_ping_sync(self, seconds: int) -> None:
+        """记录学习时长打点。"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            now_str = _now_iso()
+            cursor.execute(
+                """
+                INSERT INTO sync_metadata (key, value, updated_at)
+                VALUES ('study_seconds', ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value = CAST(CAST(value AS INTEGER) + ? AS TEXT),
+                    updated_at = excluded.updated_at
+                """,
+                (str(seconds), now_str, seconds),
+            )
+            conn.commit()
+
+    async def record_study_ping(self, seconds: int) -> None:
+        await asyncio.to_thread(self.record_study_ping_sync, seconds)
 
 
 relay_db = RelayDatabase()

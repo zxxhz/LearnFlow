@@ -677,6 +677,173 @@ def test_system_version_and_update():
     print("✅ server.api_system 系统版本与在线更新测试全部通过！")
 
 
+# 8. 测试服务端独立模式题库刷题完整链路 (draw_round, submit_attempt, wrong, stats, etc.)
+def test_standalone_bank_drilling():
+    print(">>> 正在测试服务端独立运行时的题库刷题链路 (无本地 Worker)...")
+    from server.config import settings
+    from server.db import relay_db
+    from server.main import app
+
+    old_auth = settings.relay_auth_required
+    settings.relay_auth_required = False
+
+    try:
+        relay_db.init_db_sync()
+        with relay_db._get_connection() as conn:
+            conn.execute("DELETE FROM bank_attempts WHERE bank_id = 'drill_b1'")
+            conn.execute("DELETE FROM bank_questions WHERE bank_id = 'drill_b1'")
+            conn.execute("DELETE FROM question_banks WHERE id = 'drill_b1'")
+            conn.commit()
+        client = TestClient(app)
+
+        # 构造并注入测试题库与题目
+        mock_bank_payload = {
+            "banks": [
+                {
+                    "id": "drill_b1",
+                    "name": "离线刷题测试题库",
+                    "question_count": 3,
+                }
+            ],
+            "bank_questions": [
+                {
+                    "id": "dq1",
+                    "bank_id": "drill_b1",
+                    "seq": 1,
+                    "qtype": "single",
+                    "title": "单选题：1+1 等于几？",
+                    "options": ["A. 1", "B. 2", "C. 3", "D. 4"],
+                    "answer": "B",
+                    "analysis": "1+1=2 是基础算术",
+                },
+                {
+                    "id": "dq2",
+                    "bank_id": "drill_b1",
+                    "seq": 2,
+                    "qtype": "multi",
+                    "title": "多选题：哪些是偶数？",
+                    "options": ["A. 2", "B. 3", "C. 4", "D. 5"],
+                    "answer": "A,C",
+                    "analysis": "2 和 4 是偶数",
+                },
+                {
+                    "id": "dq3",
+                    "bank_id": "drill_b1",
+                    "seq": 3,
+                    "qtype": "judge",
+                    "title": "判断题：地球是平的。",
+                    "options": [],
+                    "answer": "B",
+                    "analysis": "地球是近似球体",
+                },
+            ],
+        }
+        relay_db.save_sync_payload_sync(mock_bank_payload)
+
+        # 1. 查询题库统计 (GET /api/banks/{id}/stats)
+        r_stats = client.get("/api/banks/drill_b1/stats")
+        assert r_stats.status_code == 200, r_stats.text
+        s_data = r_stats.json()
+        assert s_data["question_count"] == 3
+        assert s_data["answered"] == 0
+        assert s_data["wrong_count"] == 0
+
+        # 2. 抽题组轮 (POST /api/banks/{id}/round)
+        r_round = client.post("/api/banks/drill_b1/round", json={"mode": "all", "size": 10})
+        assert r_round.status_code == 200, r_round.text
+        rnd = r_round.json()
+        assert rnd["bank_id"] == "drill_b1"
+        assert len(rnd["questions"]) == 3
+        # 确保题干中未泄露 answer 与 explanation
+        for q in rnd["questions"]:
+            assert "answer" not in q
+            assert "explanation" not in q
+
+        # 3. 提交单选题正确作答 (POST /api/banks/attempts)
+        r_att1 = client.post(
+            "/api/banks/attempts",
+            json={"question_id": "dq1", "content": ["B"], "is_doubtful": False},
+        )
+        assert r_att1.status_code == 200, r_att1.text
+        res1 = r_att1.json()
+        assert res1["passed"] is True
+        assert res1["correct_answer"] == "B"
+
+        # 4. 提交多选题错误作答 (少选)
+        r_att2 = client.post(
+            "/api/banks/attempts",
+            json={"question_id": "dq2", "content": ["A"], "is_doubtful": False},
+        )
+        assert r_att2.status_code == 200, r_att2.text
+        res2 = r_att2.json()
+        assert res2["passed"] is False
+        assert "A、C" in res2["correct_answer"]
+
+        # 5. 校验做题后统计数据实时刷新
+        r_stats2 = client.get("/api/banks/drill_b1/stats")
+        s2 = r_stats2.json()
+        assert s2["answered"] == 2
+        assert s2["wrong_count"] == 1
+        assert s2["correct"] == 1
+
+        # 6. 错题模式抽轮 (mode="wrong")
+        r_wrong_rnd = client.post("/api/banks/drill_b1/round", json={"mode": "wrong", "size": 10})
+        assert r_wrong_rnd.status_code == 200, r_wrong_rnd.text
+        w_rnd = r_wrong_rnd.json()
+        assert len(w_rnd["questions"]) == 1
+        assert w_rnd["questions"][0]["id"] == "dq2"
+
+        # 7. 做新题模式抽轮 (mode="new")
+        r_new_rnd = client.post("/api/banks/drill_b1/round", json={"mode": "new", "size": 10})
+        assert r_new_rnd.status_code == 200, r_new_rnd.text
+        n_rnd = r_new_rnd.json()
+        assert len(n_rnd["questions"]) == 1
+        assert n_rnd["questions"][0]["id"] == "dq3"
+
+        # 8. 查询错题池 (GET /api/banks/{id}/wrong)
+        r_wb = client.get("/api/banks/drill_b1/wrong")
+        assert r_wb.status_code == 200
+        wb_list = r_wb.json()
+        assert len(wb_list) == 1
+        assert wb_list[0]["id"] == "dq2"
+        assert wb_list[0]["answer"] == "A,C"
+        assert wb_list[0]["explanation"] == "2 和 4 是偶数"
+
+        # 9. 题目纠错 (PATCH /api/banks/questions/{id})
+        r_patch = client.patch(
+            "/api/banks/questions/dq2",
+            json={"answer": "A", "explanation": "修正为只有2是偶数"},
+        )
+        assert r_patch.status_code == 200
+        patch_res = r_patch.json()
+        assert patch_res["question"]["answer"] == "A"
+        # 验证纠错后对历史作答自动重判并出池
+        assert patch_res["recalibrated_result"]["passed"] is True
+
+        # 再次查看错题池：重判改对后错题池应已出池变为空
+        r_wb2 = client.get("/api/banks/drill_b1/wrong")
+        assert len(r_wb2.json()) == 0
+
+        # 10. 默认提示词与学习打点
+        r_dp = client.get("/api/banks/default-prompt")
+        assert r_dp.status_code == 200
+        assert "核心考点" in r_dp.json()["default_prompt"]
+
+        r_ping = client.post("/api/study/ping", json={"seconds": 30})
+        assert r_ping.status_code == 200
+        assert r_ping.json()["ok"] is True
+
+    finally:
+        with relay_db._get_connection() as conn:
+            conn.execute("DELETE FROM bank_attempts WHERE bank_id = 'drill_b1'")
+            conn.execute("DELETE FROM bank_questions WHERE bank_id = 'drill_b1'")
+            conn.execute("DELETE FROM question_banks WHERE id = 'drill_b1'")
+            conn.commit()
+        settings.relay_auth_required = old_auth
+
+    print("✅ 服务端独立模式题库刷题完整链路测试通过！")
+
+
 if __name__ == "__main__":
     test_database()
     test_database_banks_stats()
@@ -685,4 +852,5 @@ if __name__ == "__main__":
     test_tunnel_status_and_forwarded_headers()
     test_cloud_ai_and_sync()
     test_system_version_and_update()
+    test_standalone_bank_drilling()
     print("\n🎉🎉🎉 全部模块自动化测试验证成功！")

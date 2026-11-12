@@ -50,3 +50,7 @@ tmp_*/
 
 # 并发审查进程残留的数据目录
 lf_cc_*/
+
+# 审查实证临时数据目录
+backend/lf-audit-data-*/
+lf-audit-data-*/

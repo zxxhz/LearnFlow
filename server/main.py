@@ -21,19 +21,43 @@ from typing import Any, Optional
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 from server.api_sync import router as sync_router
 from server.api_system import router as system_router
 from server.auth import RelayAuthMiddleware
 from server.config import settings
 from server.db import relay_db
-from server.llm import dispatch_ai_request
+from server.llm import dispatch_ai_request, server_llm_service
+from server.prompt import DEFAULT_BANK_AI_PROMPT, build_server_explain_messages
 from server.tunnel import (
     WorkerOfflineError,
     WorkerRequestTimeoutError,
     handle_relay_websocket,
     tunnel_manager,
 )
+
+SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+    "Content-Type": "text/event-stream; charset=utf-8",
+}
+
+
+class BankRoundRequest(BaseModel):
+    mode: str = "all"
+    size: int = 20
+
+
+class BankAttemptRequest(BaseModel):
+    question_id: str
+    content: list[str] = Field(default_factory=list)
+    is_doubtful: bool = False
+
+
+class BankExplainRequest(BaseModel):
+    picked: list[str] = Field(default_factory=list)
 
 logger = logging.getLogger("server.main")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -189,6 +213,62 @@ async def get_banks_list():
     return []
 
 
+@app.get("/api/banks/default-prompt")
+async def get_default_bank_prompt():
+    """获取系统默认的错题答疑 AI 提示词（须先于 /api/banks/{bank_id} 静态注册防路由截断）。"""
+    return {"default_prompt": DEFAULT_BANK_AI_PROMPT}
+
+
+@app.post("/api/banks/polish-prompt")
+async def polish_bank_prompt(request: Request):
+    """润色题库 AI 提示词。"""
+    body = await request.json()
+    if tunnel_manager.is_worker_online():
+        try:
+            status_code, _, resp_body = await tunnel_manager.dispatch_full(
+                "POST", "/api/banks/polish-prompt", body=json.dumps(body).encode("utf-8")
+            )
+            return Response(content=resp_body, status_code=status_code, media_type="application/json")
+        except Exception:
+            pass
+
+    if not settings.is_server_llm_configured():
+        raise HTTPException(status_code=400, detail="服务端尚未配置大模型，请在设置中配置 SERVER_LLM_API_KEY")
+
+    prompt = (body.get("prompt") or "").strip() or DEFAULT_BANK_AI_PROMPT
+    bank_name = (body.get("bank_name") or "").strip()
+    system_prompt = "你是一位精通教学大纲与试题解析的资深教研专家，擅长优化大模型题库解析提示词。"
+    user_msg = f"题库名称：{bank_name or '综合题库'}\n\n待润色的原提示词：\n{prompt}\n\n请输出一段结构严密、去AI腔且富含针对性教学引导规则的高质量题库解析系统提示词。"
+    accumulated = []
+    async for delta in server_llm_service.stream_chat([{"role": "user", "content": user_msg}], system_prompt=system_prompt):
+        accumulated.append(delta)
+    return {"polished_prompt": "".join(accumulated).strip()}
+
+
+@app.post("/api/banks/attempts")
+async def submit_bank_attempt(body: BankAttemptRequest):
+    """提交作答并即时判分（服务端独立运行直接判题落库，离线与多端同步全闭环）。"""
+    if tunnel_manager.is_worker_online():
+        try:
+            status_code, _, resp_body = await tunnel_manager.dispatch_full(
+                "POST", "/api/banks/attempts", body=json.dumps(body.model_dump()).encode("utf-8")
+            )
+            # 本地成功后云端也备份落库（保证离线与双向同步数据一致）
+            try:
+                await relay_db.submit_bank_attempt(body.question_id, body.content, body.is_doubtful)
+            except Exception:
+                pass
+            return Response(content=resp_body, status_code=status_code, media_type="application/json")
+        except Exception:
+            pass
+
+    try:
+        result = await relay_db.submit_bank_attempt(body.question_id, body.content, body.is_doubtful)
+        return result
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @app.get("/api/banks/{bank_id}")
 async def get_bank_detail(bank_id: str):
     """获取单个题库信息。"""
@@ -217,6 +297,185 @@ async def get_bank_wrong(bank_id: str):
         except Exception:
             pass
     return []
+
+
+@app.get("/api/banks/{bank_id}/stats")
+async def get_bank_stats(bank_id: str):
+    """获取单个题库做题统计数据。"""
+    if tunnel_manager.is_worker_online():
+        try:
+            status_code, _, resp_body = await tunnel_manager.dispatch_full(
+                "GET", f"/api/banks/{bank_id}/stats"
+            )
+            return Response(content=resp_body, status_code=status_code, media_type="application/json")
+        except Exception:
+            pass
+
+    stats = await relay_db.get_bank_stats(bank_id)
+    if stats is not None:
+        return stats
+    raise HTTPException(status_code=404, detail="题库不存在")
+
+
+@app.post("/api/banks/{bank_id}/round")
+async def draw_bank_round(bank_id: str, body: BankRoundRequest):
+    """题库抽题组轮（支持做新题、做题、错题重刷、随机模式；服务端独立运行可直接开刷）。"""
+    if tunnel_manager.is_worker_online():
+        try:
+            status_code, _, resp_body = await tunnel_manager.dispatch_full(
+                "POST", f"/api/banks/{bank_id}/round", body=json.dumps(body.model_dump()).encode("utf-8")
+            )
+            return Response(content=resp_body, status_code=status_code, media_type="application/json")
+        except Exception:
+            pass
+
+    questions, pool_size, bank = await relay_db.draw_bank_round(bank_id, body.mode, body.size)
+    if not bank:
+        raise HTTPException(status_code=404, detail="题库不存在")
+    if not questions:
+        if body.mode == "wrong":
+            detail = f"错题池为空（共 {bank.get('question_count', 0)} 题）"
+        elif body.mode == "new":
+            detail = f"新题已全部刷完（题库共 {bank.get('question_count', 0)} 题均已作答过，可选择【做题模式】综合复习）"
+        else:
+            detail = "题库为空"
+        raise HTTPException(status_code=400, detail=detail)
+
+    return {
+        "bank_id": bank_id,
+        "mode": body.mode,
+        "questions": questions,
+        "wrong_pool_size": pool_size,
+    }
+
+
+@app.post("/api/banks/questions/{question_id}/ai-explain")
+async def ai_explain_bank_question(question_id: str, body: BankExplainRequest, request: Request):
+    """刷题错题 AI 流式深度解答（服务端独立运行时利用服务端配置的 LLM 直出）。"""
+    mode = (settings.ai_mode or "auto").lower()
+    body_bytes = json.dumps(body.model_dump()).encode("utf-8")
+
+    if mode in ("local", "auto") and tunnel_manager.is_worker_online():
+        try:
+            stream_iter = tunnel_manager.dispatch_request(
+                method="POST",
+                path=f"/api/banks/questions/{question_id}/ai-explain",
+                headers=dict(request.headers),
+                body=body_bytes,
+            )
+            return StreamingResponse(
+                stream_iter,
+                media_type="text/event-stream",
+                headers=SSE_HEADERS,
+            )
+        except Exception as e:
+            if mode == "local":
+                raise HTTPException(status_code=503, detail=f"本地节点调用失败: {e}")
+            logger.warning("本地 Worker 异常，回退云端 LLM: %s", e)
+
+    if not settings.is_server_llm_configured():
+        raise HTTPException(status_code=400, detail="服务端尚未配置大模型，请在设置中配置 SERVER_LLM_API_KEY")
+
+    q = await relay_db.get_question_by_id(question_id)
+    if not q:
+        raise HTTPException(status_code=404, detail="题目不存在")
+    bank = await relay_db.get_bank(q["bank_id"]) or {}
+
+    sys_prompt, messages = build_server_explain_messages(bank, q, body.picked)
+    accumulated: list[str] = []
+
+    async def gen():
+        try:
+            async for delta in server_llm_service.stream_chat(messages, system_prompt=sys_prompt):
+                accumulated.append(delta)
+                yield f"data: {json.dumps({'type': 'delta', 'text': delta}, ensure_ascii=False)}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(exc)}, ensure_ascii=False)}\n\n"
+            return
+
+        full_text = "".join(accumulated).strip()
+        if full_text:
+            try:
+                await relay_db.save_question_ai_explanation(question_id, full_text)
+            except Exception as e:
+                logger.warning("缓存云端 AI 解析失败: %s", e)
+
+        yield "data: {\"type\": \"done\"}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers=SSE_HEADERS,
+    )
+
+
+@app.patch("/api/banks/questions/{question_id}")
+async def update_bank_question(question_id: str, request: Request):
+    """更新题目内容或答案（纠错改题）。"""
+    body = await request.json()
+    if tunnel_manager.is_worker_online():
+        try:
+            status_code, _, resp_body = await tunnel_manager.dispatch_full(
+                "PATCH", f"/api/banks/questions/{question_id}", body=json.dumps(body).encode("utf-8")
+            )
+            try:
+                await relay_db.update_bank_question(question_id, body)
+            except Exception:
+                pass
+            return Response(content=resp_body, status_code=status_code, media_type="application/json")
+        except Exception:
+            pass
+
+    try:
+        return await relay_db.update_bank_question(question_id, body)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.patch("/api/banks/{bank_id}")
+async def update_bank(bank_id: str, request: Request):
+    """更新题库名称或自定义 AI 提示词。"""
+    body = await request.json()
+    if tunnel_manager.is_worker_online():
+        try:
+            status_code, _, resp_body = await tunnel_manager.dispatch_full(
+                "PATCH", f"/api/banks/{bank_id}", body=json.dumps(body).encode("utf-8")
+            )
+            if "ai_prompt" in body:
+                try:
+                    await relay_db.update_bank_prompt(bank_id, str(body["ai_prompt"]))
+                except Exception:
+                    pass
+            return Response(content=resp_body, status_code=status_code, media_type="application/json")
+        except Exception:
+            pass
+
+    if "ai_prompt" in body:
+        ok = await relay_db.update_bank_prompt(bank_id, str(body["ai_prompt"]))
+        if not ok:
+            raise HTTPException(status_code=404, detail="题库不存在")
+    bank = await relay_db.get_bank(bank_id)
+    if not bank:
+        raise HTTPException(status_code=404, detail="题库不存在")
+    return bank
+
+
+@app.post("/api/study/ping")
+async def study_ping(request: Request):
+    """记录学习打点时长（在线/离线通用）。"""
+    try:
+        body = await request.json()
+        sec = int(body.get("seconds", 30))
+        if 0 < sec <= 300:
+            await relay_db.record_study_ping(sec)
+    except Exception:
+        pass
+    if tunnel_manager.is_worker_online():
+        try:
+            await tunnel_manager.dispatch_full("POST", "/api/study/ping", body=await request.body())
+        except Exception:
+            pass
+    return {"ok": True}
 
 
 @app.get("/api/mindmaps")
@@ -421,6 +680,9 @@ _AI_KEYWORDS = (
     "generate",
     "outline",
     "executions",
+    "assistant",
+    "conversations",
+    "stream",
 )
 
 
