@@ -2007,7 +2007,7 @@ dependencies = [
 
 [[package]]
 name = "learnflow-desktop"
-version = "0.5.7"
+version = "0.5.8"
 dependencies = [
  "serde",
  "serde_json",
