@@ -270,8 +270,10 @@ def _launch_installer_and_exit(installer_path: "Path") -> None:
 
     if not started:
         try:
-            # cmd /c start "" 启动的程序属于全新会话组，脱离当前进程树
-            subprocess.Popen(f'start "" "{installer_str}"', shell=True)
+            # cmd /c start "" 启动的程序属于全新会话组，脱离当前进程树；
+            # 列表形式参数不经 shell 二次解析（防注入）：文件名由 _sanitize_version
+            # （仅数字与点）+ uuid 构造，不含空格与 cmd 元字符，外部不可控
+            subprocess.Popen(["cmd", "/c", "start", "", installer_str])
             started = True
         except Exception as e:
             logger.warning("cmd start 唤起失败，尝试调用 explorer: %s", e)

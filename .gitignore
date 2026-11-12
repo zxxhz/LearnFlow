@@ -54,3 +54,7 @@ lf_cc_*/
 # 审查实证临时数据目录
 backend/lf-audit-data-*/
 lf-audit-data-*/
+backend/server/
+
+# Mimosa 安全插件本地状态（hook-state/基线快照/历史报告，不入库）
+.mimosa/
