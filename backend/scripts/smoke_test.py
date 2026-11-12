@@ -1073,6 +1073,98 @@ def main() -> None:
         json.dumps(ts["bk"], ensure_ascii=False)[:120],
     )
 
+    # 6.701 补缺工具链路（v0.5.6 增补）：改批注 / 重写大纲 / 导图连线增删与落库校验
+    async def _test_tool_additions():
+        from app.core.db import async_session_factory as _dbf61
+        from app.schemas.mindmap import MindMapCreate
+        from app.services.agent_tools.registry import execute_tool
+        from app.services.mindmap import create_mindmap as _mm_create
+
+        async with _dbf61() as s61:
+            la2 = await execute_tool("list_annotations", {"document_id": document_id}, db=s61)
+            ann_id = (la2.get("annotations") or [{}])[0].get("id", "")
+            ua = (
+                await execute_tool(
+                    "update_annotation", {"annotation_id": ann_id, "note": "（冒烟）助教补注", "color": "blue"}, db=s61
+                )
+                if ann_id
+                else {"status": "skipped"}
+            )
+            uo1 = await execute_tool(
+                "update_course_outline",
+                {"course_id": course_id, "chapters": [{"title": "第一章 指针入门"}, {"title": "第二章 待生成章"}]},
+                db=s61,
+            )
+            uo2 = await execute_tool(
+                "update_course_outline",
+                {
+                    "course_id": course_id,
+                    "chapters": [{"title": "第一章 指针入门", "points": ["指针概念"]}, {"title": "第二章 待生成章"}],
+                },
+                db=s61,
+            )
+            mm = await _mm_create(s61, MindMapCreate(title="（冒烟）工具链路导图"))
+            gm = await execute_tool("get_mindmap", {"map_id": mm.id}, db=s61)
+            root_id = gm["mindmap"]["root"]["id"]
+            kids = await execute_tool(
+                "edit_mindmap",
+                {
+                    "map_id": mm.id,
+                    "operations": [
+                        {"action": "add_child", "node_id": root_id, "title": "节点A"},
+                        {"action": "add_child", "node_id": root_id, "title": "节点B"},
+                    ],
+                },
+                db=s61,
+            )
+            gm2 = await execute_tool("get_mindmap", {"map_id": mm.id}, db=s61)
+            child_ids = [c["id"] for c in gm2["mindmap"]["root"].get("children", [])]
+            if len(child_ids) >= 2:
+                link = await execute_tool(
+                    "edit_mindmap",
+                    {"map_id": mm.id, "operations": [{"action": "link", "node_id": child_ids[0], "target_id": child_ids[1], "label": "易混淆"}]},
+                    db=s61,
+                )
+                link_again = await execute_tool(
+                    "edit_mindmap",
+                    {"map_id": mm.id, "operations": [{"action": "link", "node_id": child_ids[0], "target_id": child_ids[1], "label": "重复"}]},
+                    db=s61,
+                )
+                from app.models import MindMap as _MM
+
+                mm_row = await s61.get(_MM, mm.id)
+                saved = json.loads(mm_row.settings or "{}") if isinstance(mm_row.settings, str) else (mm_row.settings or {})
+                links_saved = saved.get("cross_links") or []
+                unlink = await execute_tool(
+                    "edit_mindmap",
+                    {"map_id": mm.id, "operations": [{"action": "unlink", "node_id": child_ids[0], "target_id": child_ids[1]}]},
+                    db=s61,
+                )
+            else:
+                link = link_again = unlink = {"status": "skipped"}
+                links_saved = []
+            dr_mm = await execute_tool("delete_resource", {"kind": "mindmap", "id": mm.id}, db=s61)
+            return {"ua": ua, "uo1": uo1, "uo2": uo2, "kids": kids, "link": link, "link_again": link_again, "links_saved": links_saved, "unlink": unlink, "dr_mm": dr_mm}
+
+    ta = asyncio.run(_test_tool_additions())
+    check(
+        "update_annotation：改颜色与备注生效",
+        ta["ua"].get("status") in ("success", "skipped") and (ta["ua"].get("status") != "success" or ta["ua"]["annotation"]["color"] == "blue" and "助教补注" in ta["ua"]["annotation"]["note"]),
+        str(ta["ua"])[:140],
+    )
+    check("update_course_outline：重写并还原均成功", ta["uo1"].get("status") == "success" and ta["uo2"].get("status") == "success", str(ta["uo1"])[:120])
+    check(
+        "edit_mindmap：连线落库、重复连线去重、按对解链",
+        ta["kids"].get("status") == "success"
+        and ta["link"].get("status") == "success"
+        and len(ta["links_saved"]) == 1
+        and ta["links_saved"][0].get("label") == "易混淆"
+        and ta["link_again"].get("applied", 0) == 0
+        and ta["unlink"].get("status") == "success"
+        and ta["dr_mm"].get("status") == "success",
+        json.dumps({"link": ta["link"], "links": ta["links_saved"], "again": ta["link_again"], "unlink": ta["unlink"]}, ensure_ascii=False)[:200],
+    )
+
     # 6.7 搜索 / 学习时长 / 仪表盘扩展 / 导出 / 备份
     s, body = call(base, "/api/search", )
     check("空搜索词 → 400", s == 400, str(body)[:80])

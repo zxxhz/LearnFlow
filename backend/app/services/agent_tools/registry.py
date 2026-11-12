@@ -319,6 +319,35 @@ AGENT_TOOLS_SCHEMA = [
     {
         "type": "function",
         "function": {
+            "name": "update_course_outline",
+            "description": (
+                "重写课程大纲（章标题+要点列表，覆盖式）。课程生成中时不可修改；"
+                "大纲变更后需重新生成章节才生效（会重建派生数据，需向学员说明）。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "course_id": {"type": "string", "description": "课程 ID"},
+                    "chapters": {
+                        "type": "array",
+                        "description": "完整章节列表",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": {"type": "string", "description": "章标题"},
+                                "points": {"type": "array", "items": {"type": "string"}, "description": "本章要点（可选）"},
+                            },
+                            "required": ["title"],
+                        },
+                    },
+                },
+                "required": ["course_id", "chapters"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "import_course_material",
             "description": (
                 "把一段 Markdown 学习材料导入为新课程（自动切章、重建小节索引、尝试提取知识点）。"
@@ -501,7 +530,8 @@ AGENT_TOOLS_SCHEMA = [
         "function": {
             "name": "edit_mindmap",
             "description": (
-                "对已有导图做结构化编辑（先 get_mindmap 拿节点 id）：添加子分支/重命名/写节点详解/删除分支。"
+                "对已有导图做结构化编辑（先 get_mindmap 拿节点 id）：添加子分支/重命名/写节点详解/删除分支/"
+                "建立或删除横向连线。"
             ),
             "parameters": {
                 "type": "object",
@@ -513,8 +543,13 @@ AGENT_TOOLS_SCHEMA = [
                         "items": {
                             "type": "object",
                             "properties": {
-                                "action": {"type": "string", "enum": ["add_child", "rename", "set_detail", "delete"]},
-                                "node_id": {"type": "string", "description": "目标节点 id"},
+                                "action": {
+                                    "type": "string",
+                                    "enum": ["add_child", "rename", "set_detail", "delete", "link", "unlink"],
+                                },
+                                "node_id": {"type": "string", "description": "目标节点 id（link/unlink 时为连线起点）"},
+                                "target_id": {"type": "string", "description": "link/unlink 的连线终点节点 id"},
+                                "label": {"type": "string", "description": "link 的关系标签（如 底层基于/易混淆）"},
                                 "title": {"type": "string", "description": "rename 的新标题；add_child 的子分支标题"},
                                 "detail": {"type": "string", "description": "set_detail 的节点详解 Markdown"},
                                 "summary": {"type": "string", "description": "add_child 的子分支简述"},
@@ -544,6 +579,23 @@ AGENT_TOOLS_SCHEMA = [
                     "color": {"type": "string", "enum": ["yellow", "green", "blue", "pink"], "description": "高亮色"},
                 },
                 "required": ["document_id", "section_id", "exact"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_annotation",
+            "description": "修改已有划线批注的颜色、备注或状态（仅传需要修改的字段）。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "annotation_id": {"type": "string", "description": "划线 ID（来自 list_annotations）"},
+                    "color": {"type": "string", "enum": ["yellow", "green", "blue", "pink"], "description": "新颜色"},
+                    "note": {"type": "string", "description": "新备注（空串=清空）"},
+                    "status": {"type": "string", "enum": ["active", "resolved", "orphan"], "description": "新状态"},
+                },
+                "required": ["annotation_id"],
             },
         },
     },
@@ -654,6 +706,8 @@ SENSITIVE_TOOLS = {
     "create_mindmap",
     "edit_mindmap",
     "create_annotation",
+    "update_annotation",
+    "update_course_outline",
     "update_learner_profile",
     "resolve_misconception",
     "create_backup",
@@ -702,6 +756,8 @@ TOOL_LABELS: dict[str, str] = {
     "create_mindmap": "生成思维导图",
     "edit_mindmap": "编辑思维导图",
     "create_annotation": "新建划线批注",
+    "update_annotation": "修改划线批注",
+    "update_course_outline": "重写课程大纲",
     "update_learner_profile": "更新学习者画像",
     "resolve_misconception": "移除认知盲区",
     "create_backup": "创建备份",
@@ -738,6 +794,8 @@ _DOCUMENT_TOOLS = [
     "list_wrong_questions",
     "list_annotations",
     "create_annotation",
+    "update_annotation",
+    "update_course_outline",
     "generate_exercises",
     "generate_quiz",
     "generate_bridge_exercises",
@@ -1222,7 +1280,7 @@ async def _tool_list_mindmaps(db: AsyncSession) -> dict[str, Any]:
     return {"status": "success", "mindmaps": out, "references": [_ref("打开导图库", "/mindmap")]}
 
 
-async def _prune_tree(node: dict[str, Any], depth: int, max_depth: int) -> dict[str, Any]:
+def _prune_tree(node: dict[str, Any], depth: int, max_depth: int) -> dict[str, Any]:
     out = {
         "id": node.get("id", ""),
         "title": node.get("title", ""),
@@ -1251,6 +1309,11 @@ async def _tool_get_mindmap(db: AsyncSession, args: dict[str, Any]) -> dict[str,
         root = json.loads(mm.root) if isinstance(mm.root, str) else (mm.root or {})
     except Exception:  # noqa: BLE001
         root = {}
+    try:
+        old_settings = json.loads(mm.settings) if isinstance(mm.settings, str) else (mm.settings or {})
+    except Exception:  # noqa: BLE001
+        old_settings = {}
+    cross_links = [dict(l) for l in (old_settings.get("cross_links") or [])]
     return {
         "status": "success",
         "mindmap": {
@@ -1258,6 +1321,7 @@ async def _tool_get_mindmap(db: AsyncSession, args: dict[str, Any]) -> dict[str,
             "title": mm.title,
             "source": mm.source,
             "root": _prune_tree(root if isinstance(root, dict) else {}, 1, 4),
+            "cross_links": cross_links,
         },
         "note": "节点展示限深 4 层、每层最多 10 个子分支；编辑用节点 id",
         "references": [_ref(f"打开导图《{mm.title}》", f"/mindmap/{mm.id}")],
@@ -1734,6 +1798,12 @@ async def _tool_edit_mindmap(db: AsyncSession, args: dict[str, Any]) -> dict[str
         root = json.loads(mm.root) if isinstance(mm.root, str) else (mm.root or {})
     except Exception:  # noqa: BLE001
         return {"error": "导图数据损坏，无法编辑"}
+    try:
+        old_settings = json.loads(mm.settings) if isinstance(mm.settings, str) else (mm.settings or {})
+    except Exception:  # noqa: BLE001
+        old_settings = {}
+    cross_links = [dict(l) for l in (old_settings.get("cross_links") or [])]
+    links_changed = False
 
     def find(node: dict[str, Any], node_id: str) -> dict[str, Any] | None:
         if str(node.get("id")) == node_id:
@@ -1748,7 +1818,7 @@ async def _tool_edit_mindmap(db: AsyncSession, args: dict[str, Any]) -> dict[str
     for op in operations[:20]:
         action = str(op.get("action") or "")
         node = find(root if isinstance(root, dict) else {}, str(op.get("node_id") or ""))
-        if node is None:
+        if node is None and action not in ("link", "unlink"):
             continue
         if action == "rename" and str(op.get("title") or "").strip():
             node["title"] = str(op["title"]).strip()
@@ -1779,16 +1849,45 @@ async def _tool_edit_mindmap(db: AsyncSession, args: dict[str, Any]) -> dict[str
             if str(root.get("id")) == str(op.get("node_id")):
                 return {"error": "不能删除根节点"}
             prune(root, str(op.get("node_id")))
+        elif action in ("link", "unlink"):
+            src_id = str(op.get("node_id") or "")
+            tgt_id = str(op.get("target_id") or "")
+            if not src_id or not tgt_id or src_id == tgt_id:
+                continue
+            if find(root, src_id) is None or find(root, tgt_id) is None:
+                continue
+            if action == "link":
+                if any(l["sourceId"] == src_id and l["targetId"] == tgt_id for l in cross_links):
+                    continue
+                cross_links.append(
+                    {
+                        "id": new_id(),
+                        "sourceId": src_id,
+                        "targetId": tgt_id,
+                        "label": str(op.get("label") or "关联")[:30],
+                    }
+                )
+                links_changed = True
+            else:
+                before = len(cross_links)
+                cross_links = [l for l in cross_links if not (l["sourceId"] == src_id and l["targetId"] == tgt_id)]
+                if len(cross_links) == before:
+                    continue
+                links_changed = True
         else:
             continue
         applied += 1
 
     if not applied:
         return {"error": "没有可执行的操作（检查 node_id 是否来自 get_mindmap 返回）"}
-    await update_mindmap(db, map_id, MindMapUpdate(root=root))
+    if links_changed:
+        await update_mindmap(db, map_id, MindMapUpdate(root=root, settings={**old_settings, "cross_links": cross_links}))
+    else:
+        await update_mindmap(db, map_id, MindMapUpdate(root=root))
     return {
         "status": "success",
         "applied": applied,
+        "cross_links": len(cross_links),
         "references": [_ref(f"查看导图《{mm.title}》", f"/mindmap/{mm.id}")],
     }
 
@@ -1836,6 +1935,64 @@ async def _tool_create_annotation(db: AsyncSession, args: dict[str, Any]) -> dic
         "annotation_id": created.annotation.id,
         "conversation_id": created.conversation_id,
         "references": [_ref(f"查看《{doc.title}》划线", f"/read/{doc.id}?section={section_id}")],
+    }
+
+
+async def _tool_update_annotation(db: AsyncSession, args: dict[str, Any]) -> dict[str, Any]:
+    from app.api.annotations import update_annotation as _api
+    from app.schemas.annotation import AnnotationUpdate
+
+    annotation_id = str(args.get("annotation_id") or "")
+    if not any(k in args for k in ("color", "note", "status")):
+        return {"error": "没有提供任何要修改的字段（color/note/status）"}
+    body = AnnotationUpdate(
+        color=(str(args["color"]) if args.get("color") else None),
+        note=(str(args["note"]) if "note" in args else None),
+        status=(str(args["status"]) if args.get("status") else None),
+    )
+    updated = await _api(annotation_id=annotation_id, body=body, db=db)
+    return {
+        "status": "success",
+        "annotation": {
+            "id": updated.id,
+            "color": updated.color,
+            "note": _clip(updated.note or "", 120),
+            "status": updated.status,
+        },
+        "references": [_ref("查看该章划线", f"/read/{updated.document_id}")],
+    }
+
+
+async def _tool_update_course_outline(db: AsyncSession, args: dict[str, Any]) -> dict[str, Any]:
+    from app.api.courses import save_outline as _api
+    from app.models import Course
+    from app.schemas.course import OutlineUpdate
+
+    course_id = str(args.get("course_id") or "")
+    chapters = args.get("chapters")
+    if not isinstance(chapters, list) or not chapters:
+        return {"error": "chapters 必须是非空章节列表"}
+    course = await db.get(Course, course_id)
+    if course is None:
+        return {"error": f"未找到课程 {course_id}"}
+    if course.status == "generating":
+        return {"error": "课程正在生成中，暂不能修改大纲；请等生成完成后再试"}
+    items = []
+    for i, ch in enumerate(chapters[:40]):
+        title = str((ch or {}).get("title") or "").strip()
+        if not title:
+            continue
+        points = [str(p).strip() for p in ((ch or {}).get("points") or []) if str(p).strip()]
+        items.append({"index": len(items) + 1, "title": title, "points": points})
+    if not items:
+        return {"error": "章节列表里没有有效章标题"}
+    await _api(course_id=course_id, body=OutlineUpdate(outline=items), db=db)
+    return {
+        "status": "success",
+        "course_id": course_id,
+        "chapters": [it["title"] for it in items],
+        "note": "大纲已重写；对已生成章节的变更需重新生成本章才会生效（会重建该章派生数据）",
+        "references": [_ref(f"打开课程《{course.title}》", f"/courses/{course_id}")],
     }
 
 
@@ -2143,6 +2300,10 @@ async def execute_tool(
             return await _tool_edit_mindmap(db, args)
         elif name == "create_annotation":
             return await _tool_create_annotation(db, args)
+        elif name == "update_annotation":
+            return await _tool_update_annotation(db, args)
+        elif name == "update_course_outline":
+            return await _tool_update_course_outline(db, args)
         elif name == "update_learner_profile":
             return await _tool_update_learner_profile(db, args)
         elif name == "resolve_misconception":

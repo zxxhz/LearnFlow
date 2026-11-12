@@ -77,6 +77,8 @@ const TOOL_LABELS: Record<string, string> = {
   create_mindmap: "生成思维导图",
   edit_mindmap: "编辑思维导图",
   create_annotation: "新建划线批注",
+  update_annotation: "修改划线批注",
+  update_course_outline: "重写课程大纲",
   update_learner_profile: "更新学习者画像",
   resolve_misconception: "移除认知盲区",
   create_backup: "创建备份",
