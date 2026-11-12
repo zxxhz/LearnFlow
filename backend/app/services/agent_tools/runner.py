@@ -7,14 +7,31 @@ from typing import Any, AsyncIterator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.agent_tools.registry import AGENT_TOOLS_SCHEMA, execute_tool
+from app.services.agent_tools.registry import (
+    AGENT_TOOLS_SCHEMA,
+    DESTRUCTIVE_TOOLS,
+    SENSITIVE_TOOLS,
+    TOOL_LABELS,
+    execute_tool,
+)
 from app.services.llm.openai_compat import OpenAICompatAdapter
 
 logger = logging.getLogger(__name__)
 
-# 需要学员一次性授权才能由模型自主执行的高影响工具（v0.5.1 体检 P1：
-# 导入内容可携带间接提示注入，防其驱动沙箱代码自动出网；确认与超时策略见服务层）
-SENSITIVE_TOOLS = {"run_sandbox_code"}
+
+def _summarize_args(args: dict[str, Any]) -> str:
+    """确认卡用的参数摘要：取前几个非空参数值截断拼接，避免整段内容上卡。"""
+    parts: list[str] = []
+    for key, value in args.items():
+        if value is None or value == "" or key.startswith("_"):
+            continue
+        text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+        if key in ("code", "markdown", "text", "source_text", "prompt"):
+            text = f"{len(str(value))} 字内容"
+        parts.append(f"{key}={text[:60]}")
+        if len(parts) >= 3:
+            break
+    return "；".join(parts) or "（无参数）"
 
 
 async def stream_agent_with_tools(
@@ -85,12 +102,21 @@ async def stream_agent_with_tools(
             need_confirm = bool(confirm_sensitive) and fn_name in SENSITIVE_TOOLS
             if need_confirm:
                 tool_seq += 1
-                yield {"type": "tool_call", "name": fn_name, "args": args, "needs_confirm": True, "confirm_seq": tool_seq}
+                yield {
+                    "type": "tool_call",
+                    "name": fn_name,
+                    "label": TOOL_LABELS.get(fn_name, fn_name),
+                    "summary": _summarize_args(args),
+                    "destructive": fn_name in DESTRUCTIVE_TOOLS,
+                    "args": args,
+                    "needs_confirm": True,
+                    "confirm_seq": tool_seq,
+                }
                 allowed = await confirm_sensitive(fn_name, args, tool_seq)
                 if not allowed:
                     skipped = {
                         "status": "skipped",
-                        "message": "学员未授权本次沙箱运行，已跳过；请改用讲解说明，或提示学员手动运行验证。",
+                        "message": "学员未授权本次操作，已跳过；请改用讲解说明，或提示学员到对应页面手动执行。",
                     }
                     yield {"type": "tool_result", "name": fn_name, "result": skipped}
                     history.append({

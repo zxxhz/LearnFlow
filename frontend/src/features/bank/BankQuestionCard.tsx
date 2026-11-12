@@ -35,6 +35,7 @@ export default function BankQuestionCard({
   question,
   onAnswered,
   initialAiExplain,
+  initialResult,
   onAiExplained,
   onQuestionUpdated,
   onAskAssistant,
@@ -42,6 +43,8 @@ export default function BankQuestionCard({
   question: BankQuestion;
   onAnswered: (result: BankAttemptResult, picked: string[]) => void;
   initialAiExplain?: string;
+  /** 草稿恢复：带入上次已提交的判分，锁定作答区防止对同一题重复提交（v0.5.5 体检） */
+  initialResult?: BankAttemptResult | null;
   onAiExplained?: (text: string) => void;
   onQuestionUpdated?: (updatedQ: BankQuestion, updatedRes?: BankAttemptResult | null) => void;
   /** v0.5.0：唤起右侧统一 AI 助教（带上当前作答与判题状态，连续追问本题） */
@@ -53,9 +56,17 @@ export default function BankQuestionCard({
   }, [question]);
 
   const multi = curQuestion.qtype === "multi";
-  const [picked, setPicked] = useState<string[]>([]);
-  const [isDoubtful, setIsDoubtful] = useState(false);
-  const [result, setResult] = useState<BankAttemptResult | null>(null);
+  // 恢复草稿时回填上次提交的选项与存疑标记，配合 initialResult 直接呈现锁定态
+  const [picked, setPicked] = useState<string[]>(() =>
+    initialResult?.user_answer
+      ? initialResult.user_answer
+          .split(",")
+          .map((s) => s.trim().toUpperCase())
+          .filter(Boolean)
+      : [],
+  );
+  const [isDoubtful, setIsDoubtful] = useState(!!initialResult?.is_doubtful);
+  const [result, setResult] = useState<BankAttemptResult | null>(initialResult ?? null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [editModalOpen, setEditModalOpen] = useState(false);

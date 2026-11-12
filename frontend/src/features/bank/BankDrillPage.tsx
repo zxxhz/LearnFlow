@@ -397,6 +397,7 @@ export default function BankDrillPage() {
             key={current.id}
             question={current}
             initialAiExplain={aiExplains[current.id] || current.ai_explanation}
+            initialResult={results[current.id] ?? null}
             onAiExplained={(text) => handleAiExplained(current.id, text)}
             onAnswered={(r) => onAnswered(current.id, r)}
             onQuestionUpdated={handleQuestionUpdated}

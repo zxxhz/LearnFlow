@@ -31,7 +31,7 @@ from app.models import (
 from app.models.exercise import EXERCISE_CODE
 from app.models.conversation import CONVERSATION_KIND_ASSISTANT
 from app.services.agent_tools import stream_agent_with_tools
-from app.services.agent_tools.registry import AGENT_TOOLS_SCHEMA
+from app.services.agent_tools.registry import select_tool_schemas
 from app.services.context import build_learned_knowledge_index
 from app.services.execution.runner import run_code
 from app.services.exercise import normalize_output
@@ -427,24 +427,27 @@ async def stream_assistant_reply(
         adapter,
         messages,
         db=db,
-        tools=AGENT_TOOLS_SCHEMA,
-        max_tool_steps=3,
+        # v0.5.6 全量工具扩权：按会话归属域裁剪注入的工具集（读类全量直调，
+        # 写类经 runner 层确认卡放行），并放宽工具步数支持连环操作
+        tools=select_tool_schemas(str(conv.context_type or "global")),
+        max_tool_steps=6,
         context={"exclude_document_id": exclude_doc, "guardrail": guardrail_mode},
         confirm_sensitive=_make_confirm_callback(conv.id),
     )
     try:
         async for evt in agent_stream:
-            if (
-                evt.get("type") == "tool_result"
-                and isinstance(evt.get("result"), dict)
-                and evt["result"].get("hits")
-            ):
-                # 检索类工具命中：把来源引用单独推给前端渲染跳转标签
-                refs = []
-                for hit in evt["result"]["hits"]:
-                    refs.extend(hit.get("references") or [])
-                if refs:
-                    yield {"type": "reference", "references": refs}
+            if evt.get("type") == "tool_result" and isinstance(evt.get("result"), dict):
+                result = evt["result"]
+                if result.get("hits"):
+                    # 检索类工具命中：把来源引用单独推给前端渲染跳转标签
+                    refs = []
+                    for hit in result["hits"]:
+                        refs.extend(hit.get("references") or [])
+                    if refs:
+                        yield {"type": "reference", "references": refs}
+                elif result.get("references"):
+                    # v0.5.6 读/写类工具直接携带 references（课程/题库/导图/修订落点等）
+                    yield {"type": "reference", "references": result["references"]}
             yield evt
     except Exception as e:  # noqa: BLE001
         logger.exception("助教流式生成异常")

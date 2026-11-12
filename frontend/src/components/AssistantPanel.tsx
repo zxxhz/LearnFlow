@@ -40,6 +40,51 @@ interface Props {
   onDeleteAnnotation?: (a: Annotation) => void;
 }
 
+/** 工具中文名（与后端 registry.TOOL_LABELS 对齐）：状态行与确认卡展示 */
+const TOOL_LABELS: Record<string, string> = {
+  run_sandbox_code: "沙箱运行代码",
+  render_math_plot: "绘制函数图像",
+  inspect_exercise: "查看练习详情",
+  lookup_learned_section: "检索已学小节",
+  lookup_past_mistakes: "检索历史错题",
+  search_learned_content: "全文搜索已学内容",
+  list_courses: "查看课程列表",
+  get_course_detail: "查看课程详情",
+  read_document: "阅读章节讲义",
+  list_exercises: "查看章节练习",
+  list_wrong_questions: "查看错题本",
+  get_study_report: "查看学习报告",
+  get_learner_profile: "查看学习者画像",
+  list_banks: "查看题库列表",
+  draw_bank_round: "题库抽题预览",
+  list_mindmaps: "查看导图列表",
+  get_mindmap: "查看思维导图",
+  list_annotations: "查看划线批注",
+  check_app_update: "检查应用更新",
+  list_backups: "查看备份列表",
+  get_sync_status: "查看同步状态",
+  create_course: "创建课程",
+  import_course_material: "导入材料建课",
+  regenerate_document: "重新生成本章",
+  revise_section: "修订小节",
+  generate_exercises: "生成练习关卡",
+  generate_quiz: "生成随堂小测",
+  generate_bridge_exercises: "生成搭桥小题",
+  toggle_hard_bone: "切换硬骨头标记",
+  add_bank_questions: "题库追加题目",
+  correct_bank_question: "题库纠错改题",
+  set_bank_prompt: "设置题库提示词",
+  create_mindmap: "生成思维导图",
+  edit_mindmap: "编辑思维导图",
+  create_annotation: "新建划线批注",
+  update_learner_profile: "更新学习者画像",
+  resolve_misconception: "移除认知盲区",
+  create_backup: "创建备份",
+  trigger_sync: "触发云端同步",
+  delete_resource: "删除资源",
+  update_resource_title: "重命名资源",
+};
+
 const TOOL_STATUS: Record<string, string> = {
   run_sandbox_code: "⚙️ 助教正在沙箱中实测代码…",
   render_math_plot: "📐 助教正在绘制函数图像…",
@@ -47,6 +92,10 @@ const TOOL_STATUS: Record<string, string> = {
   lookup_past_mistakes: "📖 助教正在翻查你的历史错题…",
   inspect_exercise: "🛠️ 助教正在查看题目信息…",
 };
+
+function toolLabel(name: string): string {
+  return TOOL_LABELS[name] ?? name;
+}
 
 /** 引用标签跳转：/read/{docId}?section=… 与 /bank 等应用内路由直跳 */
 function ReferenceChips({ refs }: { refs: AssistantReference[] }) {
@@ -99,8 +148,14 @@ export default function AssistantPanel({
   const [toolStatus, setToolStatus] = useState<string | null>(null);
   const [turnPlots, setTurnPlots] = useState<string[]>([]);
   const [turnRefs, setTurnRefs] = useState<AssistantReference[]>([]);
-  // 模型自主沙箱运行的一次性授权卡（v0.5.1 体检 P1）：后端挂起等待，超时/拒绝即跳过
-  const [pendingConfirm, setPendingConfirm] = useState<{ name: string; seq: number } | null>(null);
+  // 模型自主执行敏感工具（沙箱/写操作/删除）的一次性授权卡：后端挂起等待，超时/拒绝即跳过
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    name: string;
+    seq: number;
+    label: string;
+    summary: string;
+    destructive: boolean;
+  } | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmError, setConfirmError] = useState("");
   // 标注管理（仅阅读页划线入口）
@@ -214,11 +269,17 @@ export default function AssistantPanel({
             setLocalMsgs((prev) => prev.map((m) => (m.id === tempId ? { ...m, id: acked } : m)));
           } else if (ev.type === "tool_call" && ev.name) {
             if (ev.needs_confirm) {
-              // 沙箱等敏感工具：后端已挂起等待授权，弹卡而非状态行
-              setPendingConfirm({ name: ev.name, seq: ev.confirm_seq ?? 0 });
+              // 写类/删除类/沙箱等敏感工具：后端已挂起等待授权，弹卡而非状态行
+              setPendingConfirm({
+                name: ev.name,
+                seq: ev.confirm_seq ?? 0,
+                label: ev.label || toolLabel(ev.name),
+                summary: ev.summary || "",
+                destructive: ev.destructive === true,
+              });
               return;
             }
-            setToolStatus(TOOL_STATUS[ev.name] ?? `🛠️ 助教正在调用工具 ${ev.name}…`);
+            setToolStatus(TOOL_STATUS[ev.name] ?? `🛠️ 助教正在${toolLabel(ev.name)}…`);
           } else if (ev.type === "tool_result") {
             // 授权卡要么已处理、要么超时被服务端跳过：一律收起
             setPendingConfirm(null);
@@ -446,27 +507,50 @@ export default function AssistantPanel({
             </div>
           ))}
 
-        {/* 沙箱授权卡：模型请求自主运行代码，须学员放行（v0.5.1 体检 P1） */}
+        {/* 敏感操作授权卡：写操作/删除/沙箱运行须学员放行（v0.5.1 建立，v0.5.6 全量工具泛化） */}
         {pendingConfirm && (
           <div className="flex justify-start">
-            <div className="max-w-[92%] rounded-xl border border-amber-300 bg-amber-50 p-3 shadow-sm dark:border-amber-700 dark:bg-amber-950/40">
-              <p className="text-[0.9em] font-medium text-amber-800 dark:text-amber-200">
-                ⚠️ AI 助教请求在沙箱中运行一段代码
+            <div
+              className={`max-w-[92%] rounded-xl border p-3 shadow-sm ${
+                pendingConfirm.destructive
+                  ? "border-red-300 bg-red-50 dark:border-red-700 dark:bg-red-950/40"
+                  : "border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-950/40"
+              }`}
+            >
+              <p
+                className={`text-[0.9em] font-medium ${
+                  pendingConfirm.destructive
+                    ? "text-red-700 dark:text-red-300"
+                    : "text-amber-800 dark:text-amber-200"
+                }`}
+              >
+                {pendingConfirm.destructive
+                  ? `🛑 AI 助教请求执行「${pendingConfirm.label}」（不可轻易撤销）`
+                  : `⚠️ AI 助教请求执行「${pendingConfirm.label}」`}
               </p>
+              {pendingConfirm.summary && (
+                <p className="mt-1 max-h-24 overflow-y-auto break-all text-[0.8em] leading-relaxed text-gray-600 dark:text-gray-400">
+                  {pendingConfirm.summary}
+                </p>
+              )}
               <p className="mt-1 text-[0.82em] leading-relaxed text-gray-600 dark:text-gray-400">
-                代码将在本地真实执行，经你授权后才会运行；3 分钟未确认将自动跳过。
+                经你授权后才会执行；3 分钟未确认将自动跳过。
               </p>
               {confirmError && <p className="mt-1 text-[0.82em] font-medium text-red-600 dark:text-red-400">{confirmError}</p>}
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <Button
-                  className="bg-amber-600 text-white hover:bg-amber-700"
+                  className={
+                    pendingConfirm.destructive
+                      ? "bg-red-600 text-white hover:bg-red-700"
+                      : "bg-amber-600 text-white hover:bg-amber-700"
+                  }
                   disabled={confirmBusy}
                   onClick={() => answerConfirm(true, false)}
                 >
-                  ▶ 仅这次运行
+                  ▶ 仅这次执行
                 </Button>
                 <Button variant="secondary" disabled={confirmBusy} onClick={() => answerConfirm(true, true)}>
-                  ✓ 本会话自动运行
+                  ✓ 本会话自动执行
                 </Button>
                 <Button variant="ghost" disabled={confirmBusy} onClick={() => answerConfirm(false, false)}>
                   跳过

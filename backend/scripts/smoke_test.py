@@ -954,6 +954,125 @@ def main() -> None:
     s, body = call(base, "/api/settings", "PUT", {"llm": {"base_url": "", "api_key": "", "model": ""}})
     check("设置还原为未配置态", s == 200, str(body)[:120])
 
+    # 6.70 全量工具扩权（v0.5.6）：场景裁剪 / 读类直调 / 确认分级 / 自包含写链路
+    async def _test_tool_surface():
+        from app.core.db import async_session_factory as _dbf6
+        from app.services.agent_tools.registry import (
+            DESTRUCTIVE_TOOLS,
+            SENSITIVE_TOOLS,
+            execute_tool,
+            select_tool_schemas,
+        )
+        from app.services.agent_tools.runner import _summarize_args
+
+        async with _dbf6() as s6:
+            doc_names = {t["function"]["name"] for t in select_tool_schemas("document")}
+            bank_names = {t["function"]["name"] for t in select_tool_schemas("bank_question")}
+            global_names = {t["function"]["name"] for t in select_tool_schemas("global")}
+
+            lc = await execute_tool("list_courses", {}, db=s6)
+            rd = await execute_tool("read_document", {"document_id": document_id}, db=s6)
+            first_sec = (rd.get("sections") or [{}])[0].get("section_id", "")
+            rsec = (
+                await execute_tool(
+                    "read_document", {"document_id": document_id, "section_id": first_sec}, db=s6
+                )
+                if first_sec
+                else {"status": "skipped"}
+            )
+            le = await execute_tool("list_exercises", {"document_id": document_id}, db=s6)
+            lw = await execute_tool("list_wrong_questions", {}, db=s6)
+            sr = await execute_tool("get_study_report", {}, db=s6)
+            gp = await execute_tool("get_learner_profile", {}, db=s6)
+            lb = await execute_tool("list_banks", {}, db=s6)
+            lmm = await execute_tool("list_mindmaps", {}, db=s6)
+            la = await execute_tool("list_annotations", {"document_id": document_id}, db=s6)
+            lbk1 = await execute_tool("list_backups", {}, db=s6)
+            gs = await execute_tool("get_sync_status", {}, db=s6)
+            unknown = await execute_tool("no_such_tool", {}, db=s6)
+
+            # 写入→回读→还原（模型默认 socratic_mode=True）：先置 False 证明写入生效，再还原默认
+            p1 = await execute_tool("update_learner_profile", {"socratic_enabled": False}, db=s6)
+            gp2 = await execute_tool("get_learner_profile", {}, db=s6)
+            p2 = await execute_tool("update_learner_profile", {"socratic_enabled": True}, db=s6)
+
+            bk = await execute_tool("create_backup", {}, db=s6)
+            lbk2 = await execute_tool("list_backups", {}, db=s6)
+            dr = await execute_tool("delete_resource", {"kind": "backup", "id": bk.get("backup", "")}, db=s6)
+            lbk3 = await execute_tool("list_backups", {}, db=s6)
+
+            return {
+                "doc_names": doc_names,
+                "bank_names": bank_names,
+                "global_names": global_names,
+                "sensitive": SENSITIVE_TOOLS,
+                "destructive": DESTRUCTIVE_TOOLS,
+                "sum_code": _summarize_args({"code": "print(" + "x" * 200 + ")", "language": "python"}),
+                "lc": lc, "rd": rd, "rsec": rsec, "le": le, "lw": lw, "sr": sr, "gp": gp,
+                "lb": lb, "lmm": lmm, "la": la, "lbk1": lbk1, "gs": gs, "unknown": unknown,
+                "p1": p1, "gp2": gp2, "p2": p2, "bk": bk, "lbk2": lbk2, "dr": dr, "lbk3": lbk3,
+            }
+
+    ts = asyncio.run(_test_tool_surface())
+    dn, bn, gn = ts["doc_names"], ts["bank_names"], ts["global_names"]
+    check(
+        "场景裁剪：document 集含讲义/练习域、不含题库写工具；bank 集反之；global 全量",
+        "generate_exercises" in dn
+        and "create_annotation" in dn
+        and "add_bank_questions" not in dn
+        and "correct_bank_question" not in dn
+        and "add_bank_questions" in bn
+        and "generate_exercises" not in bn
+        and "create_course" in gn
+        and "trigger_sync" in gn
+        and len(gn) >= len(dn),
+        f"doc={len(dn)} bank={len(bn)} global={len(gn)}",
+    )
+    check(
+        "确认分级：写类全部 SENSITIVE，DESTRUCTIVE 为其子集且含删除/同步/重生成",
+        {"run_sandbox_code", "correct_bank_question", "delete_resource", "create_course"} <= ts["sensitive"]
+        and ts["destructive"] <= ts["sensitive"]
+        and {"delete_resource", "trigger_sync", "regenerate_document"} <= ts["destructive"],
+        str(ts["destructive"]),
+    )
+    check(
+        "确认卡参数摘要：大段内容折叠为字数、短值截断",
+        "字内容" in ts["sum_code"] and "language=python" in ts["sum_code"],
+        ts["sum_code"][:120],
+    )
+    check("list_courses：命中冒烟课程", ts["lc"].get("status") == "success" and any(c.get("id") == course_id for c in ts["lc"].get("courses", [])), json.dumps(ts["lc"], ensure_ascii=False)[:150])
+    check(
+        "read_document：整章模式带正文+小节目录；小节模式带原文（首个小节可为纯标题块）",
+        ts["rd"].get("status") == "success"
+        and len(ts["rd"].get("content") or "") > 50
+        and len(ts["rd"].get("sections") or []) >= 1
+        and ts["rsec"].get("status") == "success"
+        and len(ts["rsec"].get("content") or "") >= 1,
+        json.dumps({"rd": str(ts["rd"])[:80], "rsec": str(ts["rsec"])[:80]}, ensure_ascii=False),
+    )
+    check("list_exercises：返回结构合法（success/empty 均可）", ts["le"].get("status") in ("success", "empty"), str(ts["le"])[:120])
+    check("list_wrong_questions：返回结构合法", ts["lw"].get("status") in ("success", "empty"), str(ts["lw"])[:120])
+    check("get_study_report：含报告主体", ts["sr"].get("status") == "success" and isinstance(ts["sr"].get("report"), dict), str(ts["sr"])[:150])
+    check("get_learner_profile：含画像字段", ts["gp"].get("status") == "success" and "background" in ts["gp"] and "misconceptions" in ts["gp"], str(ts["gp"])[:150])
+    check("list_banks / list_mindmaps / list_annotations：返回结构合法", ts["lb"].get("status") in ("success", "empty") and ts["lmm"].get("status") in ("success", "empty") and ts["la"].get("status") in ("success", "empty"), str(ts["lb"])[:100])
+    check("list_backups / get_sync_status：success", ts["lbk1"].get("status") == "success" and ts["gs"].get("status") == "success", str(ts["gs"])[:150])
+    check("未注册工具 → error", "error" in ts["unknown"], str(ts["unknown"])[:80])
+    s, body = call(base, f"/api/conversations/{conv_a}/tool-confirm", "POST", {"approve": True})
+    check("tool-confirm 无等待请求 → 409", s == 409, str(body)[:100])
+    check(
+        "update_learner_profile：写入生效并可回读",
+        ts["p1"].get("status") == "success" and ts["gp2"].get("socratic_enabled") is False and ts["p2"].get("status") == "success",
+        json.dumps(ts["gp2"], ensure_ascii=False)[:120],
+    )
+    check(
+        "create_backup → list → delete_resource(backup) 全链路",
+        ts["bk"].get("status") == "success"
+        and any(b.get("name") == ts["bk"].get("backup") for b in ts["lbk2"].get("backups", []))
+        and ts["dr"].get("status") == "success"
+        and not any(b.get("name") == ts["bk"].get("backup") for b in ts["lbk3"].get("backups", [])),
+        json.dumps(ts["bk"], ensure_ascii=False)[:120],
+    )
+
     # 6.7 搜索 / 学习时长 / 仪表盘扩展 / 导出 / 备份
     s, body = call(base, "/api/search", )
     check("空搜索词 → 400", s == 400, str(body)[:80])
@@ -1171,6 +1290,60 @@ def main() -> None:
     check("题库改名生效", s == 200 and any(b["name"] == "网安题库（改名）" for b in body), str(body)[:150])
     s, body = call(base, f"/api/banks/{bank_id}", "PATCH", {"name": "  "})
     check("题库改名为空 → 4xx", s in (400, 422), str(body)[:120])
+
+    # 6.71 全量工具扩权·题库与练习写工具（v0.5.6）：抽轮脱敏/纠错改题/提示词/重命名/硬骨头
+    async def _test_bank_tools():
+        from app.core.db import async_session_factory as _dbf7
+        from app.services.agent_tools.registry import execute_tool
+
+        async with _dbf7() as s7:
+            rd5 = await execute_tool("draw_bank_round", {"bank_id": bank_id, "mode": "all", "size": 5}, db=s7)
+            qid = (rd5.get("questions") or [{}])[0].get("question_id", "")
+            cb = await execute_tool(
+                "correct_bank_question", {"question_id": qid, "explanation": "（冒烟）助教核对后的解析"}, db=s7
+            )
+            sb1 = await execute_tool("set_bank_prompt", {"bank_id": bank_id, "prompt": "（冒烟）自定义答疑风格"}, db=s7)
+            sb2 = await execute_tool("set_bank_prompt", {"bank_id": bank_id, "prompt": ""}, db=s7)
+            ur1 = await execute_tool("update_resource_title", {"kind": "bank", "id": bank_id, "title": "（冒烟）改名中"}, db=s7)
+            ur2 = await execute_tool("update_resource_title", {"kind": "bank", "id": bank_id, "title": "网安题库（改名）"}, db=s7)
+            le2 = await execute_tool("list_exercises", {"document_id": document_id}, db=s7)
+            ex_id = (le2.get("exercises") or [{}])[0].get("id", "")
+            if ex_id:
+                hb1 = await execute_tool("toggle_hard_bone", {"exercise_id": ex_id}, db=s7)
+                hb2 = await execute_tool("toggle_hard_bone", {"exercise_id": ex_id, "on": hb1.get("hard_bone")}, db=s7)
+            else:
+                hb1 = hb2 = {"status": "skipped"}
+            return {"rd5": rd5, "cb": cb, "sb1": sb1, "sb2": sb2, "ur1": ur1, "ur2": ur2, "hb1": hb1, "hb2": hb2}
+
+    bt = asyncio.run(_test_bank_tools())
+    check(
+        "draw_bank_round：抽 5 题不泄答案并带跳转标签",
+        bt["rd5"].get("status") == "success"
+        and len(bt["rd5"].get("questions") or []) == 5
+        and all("answer" not in q and "explanation" not in q for q in bt["rd5"]["questions"])
+        and bool(bt["rd5"].get("references")),
+        json.dumps(bt["rd5"], ensure_ascii=False)[:150],
+    )
+    check(
+        "correct_bank_question：纠错改解析成功且告知重判",
+        bt["cb"].get("status") == "success" and "重判" in str(bt["cb"].get("note", "")),
+        str(bt["cb"])[:150],
+    )
+    check(
+        "set_bank_prompt：设置与清空恢复默认",
+        bt["sb1"].get("status") == "success" and bt["sb2"].get("status") == "success" and "默认" in str(bt["sb2"].get("note", "")),
+        str(bt["sb2"])[:120],
+    )
+    check(
+        "update_resource_title(bank)：改名并还原",
+        bt["ur1"].get("status") == "success" and bt["ur2"].get("status") == "success",
+        str(bt["ur2"])[:120],
+    )
+    check(
+        "toggle_hard_bone：翻转并按 on 复位",
+        bt["hb1"].get("status") in ("success", "skipped") and bt["hb2"].get("status") in ("success", "skipped"),
+        str(bt["hb2"])[:120],
+    )
 
     # 1. 抽「做题模式 / all」10 题，验证同一套题内绝无重复题目（ID与题干均唯一）
     s, body = call(base, f"/api/banks/{bank_id}/round", "POST", {"mode": "all", "size": 10})

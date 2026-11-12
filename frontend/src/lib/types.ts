@@ -186,7 +186,13 @@ export interface AssistantSSEEvent {
   type: "user_ack" | "status" | "tool_call" | "tool_result" | "reference" | "delta" | "done" | "error";
   name?: string;
   args?: Record<string, unknown>;
-  /** 沙箱等敏感工具：须学员授权后服务端才会执行 */
+  /** 工具中文名（v0.5.6，确认卡与展示用） */
+  label?: string;
+  /** 确认卡参数摘要（后端裁剪拼接） */
+  summary?: string;
+  /** 破坏性/覆盖性操作：确认卡红色警示 */
+  destructive?: boolean;
+  /** 敏感工具：须学员授权后服务端才会执行 */
   needs_confirm?: boolean;
   confirm_seq?: number;
   result?: { svg?: string; [key: string]: unknown };

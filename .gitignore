@@ -58,3 +58,7 @@ backend/server/
 
 # Mimosa 安全插件本地状态（hook-state/基线快照/历史报告，不入库）
 .mimosa/
+
+# 并行会话 E2E 验证临时产物（验证后由该会话自行删除）
+backend/data-e2e-fix/
+frontend/vite.config.e2e.ts
