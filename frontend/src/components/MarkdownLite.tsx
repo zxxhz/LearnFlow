@@ -9,6 +9,28 @@ import { api } from "../lib/api";
 import { sanitizeSvg } from "../lib/sanitize";
 import { attachAssistantBlocks, MINDMAP_ZOOM_EVENT } from "./assistantBlocks";
 
+
+// v0.5.8 体检 P3：plot 补渲染共享 2 路并发队列——一篇多 plot 块的长回答或长会话
+// 回放会瞬时并发 N 个 SymPy+Matplotlib 渲染（各占 to_thread 线程 + 10s 超时），
+// 形成后端突发尖峰；缓存只缓解重复，不限制首次并发
+const _plotQueue: Array<() => Promise<void>> = [];
+let _plotActive = 0;
+function schedulePlotRender(task: () => Promise<void>): void {
+  _plotQueue.push(task);
+  const pump = () => {
+    if (_plotActive >= 2) return;
+    const next = _plotQueue.shift();
+    if (!next) return;
+    _plotActive += 1;
+    void next().finally(() => {
+      _plotActive -= 1;
+      pump();
+    });
+  };
+  pump();
+  pump();
+}
+
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
 
 // 全局图像缓存，避免流式输出或重新渲染时重复向后端发起网络请求
@@ -173,9 +195,10 @@ function MarkdownLiteImpl({
         return;
       }
 
-      // 未命中缓存则异步请求后端绘制
-      api.math
-        .render({ expressions })
+      // 未命中缓存则异步请求后端绘制（进共享 2 路并发队列）
+      schedulePlotRender(() =>
+        api.math
+          .render({ expressions })
         .then((res: { svg: string }) => {
           const clean = cachePlotSvg(expressions, res.svg);
           if (canvas.isConnected) {
@@ -211,7 +234,8 @@ function MarkdownLiteImpl({
             }
           };
           canvas.appendChild(fixBtn);
-        });
+        })
+      );
     });
   }, [html, deferMath]);
 

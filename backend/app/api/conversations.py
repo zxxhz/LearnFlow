@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory, get_db
+from app.core.sse import SSE_HEADERS
 from app.models import Annotation, Conversation, Document, Message
 from app.models.base import utcnow_iso
 from app.schemas.conversation import MessageCreate, MessageOut
@@ -96,19 +97,26 @@ async def post_message(
                 await deltas.aclose()
             except Exception:
                 pass
-            # 半截回复也落库（含客户端断连）：user/assistant 成对，LLM 已消耗的 token 不凭空蒸发
+            # 半截回复也落库（含客户端断连）：user/assistant 成对，LLM 已消耗的 token 不凭空蒸发。
+            # v0.5.8 体检 P2：落库失败不得穿透 finally 杀死生成器（并发写 database is locked
+            # 等，概率被 pull 长事务放大）——对齐 assistant.py 的防御口径，失败时
+            # done 事件 message_id 降级为 None 而非让流中断
             full_content = "".join(buffer)
             if full_content.strip():
-                async with async_session_factory() as s:
-                    saved = Message(
-                        conversation_id=conv_id,
-                        role="assistant",
-                        content=full_content,
-                        meta='{"partial": true}' if not stream_finished else "{}",
-                    )
-                    s.add(saved)
-                    await s.commit()
-                    msg_id = saved.id
+                try:
+                    async with async_session_factory() as s:
+                        saved = Message(
+                            conversation_id=conv_id,
+                            role="assistant",
+                            content=full_content,
+                            meta='{"partial": true}' if not stream_finished else "{}",
+                        )
+                        s.add(saved)
+                        await s.commit()
+                        msg_id = saved.id
+                except Exception:  # noqa: BLE001
+                    logger.exception("划线答疑半截回复落库失败")
+                    msg_id = None
 
         full_content = "".join(buffer)
         if not stream_finished or not full_content.strip():
@@ -128,11 +136,6 @@ async def post_message(
     return StreamingResponse(
         gen(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-            "Content-Type": "text/event-stream; charset=utf-8",
-        },
+        headers=SSE_HEADERS,
     )
 

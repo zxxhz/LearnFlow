@@ -12,6 +12,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
+from app.core.sse import SSE_HEADERS
+from app.api.imports import _run_photo_decode
 from app.services.images import build_vision_messages, compress_to_data_urls
 from app.services.llm import create_adapter_from_settings
 from app.services.llm.errors import LLMError
@@ -30,8 +32,10 @@ async def solve_photo(
     db: AsyncSession = Depends(get_db),
 ):
     """拍照解题：题目照片 → AI 流式输出答案与分步解析（第一行直接给答案）。"""
-    # Pillow 解码/缩放是秒级 CPU 活：放线程池跑，避免冻结事件循环（SSE/心跳全停）
-    data_urls = await asyncio.to_thread(compress_to_data_urls, images, MAX_SOLVE_IMAGES)
+    # Pillow 解码/缩放是秒级 CPU 活：放线程池跑，避免冻结事件循环（SSE/心跳全停）。
+    # v0.5.8 体检 P2：走与 imports.py 同款 2 路并发闸——LAN 多端并发拍照时，
+    # 每请求 3 张×60MP 的无上限解码可致瞬态内存 GB 级与线程池饥饿
+    data_urls = await _run_photo_decode(compress_to_data_urls, images, MAX_SOLVE_IMAGES)
     hint = (hint or "").strip()[:2_000]
     try:
         adapter = await create_adapter_from_settings(db, scene="chat")
@@ -57,6 +61,9 @@ async def solve_photo(
     except LLMError:
         raise
     except Exception as e:  # noqa: BLE001
+        # v0.5.8 体检 P2：chat(stream=True) 惰性打开——此同步 except 实际只捕获
+        # 参数/配置类异常，连接与鉴权错误在迭代期经 gen 的 error 事件下发。
+        # 保留兜底并注明口径，避免误认「启动失败提示可达」而误导排障
         logger.exception("solve photo stream open failed")
         raise HTTPException(
             status_code=502,
@@ -86,10 +93,5 @@ async def solve_photo(
     return StreamingResponse(
         gen(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-            "Content-Type": "text/event-stream; charset=utf-8",
-        },
+        headers=SSE_HEADERS,
     )

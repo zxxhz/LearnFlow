@@ -16,6 +16,7 @@ from sqlalchemy import and_, case, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.models.base import utcnow_iso
 from app.models.bank import (
     JUDGE_OPTIONS,
     QUESTION_JUDGE,
@@ -24,6 +25,7 @@ from app.models.bank import (
     BankAttempt,
     BankQuestion,
     QuestionBank,
+    SyncTombstone,
 )
 from app.services.llm import create_adapter_from_settings
 from app.services.prompt import load_prompt, render_prompt
@@ -157,7 +159,14 @@ def parse_bank(data: bytes, filename: str) -> tuple[list[dict], dict]:
             skipped.append({"row": excel_row, "reason": str(e)})
             continue
 
-        options = [_clean(row[c]) for c in range(COL_OPT_A, COL_OPT_H + 1)]
+        # 判断题统一落 "[]"（v0.5.8 体检 P2）：文件导入此前存 8 空串格，与粘贴导入/
+        # update_question 的 "[]" 三种写法漂移，replace 比较时必然误判 content_changed
+        # → 无谓全量重判并清空 AI 解析
+        options = (
+            []
+            if qtype == QUESTION_JUDGE
+            else [_clean(row[c]) for c in range(COL_OPT_A, COL_OPT_H + 1)]
+        )
         answer_raw = (
             ("正确" if answer == "A" else "错误")
             if qtype == QUESTION_JUDGE
@@ -422,8 +431,11 @@ async def update_question(
                 new_passed = judge_answer(q.qtype, q.answer, submitted)
                 if att.passed != new_passed:
                     att.passed = new_passed
+                    att.updated_at = utcnow_iso()
             recalibrated_attempt = attempts[-1] if attempts else None
 
+        # 字段级新者胜时间戳（v0.5.8 体检 P1）：同步 pull 合并据此判定云端值是否覆盖本地
+        q.updated_at = utcnow_iso()
         await db.commit()
         return q, recalibrated_attempt
 
@@ -518,7 +530,13 @@ def align_questions_for_replacement(
 
 def _replacement_content_changed(old_q: BankQuestion, new_q: dict) -> bool:
     """替换对齐对的「内容变化」判定——预览（analyze）与执行（replace）必须共用同一函数，
-    保证预览页校准题数与实际重判数一致（v0.5.3 体检 P3：此前预览只算答案、执行还含选项）。"""
+    保证预览页校准题数与实际重判数一致（v0.5.3 体检 P3：此前预览只算答案、执行还含选项）。
+
+    v0.5.8 体检 P2：判断题跳过 options 比较——存量库有 8 空串格与 "[]" 两种落库形态，
+    比较必然不等，编辑过的判断题会被无谓全量重判并清空 AI 解析。
+    """
+    if old_q.qtype == QUESTION_JUDGE:
+        return old_q.answer != new_q["answer"]
     return old_q.answer != new_q["answer"] or json.dumps(new_q["options"], ensure_ascii=False) != old_q.options
 
 
@@ -626,9 +644,11 @@ async def _replace_bank_locked(
         matched_old_lookup[id(nq)] = old_q
 
     # 1. 清理被移除的题目（先清理关联作答流水，防外键错误与孤儿脏数据）；
-    #    分批 in_（SQLite 绑定变量上限 32766，超大题库一次绑定会 500）
+    #    分批 in_（SQLite 绑定变量上限 32766，超大题库一次绑定会 500）。
+    #    同步墓碑（v0.5.8 体检 P1）：否则云端残留行会在下次 pull 时复活
     if removed:
         removed_ids = [q.id for q in removed]
+        await _record_tombstones(db, "bank_question", removed_ids)
         for i in range(0, len(removed_ids), 500):
             chunk = removed_ids[i : i + 500]
             await db.execute(delete(BankAttempt).where(BankAttempt.question_id.in_(chunk)))
@@ -663,6 +683,7 @@ async def _replace_bank_locked(
                     new_passed = judge_answer(old_q.qtype, old_q.answer, submitted)
                     if att.passed != new_passed:
                         att.passed = new_passed
+                        att.updated_at = utcnow_iso()
         else:
             db.add(
                 BankQuestion(
@@ -682,6 +703,9 @@ async def _replace_bank_locked(
     bank.question_count = len(new_questions)
     if new_file_name:
         bank.source_file = new_file_name
+    # 对齐题目的字段被整体重写，刷新新者胜时间戳（v0.5.8 体检 P1）
+    for old_q in matched_old_lookup.values():
+        old_q.updated_at = utcnow_iso()
 
     # 4. 安全两阶段替换原件归档文件；顺手清理历史遗留的孤儿临时归档（>1h）
     #    磁盘 IO 全部下线程（v0.5.3 体检 P3）：20MB 文件写在持锁临界区内会冻结事件循环
@@ -754,7 +778,16 @@ async def bank_stats(db: AsyncSession, bank: QuestionBank) -> dict:
     """题库统计：已答/正确率/错题数/按题型分布（错题池口径 = 最近一次作答未过或存疑）。
 
     全部在 SQL 内聚合（最近一次作答窗口函数 + GROUP BY），不再把题目全文与全部作答拉入内存。
+    多查询共享 WAL 快照（v0.5.8 体检 P2）：并发作答下 attempts 总数与 accuracy
+    分子/分母不再撕裂错位。
     """
+    from app.core.db import read_snapshot
+
+    async with read_snapshot(db):
+        return await _bank_stats_snapshot(db, bank)
+
+
+async def _bank_stats_snapshot(db: AsyncSession, bank: QuestionBank) -> dict:
     # 每题最近一次作答（窗口函数取 rn=1，按时间倒序保证是"最近"而非"最早"）
     rn = func.row_number().over(
         partition_by=BankAttempt.question_id, order_by=BankAttempt.created_at.desc()
@@ -1017,6 +1050,16 @@ async def draw_round(
     去重保障：
     同一套题内部通过 _dedup_question_list 严格去重，绝不出现完全相同的重复题目。
     """
+    from app.core.db import read_snapshot
+
+    # 多查询共享 WAL 快照（v0.5.8 体检 P2）：候选池两次查询之间不再被并发写撕开口径
+    async with read_snapshot(db):
+        return await _draw_round_snapshot(db, bank, mode, size)
+
+
+async def _draw_round_snapshot(
+    db: AsyncSession, bank: QuestionBank, mode: str, size: int
+) -> tuple[list[BankQuestion], int]:
     all_questions = (
         await db.scalars(
             select(BankQuestion)
@@ -1055,6 +1098,23 @@ async def draw_round(
     return picked, pool_size
 
 
+async def _record_tombstones(db: AsyncSession, kind: str, object_ids: list[str]) -> None:
+    """记录同步删除墓碑（v0.5.8 体检 P1）：push 携带 → 云端对已删条目真删除并持久化
+    墓碑；pull 侧据其抑制「云端 upsert 快照把已删数据拉回复活」。幂等（OR IGNORE）。"""
+    ids = [str(i) for i in object_ids if i]
+    if not ids:
+        return
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    now = utcnow_iso()
+    for i in range(0, len(ids), 500):
+        chunk = ids[i : i + 500]
+        await db.execute(
+            sqlite_insert(SyncTombstone).on_conflict_do_nothing(),
+            [{"object_id": oid, "kind": kind, "deleted_at": now} for oid in chunk],
+        )
+
+
 async def delete_bank(db: AsyncSession, bank: QuestionBank) -> None:
     """级联删除：作答流水 → 题目 → 题库 → 归档目录。
 
@@ -1067,6 +1127,14 @@ async def delete_bank(db: AsyncSession, bank: QuestionBank) -> None:
         fresh = await db.get(QuestionBank, bank.id, populate_existing=True)
         if fresh is None:
             return
+        # 删除墓碑（v0.5.8 体检 P1）：否则云端 upsert-only 快照会在下次 pull 时复活整库
+        qids = (
+            await db.scalars(
+                select(BankQuestion.id).where(BankQuestion.bank_id == bank.id)
+            )
+        ).all()
+        await _record_tombstones(db, "bank_question", [str(x) for x in qids])
+        await _record_tombstones(db, "bank", [bank.id])
         # 不从 _bank_locks pop（v0.5.2 体检 P3）：已排队的协程持旧锁对象时，
         # pop 会让新请求建新锁立刻获得 → 同一 bank 两段并行临界区
         await db.execute(

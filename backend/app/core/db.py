@@ -1,5 +1,6 @@
 """异步 SQLAlchemy 引擎与会话工厂。SQLite 开 WAL + 外键约束。"""
 import logging
+from contextlib import asynccontextmanager
 
 from sqlalchemy import event
 from sqlalchemy.engine import URL
@@ -35,6 +36,28 @@ def _set_sqlite_pragma(dbapi_connection, _record):
 async_session_factory = async_sessionmaker(
     engine, class_=AsyncSession, expire_on_commit=False
 )
+
+
+@asynccontextmanager
+async def read_snapshot(db: AsyncSession):
+    """让同一 Session 的多条 SELECT 共享同一 WAL 快照（v0.5.8 体检 P2）。
+
+    pysqlite/aiosqlite 的 legacy 事务模式把 BEGIN 推迟到首条 DML，纯 SELECT 各自
+    autocommit 独立快照——统计/打包/抽轮这类多查询序列在并发写之下会产生自不一致
+    结果。显式发出 BEGIN（deferred）让后续 SELECT 进入同一事务；已在事务中（工具链
+    等复用会话的场景）则让步、保持调用方原有语义。只可包裹纯读序列（包裹内若出现
+    DML 会因事务已开启而行为改变）。
+    """
+    from sqlalchemy import text as _text
+
+    in_txn = db.in_transaction()
+    if not in_txn:
+        await db.execute(_text("BEGIN"))
+    try:
+        yield
+    finally:
+        if not in_txn:
+            await db.commit()
 
 
 async def get_db():
@@ -173,6 +196,9 @@ async def init_db() -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_conversations_assistant ON conversations(kind, context_type, context_id) WHERE kind = 'assistant'",
             # v0.5.5 作答软撤回（误触撤回不计入统计）：物理删除会被同步 upsert 拉回复活，走字段标记
             "ALTER TABLE bank_attempts ADD COLUMN is_revoked INTEGER DEFAULT 0",
+            # v0.5.8 同步「新者胜」字段级时间戳（"" 视为最旧的历史行）与删除墓碑表（建表由 create_all 承担）
+            "ALTER TABLE bank_questions ADD COLUMN updated_at VARCHAR(40) DEFAULT ''",
+            "ALTER TABLE bank_attempts ADD COLUMN updated_at VARCHAR(40) DEFAULT ''",
             # v0.5.5 一次性数据修复的完成标记（幂等 DDL；修复本体见 _revoke_misclick_double_submissions）
             "CREATE TABLE IF NOT EXISTS data_fixes (key TEXT PRIMARY KEY, applied_at TEXT NOT NULL)",
         ]

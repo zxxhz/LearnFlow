@@ -333,11 +333,15 @@ def _allowed_download_hosts() -> set[str]:
 
 
 def _sanitize_version(version: str) -> str:
-    """版本号只允许数字与点（防止拼进落盘文件名的路径穿越）。"""
+    """版本号只允许 ASCII 数字与点（防止拼进落盘文件名的路径穿越）。
+
+    v0.5.8 体检 P2：\\d 默认匹配 Unicode 数字（全角 １.２.３ 可通过校验流入
+    GitHub URL 与安装包文件名），显式用 [0-9] 收紧。
+    """
     import re
 
     v = (version or "").strip().lstrip("vV")
-    if not re.fullmatch(r"\d+(\.\d+)*", v):
+    if not re.fullmatch(r"[0-9]+(\.[0-9]+)*", v):
         raise ValueError(f"非法版本号：{version!r}")
     return v
 

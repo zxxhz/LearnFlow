@@ -711,7 +711,6 @@ function WrongQuestionItem({
   const [aiStreaming, setAiStreaming] = useState(false);
   const [aiText, setAiText] = useState(existingExplain);
   const [aiError, setAiError] = useState("");
-  const aiStreamRef = useRef<HTMLDivElement>(null);
   const explainAbortRef = useRef<AbortController | null>(null);
   const opts = visibleOptions(curQuestion);
 
@@ -737,19 +736,6 @@ function WrongQuestionItem({
       }
     }
   }, [curQuestion.id, curQuestion.title, curQuestion.options]);
-
-  useEffect(() => {
-    if (aiStreamRef.current && aiText) {
-      try {
-        renderMathInElement(aiStreamRef.current, {
-          delimiters: KATEX_DELIMITERS,
-          throwOnError: false,
-        });
-      } catch (err) {
-        console.warn("KaTeX render error:", err);
-      }
-    }
-  }, [aiText]);
 
   // AI 纠错建议检测（与 BankQuestionCard 同口径：结构化标记优先，回退分支收紧距离）
   const aiCorrectionMatch = useMemo(() => {

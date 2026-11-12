@@ -10,8 +10,10 @@ import asyncio
 import codecs
 import json
 import logging
+import posixpath
 from collections.abc import Callable, Coroutine
 from typing import Any
+from urllib.parse import unquote
 
 import httpx
 
@@ -43,10 +45,12 @@ _HOP_BY_HOP_OR_SENSITIVE_HEADERS = {
     "upgrade",
 }
 
-# 云端隧道回源黑名单（v0.5.2 体检 P1）：worker 回源 127.0.0.1 天然绕过 _AccessGuard
-# （回环免令牌 + Origin/Host 被剥离），恶意/被接管的中转服务器不得借隧道触达
-# 沙箱执行、应用内更新、系统备份、LLM 配置改写与中转配置本身。GET 只读豁免
-# （全站 42 个 GET 路由经审查无状态变更）。
+# 云端隧道回源黑名单（v0.5.2 体检 P1 建立，v0.5.8 体检 P0/P1 收口）：worker 回源
+# 127.0.0.1 天然绕过 _AccessGuard（回环免令牌 + Origin/Host 被剥离），恶意/被接管
+# 的中转服务器不得借隧道触达沙箱执行、应用内更新、系统备份、LLM 配置改写与
+# 中转配置本身。v0.5.8：GET 的「只读豁免」废除——机密性同样要守（access-info
+# 明文令牌 / relay config 明文 server_token / 设置页都属被禁面），读数据类 GET
+# （courses/documents/banks/mindmaps/study/dashboard）不受影响，纯 Web 模式照常。
 _RELAY_BLOCKED_PREFIXES = (
     "/api/executions",
     "/api/runtime",
@@ -59,10 +63,14 @@ _RELAY_BLOCKED_PREFIXES = (
 
 
 def _relay_path_allowed(method: str, path: str) -> bool:
-    if method == "GET":
-        return True
-    lowered = path.lower()
-    return not lowered.startswith(_RELAY_BLOCKED_PREFIXES)
+    """黑名单判定。v0.5.8 体检 P0：先按本地服务器同口径做百分号解码与点段归一化，
+    再做前缀匹配——原实现用原始字符串 startswith，/api%2Fexecutions、/api/%65xecutions、
+    /api//executions、/api/../api/executions 均可绕过（被接管的云端可借此触达全部被禁接口）。
+    """
+    del method  # GET 与写路径共用同一黑名单（机密性收口）
+    decoded = unquote(path or "/")
+    normalized = posixpath.normpath(decoded)
+    return not normalized.lower().startswith(_RELAY_BLOCKED_PREFIXES)
 
 
 async def handle_relay_request(

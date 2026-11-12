@@ -221,8 +221,8 @@ class OpenAICompatAdapter(LLMAdapter):
                         raise translate_openai_error(e2) from e2
             else:
                 raise translate_openai_error(e) from e
+        last_usage = None
         try:
-            last_usage = None
             async for chunk in stream:
                 # 不合规网关可能每个块都回传 usage：缓存后只在流末记录一次，避免重复计数
                 usage = getattr(chunk, "usage", None)
@@ -232,11 +232,14 @@ class OpenAICompatAdapter(LLMAdapter):
                     delta = chunk.choices[0].delta.content
                     if delta:
                         yield delta
-            if last_usage is not None:
-                self._record(last_usage, int((time.perf_counter() - t0) * 1000))
         except Exception as e:
             raise translate_openai_error(e) from e
         finally:
+            # v0.5.8 体检 P3：客户端断连（GeneratorExit）时已消耗的 completion tokens
+            # 也要入账——记录原在正常收尾分支，早断连会系统性低估用量；
+            # usage 块尚未到达时自然略过（有则记，无则略）
+            if last_usage is not None:
+                self._record(last_usage, int((time.perf_counter() - t0) * 1000))
             try:
                 await stream.close()
             except Exception as close_err:

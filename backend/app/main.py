@@ -218,6 +218,10 @@ def _parse_host_header(host_header: str) -> tuple[str, int] | None:
             if end != -1:
                 h_host = host_header[1:end].lower()
                 rest = host_header[end + 1 :]
+                # v0.5.8 体检 P2：RFC 3986——']' 之后只允许空串或 ':port'；
+                # '[::1]junk' 一类的尾随垃圾此前被宽松解析为 (::1, 80) 放行
+                if rest and not (rest.startswith(":") and rest[1:].isdigit()):
+                    return None
                 host_port = int(rest[1:]) if rest.startswith(":") else 80
             else:
                 h_host, host_port = host_header, 80
@@ -426,9 +430,10 @@ class _SecurityHeaders:
     """纯 ASGI 中间件：仅给 text/html 响应追加 Content-Security-Policy。
 
     只覆盖 HTML 页面（SPA 入口与局域网认证页）；SSE（text/event-stream）与 API JSON
-    不加头、也不经手响应体（无缓冲层，不影响流式）。script-src 保留 'unsafe-inline'
-    是 Tauri 桌面壳的取舍：webview 依赖注入内联脚本桥接 IPC，前端主题初始化也是内联
-    脚本，收紧到 nonce 会破坏桌面壳与认证页表单，故仅对 object/base-uri/frame 收口。
+    不加头、也不经手响应体（无缓冲层，不影响流式）。回环（桌面壳 webview）保留
+    script-src 'unsafe-inline'：webview 依赖注入内联脚本桥接 IPC，前端主题初始化也是内联
+    脚本，收紧到 nonce 会破坏桌面壳与认证页表单。局域网浏览器（非回环客户端）用
+    _CSP_LAN 收紧版：无内联 script，防单令牌应用的 XSS 窃取访问令牌。
     """
 
     _CSP = (
@@ -436,6 +441,11 @@ class _SecurityHeaders:
         "img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; "
         "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     )
+    # v0.5.8 体检 P2：局域网浏览器访问用收紧版——单令牌应用一旦出现 XSS，
+    # 内联脚本可执行并窃取 localStorage/query 中的访问令牌。Vite 构建产物
+    # 无内联 script（index.html 仅外链 module），收紧不破坏 LAN 页面；
+    # 桌面壳（回环访问）保持原 CSP：webview 依赖内联脚本桥接 IPC
+    _CSP_LAN = _CSP.replace("script-src 'self' 'unsafe-inline'", "script-src 'self'")
 
     def __init__(self, app):
         self.app = app
@@ -445,6 +455,10 @@ class _SecurityHeaders:
             await self.app(scope, receive, send)
             return
 
+        client = scope.get("client") or ("", 0)
+        client_host = str(client[0] or "")
+        is_loopback_client = client_host in ("127.0.0.1", "::1", "")
+
         async def send_with_csp(message):
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
@@ -452,7 +466,8 @@ class _SecurityHeaders:
                     k.lower() == b"content-type" and v.lower().startswith(b"text/html")
                     for k, v in headers
                 ):
-                    headers.append((b"content-security-policy", self._CSP.encode("latin-1")))
+                    csp = self._CSP if is_loopback_client else self._CSP_LAN
+                    headers.append((b"content-security-policy", csp.encode("latin-1")))
                 message["headers"] = headers
             await send(message)
 
@@ -540,21 +555,25 @@ def main() -> None:
 
     import uvicorn
 
-    if settings.host == "0.0.0.0":
-        # 局域网访问（PRD §5.9）：若开启则打印本机局域网地址（不含 token：终端回滚/截图即泄漏），默认关闭时给出引导
-        from app.services.system import lan_urls, is_lan_access_enabled
+    # v0.5.8 体检 P2：绑定面收窄——默认只监听回环；用户开启「局域网访问」才绑全部
+    # 网卡（开关改动重启应用后生效）。原先恒绑 0.0.0.0，局域网与 API 之间只隔
+    # _AccessGuard 一层应用门禁，防线一旦回归即直接暴露
+    from app.services.system import is_lan_access_enabled, lan_urls
 
-        if is_lan_access_enabled():
-            print("\n>>> 局域网访问地址（需与电脑同一网络，或走内网穿透）：")
-            for url in lan_urls():
-                print(f">>>   {url}")
-            print(">>> 安全提示：已启用访问令牌保护，完整地址（含 token）请在设置页「局域网访问」一键复制。\n")
-        else:
-            print("\n>>> 局域网访问当前处于关闭状态（仅限本机 127.0.0.1 访问）。")
-            print(">>> 如需在平板或手机浏览器中使用，请在设置页「数据与安全」开启「局域网访问」。\n")
+    if is_lan_access_enabled():
+        settings.host = "0.0.0.0"
+        # 局域网访问（PRD §5.9）：打印本机局域网地址（不含 token：终端回滚/截图即泄漏）
+        print("\n>>> 局域网访问地址（需与电脑同一网络，或走内网穿透）：")
+        for url in lan_urls():
+            print(f">>>   {url}")
+        print(">>> 安全提示：已启用访问令牌保护，完整地址（含 token）请在设置页「局域网访问」一键复制。\n")
+    else:
+        settings.host = "127.0.0.1"
+        print("\n>>> 局域网访问当前处于关闭状态（仅限本机 127.0.0.1 访问）。")
+        print(">>> 如需在平板或手机浏览器中使用，请在设置页「数据与安全」开启「局域网访问」并重启应用。\n")
 
     if settings.open_browser:
-        url = f"http://{'127.0.0.1' if settings.host == '0.0.0.0' else settings.host}:{settings.port}"
+        url = f"http://127.0.0.1:{settings.port}"
         threading.Timer(1.5, webbrowser.open, args=(url,)).start()
     uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
 

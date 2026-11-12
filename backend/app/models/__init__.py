@@ -1,6 +1,6 @@
 from app.models.base import Base
 from app.models.annotation import Annotation
-from app.models.bank import BankAttempt, BankQuestion, QuestionBank
+from app.models.bank import BankAttempt, BankQuestion, QuestionBank, SyncTombstone
 from app.models.conversation import Conversation, Message
 from app.models.course import Course
 from app.models.document import Document, Section
@@ -23,6 +23,7 @@ __all__ = [
     "BankAttempt",
     "BankQuestion",
     "QuestionBank",
+    "SyncTombstone",
     "Conversation",
     "Message",
     "Course",

@@ -933,19 +933,34 @@ async def stream_mindmap_agent(
             from app.core.db import async_session_factory
 
             persisted = False
+            replay_failed = False
             try:
                 async with _mm_lock(mindmap.id):
                     async with async_session_factory() as fresh_db:
                         fresh = await fresh_db.get(MindMap, mindmap.id)
                         if fresh is not None:
+                            # v0.5.8 体检 P2：重放返回值必须核查——预演树上报成功的 op
+                            # 在最新树上可能因并发编辑而失败（目标节点已删等），
+                            # 静默丢失还报 persisted=True 会让前端展示与库不一致
                             for op in ops:
-                                _apply_op(fresh.root, op["name"], op["args"])
+                                op_ok, _detail = _apply_op(fresh.root, op["name"], op["args"])
+                                if not op_ok:
+                                    replay_failed = True
                             fresh.root = normalize_node(fresh.root, fresh.title)
+                            # delete_nodes 后悬空横向连线清理（v0.5.8 体检 P2）：
+                            # PUT 与 pull 路径都有强制 sanitize_settings，Agent 路径此前漏掉
+                            fresh.settings = sanitize_settings(fresh.settings, fresh.root)
                             await fresh_db.commit()
                             mindmap.root = fresh.root
                             persisted = True
             except Exception:
                 logger.exception("Agent 树修改持久化失败: mindmap=%s", mindmap.id)
+            if persisted and replay_failed:
+                # 部分 op 在最新树上失败：如实告知，不虚报完整成功
+                yield {
+                    "type": "error",
+                    "detail": "部分修改因导图刚被其他操作改动而未能全部生效，已保留可生效的部分",
+                }
             if persisted:
                 yield {"type": "tree_update", "tree": mindmap.root}
             else:

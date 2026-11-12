@@ -9,7 +9,7 @@ import { isTauri, openExternalUrl } from "../lib/updater";
 import UpdateDialog from "./UpdateDialog";
 import ServerUpdateDialog from "./ServerUpdateDialog";
 import AssistantPanel from "./AssistantPanel";
-import { Toast, isModalOpen } from "./ui";
+import { Toast, isModalOpen, _escStack } from "./ui";
 import type { ToastPayload } from "../lib/toast";
 import RelayStatusBadge from "./RelayStatusBadge";
 
@@ -113,6 +113,7 @@ function MobileNavDrawer({
 }) {
   const [render, setRender] = useState(open);
   const [shown, setShown] = useState(false);
+  const drawerRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -125,14 +126,24 @@ function MobileNavDrawer({
     return () => clearTimeout(t);
   }, [open]);
 
-  // 打开期间 Esc 关闭（v0.5.2 体检 P2：移动端抽屉此前无键盘出口）
+  // 打开期间 Esc 关闭（v0.5.2 体检 P2：移动端抽屉此前无键盘出口）。
+  // v0.5.8 体检 P3：接入全站 _escStack——自装 window 监听不进栈时 isModalOpen()
+  // 为 false，Ctrl+J 可在抽屉之上再开 z-50 助手面板，一次 Esc 双关；
+  // 同时把焦点移入抽屉，收口「背景内容对键盘用户仍可聚焦」
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+    const token = Symbol("mobile-nav");
+    _escStack.push({ token, onEsc: onClose });
+    const t = setTimeout(() => {
+      drawerRef.current
+        ?.querySelector<HTMLElement>('button:not([disabled]), a[href]')
+        ?.focus();
+    }, 30);
+    return () => {
+      const i = _escStack.findIndex((x) => x.token === token);
+      if (i >= 0) _escStack.splice(i, 1);
+      clearTimeout(t);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
   if (!render) return null;
@@ -144,6 +155,7 @@ function MobileNavDrawer({
         }`}
       />
       <aside
+        ref={drawerRef}
         className={`absolute inset-y-0 left-0 flex w-64 flex-col bg-white dark:bg-gray-900 shadow-xl transition-transform duration-200 ease-out ${
           shown ? "translate-x-0" : "-translate-x-full"
         }`}
@@ -193,6 +205,18 @@ export default function Layout() {
       const sidebar = document.querySelector("aside");
       if (ae instanceof HTMLElement && sidebar?.contains(ae)) {
         expandNavBtnRef.current.focus();
+      }
+    }
+    // v0.5.8 体检 P3：展开方向对称恢复——焦点停在「展开导航」按钮时，按钮随
+    // 展开卸载会坠落到 body；把焦点交还侧栏首个可聚焦元素
+    if (prevCollapsedRef.current && !navCollapsed) {
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae?.getAttribute?.("aria-label") === "展开导航") {
+        requestAnimationFrame(() => {
+          const sidebar = document.querySelector<HTMLElement>("aside");
+          const first = sidebar?.querySelector<HTMLElement>('a[href], button:not([disabled])');
+          first?.focus();
+        });
       }
     }
     prevCollapsedRef.current = navCollapsed;
@@ -343,6 +367,9 @@ export default function Layout() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
         if (e.repeat) return;
         if (isModalOpen()) return; // 模态打开时唤起的助手面板会被 z-50 弹窗盖住，直接不响应
+        // v0.5.8 体检 P2：沉浸式页面（阅读/导图画布）有自己的页内会话面板——
+        // 此前 Ctrl+J 不避让，全局面板会盖住页内面板形成双面板叠加与一次 Esc 双关
+        if (isImmersive) return;
         const target = e.target as HTMLElement | null;
         if (
           target &&

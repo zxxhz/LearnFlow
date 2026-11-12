@@ -346,10 +346,27 @@ export default function AssistantPanel({
       );
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
-        flusher.flushNow();
+        // v0.5.8 体检 P3：网络级异常与 SSE error 事件分支同口径——半截文本（acc）
+        // 压入 localMsgs 以 deferMath=false 完整渲染，否则公式永久停在 deferMath 占位
+        flusher.cancel();
         setIsThinking(false);
         setToolStatus(null);
         setStreamErr(`网络错误：${(e as Error).message}`);
+        if (acc && acc.trim()) {
+          setLocalMsgs((prev) => [
+            ...prev,
+            {
+              id: `partial-asst-${Date.now()}`,
+              conversation_id: convId,
+              role: "assistant",
+              content: `${acc}
+
+> ⚠️ 网络连接中断，以上为已完成部分。`,
+              created_at: new Date().toISOString(),
+            },
+          ]);
+        }
+        setStreaming("");
       } else {
         // 中止流：取消残留 flush 定时器，防止 ≤120ms 后旧残文闪入新回合（v0.5.2 体检 P3）
         flusher.cancel();

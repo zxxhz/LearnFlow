@@ -351,12 +351,7 @@ async def ask_course(course_id: str, body: AskCourseIn, db: AsyncSession = Depen
     return StreamingResponse(
         gen(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-            "Content-Type": "text/event-stream; charset=utf-8",
-        },
+        headers=SSE_HEADERS,
     )
 
 

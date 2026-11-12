@@ -35,6 +35,20 @@ class RelayDatabase:
 
     _profile_lock = threading.Lock()
 
+    # 题库写路径按 bank 粒度串行（v0.5.8 体检 P2，对齐桌面端 _bank_lock 模式）：
+    # 云端此前全部 bank 写路径无锁、SELECT 在事务外，并发改题+作答存在判分/重判交错
+    _bank_write_locks: dict = {}
+    _bank_write_locks_guard = threading.Lock()
+
+    @classmethod
+    def _bank_write_lock(cls, bank_id: str) -> threading.Lock:
+        with cls._bank_write_locks_guard:
+            lock = cls._bank_write_locks.get(bank_id)
+            if lock is None:
+                lock = threading.Lock()
+                cls._bank_write_locks[bank_id] = lock
+            return lock
+
     def _get_connection(self) -> sqlite3.Connection:
         if str(self.db_path) != ":memory:":
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -161,6 +175,12 @@ class RelayDatabase:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
                 updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sync_tombstones (
+                object_id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                deleted_at TEXT
             );
             """)
 
@@ -338,6 +358,13 @@ class RelayDatabase:
 
             # 3. Question Banks
             banks = payload.get("banks") or payload.get("question_banks") or []
+            # 墓碑先行过滤（v0.5.8 体检 P1）：已删条目不得再经 upsert 复活
+            _tomb_ids = {
+                str(t.get("object_id") or "")
+                for t in (payload.get("tombstones") or [])
+                if isinstance(t, dict) and t.get("object_id")
+            }
+            banks = [b for b in banks if str(b.get("id") or "") not in _tomb_ids]
             for b in banks:
                 bid = b.get("id")
                 if not bid:
@@ -369,6 +396,7 @@ class RelayDatabase:
 
             # 4. Bank Questions
             questions = payload.get("bank_questions") or payload.get("questions") or []
+            questions = [q for q in questions if str(q.get("id") or "") not in _tomb_ids]
             for q in questions:
                 qid = q.get("id")
                 bid = q.get("bank_id")
@@ -409,6 +437,49 @@ class RelayDatabase:
 
             # 5. Mistakes / Wrong Questions
             mistakes = payload.get("mistakes") or payload.get("wrong_questions") or []
+            mistakes = [m for m in mistakes if str(m.get("question_id") or "") not in _tomb_ids]
+            # 真删除 + 持久化墓碑（v0.5.8 体检 P1）：云端此前 upsert-only——桌面端
+            # replace 修剪的题/整库删除的题库在云端永存并被 pull 复活、再经 push 送回，
+            # 自我强化且 question_count 与实际行数永久分裂
+            q_tombs = [
+                str(t.get("object_id"))
+                for t in (payload.get("tombstones") or [])
+                if isinstance(t, dict) and t.get("kind") == "bank_question" and t.get("object_id")
+            ]
+            b_tombs = [
+                str(t.get("object_id"))
+                for t in (payload.get("tombstones") or [])
+                if isinstance(t, dict) and t.get("kind") == "bank" and t.get("object_id")
+            ]
+            for chunk in (q_tombs[i : i + 500] for i in range(0, len(q_tombs), 500)):
+                cursor.execute(
+                    f"DELETE FROM bank_questions WHERE id IN ({','.join('?' * len(chunk))})",
+                    chunk,
+                )
+                cursor.execute(
+                    f"DELETE FROM mistakes WHERE question_id IN ({','.join('?' * len(chunk))})",
+                    chunk,
+                )
+            for chunk in (b_tombs[i : i + 500] for i in range(0, len(b_tombs), 500)):
+                cursor.execute(
+                    f"DELETE FROM question_banks WHERE id IN ({','.join('?' * len(chunk))})",
+                    chunk,
+                )
+                cursor.execute(
+                    f"DELETE FROM mistakes WHERE bank_id IN ({','.join('?' * len(chunk))})",
+                    chunk,
+                )
+            for t in payload.get("tombstones") or []:
+                oid = str(t.get("object_id") or "")
+                if not oid:
+                    continue
+                cursor.execute(
+                    "INSERT INTO sync_tombstones (object_id, kind, deleted_at) VALUES (?, ?, ?) "
+                    "ON CONFLICT(object_id) DO NOTHING",
+                    (oid, str(t.get("kind") or ""), str(t.get("deleted_at") or _now_iso())),
+                )
+            if q_tombs or b_tombs:
+                counts["tombstones_applied"] = len(q_tombs) + len(b_tombs)
             for m in mistakes:
                 mid = m.get("id") or f"{m.get('bank_id')}_{m.get('question_id')}"
                 if not mid:
@@ -433,8 +504,29 @@ class RelayDatabase:
                 )
                 counts["mistakes"] += 1
 
+            # 同根因「只增不减」修正（v0.5.8 体检 P1）：本地 mistakes 清单是按当前
+            # 作答状态全量重算的权威快照——按 bank 分组做「本包权威替换」，删掉该库内
+            # 不在本包中的历史行，云端 web 错题视图不再永久虚高
+            _mistake_keep: dict[str, set[str]] = {}
+            for m in mistakes:
+                mid_m = str(m.get("id") or f"{m.get('bank_id')}_{m.get('question_id')}")
+                if mid_m and m.get("bank_id"):
+                    _mistake_keep.setdefault(str(m["bank_id"]), set()).add(mid_m)
+            for mbank_id, keep_ids in _mistake_keep.items():
+                cursor.execute("SELECT id FROM mistakes WHERE bank_id = ?", (mbank_id,))
+                stale = [r[0] for r in cursor.fetchall() if r[0] not in keep_ids]
+                for i in range(0, len(stale), 500):
+                    chunk = stale[i : i + 500]
+                    cursor.execute(
+                        f"DELETE FROM mistakes WHERE id IN ({','.join('?' * len(chunk))})",
+                        chunk,
+                    )
+                if stale:
+                    counts["mistakes_removed"] = counts.get("mistakes_removed", 0) + len(stale)
+
             # 5b. Bank Attempts
             attempts = payload.get("bank_attempts") or payload.get("attempts") or []
+            attempts = [a for a in attempts if str(a.get("id") or "") not in _tomb_ids]
             for att in attempts:
                 aid = att.get("id")
                 bid = att.get("bank_id")
@@ -634,6 +726,13 @@ class RelayDatabase:
             meta_row = cursor.fetchone()
             last_sync = meta_row[0] if meta_row else None
 
+            # 删除墓碑（v0.5.8 体检 P1）：pull 下发给桌面端，抑制 upsert 快照复活已删条目
+            cursor.execute("SELECT object_id, kind, deleted_at FROM sync_tombstones")
+            tombstones = [
+                {"object_id": r[0], "kind": r[1], "deleted_at": r[2]}
+                for r in cursor.fetchall()
+            ]
+
         return {
             "synced_at": last_sync or _now_iso(),
             "courses": courses,
@@ -646,6 +745,7 @@ class RelayDatabase:
             "mindmaps": mindmaps,
             "annotations": annotations,
             "learner_profile": profile,
+            "tombstones": tombstones,
         }
 
     async def get_sync_payload(self) -> dict[str, Any]:
@@ -1372,8 +1472,24 @@ class RelayDatabase:
         self, question_id: str, content: list[str], is_doubtful: bool = False
     ) -> dict[str, Any]:
         """云端服务端独立判题与作答落库。"""
+        # 先轻量定位 bank_id 以取锁（v0.5.8 体检 P2）：云端 bank 写路径此前无锁
+        with self._get_connection() as conn:
+            bid_row = conn.execute(
+                "SELECT bank_id FROM bank_questions WHERE id = ?", (question_id,)
+            ).fetchone()
+        if not bid_row:
+            raise LookupError("题目不存在或已被移除")
+        with self._bank_write_lock(str(bid_row[0])):
+            return self._submit_attempt_locked(question_id, content, is_doubtful)
+
+    def _submit_attempt_locked(
+        self, question_id: str, content: list[str], is_doubtful: bool = False
+    ) -> dict[str, Any]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            # 读题放进与写同一事务（v0.5.8 体检 P2）：SELECT 在 autocommit 下
+            # 与并发改题交错会读到半新状态
+            conn.execute("BEGIN")
             cursor.execute("SELECT * FROM bank_questions WHERE id = ?", (question_id,))
             row = cursor.fetchone()
             if not row:
@@ -1405,7 +1521,9 @@ class RelayDatabase:
                 "content": user_ans,
                 "passed": passed,
                 "is_doubtful": is_doubtful,
+                "is_revoked": False,
                 "created_at": now_str,
+                "updated_at": now_str,
                 "user_id": "local",
             }
 
@@ -1450,14 +1568,30 @@ class RelayDatabase:
         self, question_id: str, updates: dict[str, Any]
     ) -> dict[str, Any]:
         """云端服务端独立支持题目纠错改题与答案重判。"""
+        # 先轻量定位 bank_id 以取锁（v0.5.8 体检 P2，对齐桌面端口径）
+        with self._get_connection() as conn:
+            bid_row = conn.execute(
+                "SELECT bank_id FROM bank_questions WHERE id = ?", (question_id,)
+            ).fetchone()
+        if not bid_row:
+            raise LookupError("题目不存在")
+        with self._bank_write_lock(str(bid_row[0])):
+            return self._update_question_locked(question_id, updates)
+
+    def _update_question_locked(
+        self, question_id: str, updates: dict[str, Any]
+    ) -> dict[str, Any]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            conn.execute("BEGIN")
             cursor.execute("SELECT * FROM bank_questions WHERE id = ?", (question_id,))
             row = cursor.fetchone()
             if not row:
                 raise LookupError("题目不存在")
             q = dict(row)
             raw_d = json.loads(q["raw_json"]) if q.get("raw_json") else {}
+            raw_d.setdefault("updated_at", "")
+            raw_d["updated_at"] = _now_iso()
 
             title = updates.get("title")
             options = updates.get("options")
@@ -1517,27 +1651,35 @@ class RelayDatabase:
 
             recalibrated_attempt = None
             if content_changed:
+                # 全量重判该题全部作答（v0.5.8 体检 P2）：只重判最新一条会让
+                # 云端 accuracy（全量聚合）与题目当前答案口径脱钩（桌面端
+                # v0.5.3 已改全量重判，云端独立刷题路径此刻对齐）
                 cursor.execute(
                     """
                     SELECT id, user_answer, is_correct, is_doubtful
                     FROM bank_attempts WHERE question_id = ?
-                    ORDER BY created_at DESC LIMIT 1
+                    ORDER BY created_at
                     """,
                     (question_id,),
                 )
-                att_row = cursor.fetchone()
-                if att_row:
+                att_rows = cursor.fetchall()
+                att_row = None
+                new_passed = None
+                for att_row, new_passed in (
+                    (r, judge_answer(q["qtype"], q["answer"], [x.strip() for x in (r[1] or "").split(",") if x.strip()]))
+                    for r in att_rows
+                ):
+                    if bool(new_passed) != bool(att_row[2]):
+                        cursor.execute(
+                            "UPDATE bank_attempts SET is_correct = ? WHERE id = ?",
+                            (1 if new_passed else 0, att_row[0]),
+                        )
+                if att_row is not None:
                     att_id = att_row[0]
                     u_ans = att_row[1] or ""
-                    submitted = [x.strip() for x in u_ans.split(",") if x.strip()]
-                    new_passed = judge_answer(q["qtype"], q["answer"], submitted)
-                    cursor.execute(
-                        "UPDATE bank_attempts SET is_correct = ? WHERE id = ?",
-                        (1 if new_passed else 0, att_id),
-                    )
                     recalibrated_attempt = {
                         "attempt_id": att_id,
-                        "passed": new_passed,
+                        "passed": bool(new_passed),
                         "is_doubtful": bool(att_row[3]),
                         "user_answer": u_ans,
                         "answer": q["answer"],

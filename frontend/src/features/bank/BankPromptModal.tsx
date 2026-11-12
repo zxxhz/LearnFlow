@@ -75,7 +75,13 @@ export default function BankPromptModal({ open, bank, onClose, onSaved }: Props)
   const isUsingDefault = !prompt.trim();
 
   return (
-    <Modal open={open} onClose={onClose} title={`⚙️ ${bank.name} · AI 答疑提示词设置`}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`⚙️ ${bank.name} · AI 答疑提示词设置`}
+      confirmCloseIf={() => prompt !== (bank.ai_prompt || "")}
+      confirmCloseMessage="提示词修改尚未保存，确定丢弃并关闭？"
+    >
       <div className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center gap-1.5">

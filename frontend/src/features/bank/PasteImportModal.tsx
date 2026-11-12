@@ -93,7 +93,13 @@ export default function PasteImportModal({ open, onClose, onSuccess }: Props) {
   };
 
   return (
-    <Modal open={open} onClose={handleReset} title="📋 粘贴文本一键切题入库">
+    <Modal
+      open={open}
+      onClose={handleReset}
+      title="📋 粘贴文本一键切题入库"
+      confirmCloseIf={() => !!(rawText.trim() || bankTitle.trim() || questions)}
+      confirmCloseMessage="粘贴的题目文本或切题结果尚未入库，确定丢弃并关闭？"
+    >
       <div className="space-y-4 max-h-[75vh] overflow-y-auto pr-1">
         {!questions ? (
           <>

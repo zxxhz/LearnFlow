@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.core.config import APP_VERSION, settings
 from app.core.db import async_session_factory
@@ -28,8 +28,9 @@ from app.models import (
     MindMap,
     QuestionBank,
     StudyDay,
+    SyncTombstone,
 )
-from app.services.bank import bank_lock
+from app.services.bank import bank_lock, judge_answer
 from app.services.mindmap import _mm_lock, normalize_node, sanitize_settings
 from app.models.base import utcnow_iso
 from app.services.relay.config import (
@@ -59,6 +60,14 @@ def _model_to_dict(obj: Any) -> dict[str, Any]:
 async def collect_local_sync_payload(since: str | None = None) -> dict[str, Any]:
     """收集本地所有待同步的数据集合。"""
     async with async_session_factory() as db:
+        # v0.5.8 体检 P2：显式 BEGIN 让下列十余条 SELECT 共享同一 WAL 快照——
+        # 并发 replace/作答否则会造成包内自不一致（attempts 引用已删题、
+        # question_count 与实际行数矛盾），脏包被云端 upsert-only 长期留存
+        from sqlalchemy import text as _text
+
+        if not db.in_transaction():
+            await db.execute(_text("BEGIN"))
+
         # 1. 课程与章节文档
         courses_res = await db.scalars(select(Course))
         courses = [_model_to_dict(c) for c in courses_res]
@@ -80,6 +89,10 @@ async def collect_local_sync_payload(since: str | None = None) -> dict[str, Any]
 
         bank_attempts_res = await db.scalars(select(BankAttempt))
         bank_attempts = [_model_to_dict(a) for a in bank_attempts_res]
+
+        # 删除墓碑（v0.5.8 体检 P1）：push 携带，云端据其对已删条目真删除并持久化
+        tombstones_res = await db.scalars(select(SyncTombstone))
+        tombstones = [_model_to_dict(t) for t in tombstones_res]
 
         # 3. 伴学练习与提交记录
         exercises_res = await db.scalars(select(Exercise))
@@ -149,6 +162,7 @@ async def collect_local_sync_payload(since: str | None = None) -> dict[str, Any]
         "banks": banks,
         "bank_questions": bank_questions,
         "bank_attempts": bank_attempts,
+        "tombstones": tombstones,
         "exercises": exercises,
         "exercise_attempts": exercise_attempts,
         "mistakes": mistakes,
@@ -275,6 +289,13 @@ async def pull_cloud_data_to_local(
         bank_attempts = data.get("bank_attempts") or []
         mindmaps = data.get("mindmaps") or []
         learner_profile = data.get("learner_profile")
+        # 删除墓碑（v0.5.8 体检 P1）：云端持久化的删除记录，用于抑制 upsert 快照复活
+        tombstones = data.get("tombstones") or []
+        tombstone_ids = {
+            str(t.get("object_id") or t.get("id") or "")
+            for t in tombstones
+            if isinstance(t, dict) and (t.get("object_id") or t.get("id"))
+        }
 
         counts = {
             "courses": 0,
@@ -286,6 +307,27 @@ async def pull_cloud_data_to_local(
         }
 
         async with async_session_factory() as db:
+            # 0. 墓碑先行（v0.5.8 体检 P1）：云端声明已删的条目，本地一并删除并跳过
+            # 其后的合并分支——否则「本地 replace 修剪/整库删除 → pull 复活 → push 再
+            # 送回」的死循环会永久污染双端
+            if tombstone_ids:
+                tbanks = [x for x in tombstone_ids if _SAFE_ID_RE.fullmatch(x)]
+                for i in range(0, len(tbanks), 500):
+                    chunk = tbanks[i : i + 500]
+                    res = await db.execute(
+                        delete(QuestionBank).where(QuestionBank.id.in_(chunk))
+                    )
+                    counts.setdefault("tombstoned_banks", 0)
+                    counts["tombstoned_banks"] += res.rowcount or 0
+                banks = [b for b in banks if str(b.get("id") or "") not in tombstone_ids]
+                bank_questions = [
+                    q for q in bank_questions if str(q.get("id") or "") not in tombstone_ids
+                ]
+                bank_attempts = [
+                    a for a in bank_attempts if str(a.get("id") or "") not in tombstone_ids
+                ]
+                await db.commit()
+
             # 1. 合并课程
             for c in courses:
                 cid = c.get("id")
@@ -392,6 +434,11 @@ async def pull_cloud_data_to_local(
                     db.add(new_doc)
                 counts["documents"] += 1
 
+            # 课程/文档段独立提交（v0.5.8 体检 P1）：pull 不再是一个横跨全部域的
+            # 单大事务——SQLite 全局写锁自首个 DML 持有至 commit，单事务版会在合并
+            # 期间阻塞一切并发写（实测 3s 合并阻塞并发写者 2.6s）
+            await db.commit()
+
             # 3~5. 合并题库/题目/作答：按 bank 粒度持 _bank_lock 锁内合并（v0.5.2 体检 P1：
             # 此前 pull 绕过本地全部写锁，与并发改题/替换/刷题交错造成丢失更新与 FK 死锁）
             attempts_by_bank: dict[str, list[dict]] = {}
@@ -445,8 +492,15 @@ async def pull_cloud_data_to_local(
                             continue
                         opts = q.get("options", [])
                         opts_str = json.dumps(opts, ensure_ascii=False) if isinstance(opts, (list, dict)) else str(opts or "[]")
-                        existing_q = await db.get(BankQuestion, qid)
+                        existing_q = await db.get(BankQuestion, qid, populate_existing=True)
                         if existing_q:
+                            # 新者胜（v0.5.8 体检 P1）：字段级 updated_at 比较，云端旧快照
+                            # 不得回退本地较新的纠错/重判（"" 视为最旧的历史行）
+                            cloud_updated = str(q.get("updated_at") or "")
+                            if cloud_updated and cloud_updated < (existing_q.updated_at or ""):
+                                counts["questions"] += 1
+                                continue
+                            old_answer, old_options = existing_q.answer, existing_q.options
                             existing_q.bank_id = bid
                             existing_q.seq = q.get("seq", existing_q.seq)
                             existing_q.qtype = q.get("qtype", existing_q.qtype)
@@ -457,6 +511,25 @@ async def pull_cloud_data_to_local(
                             existing_q.difficulty = q.get("difficulty", existing_q.difficulty)
                             existing_q.explanation = q.get("explanation") or q.get("analysis", existing_q.explanation)
                             existing_q.ai_explanation = q.get("ai_explanation", existing_q.ai_explanation)
+                            existing_q.updated_at = cloud_updated or existing_q.updated_at
+                            # 内容变化 → 与 replace/update_question 同口径全量重判该题全部
+                            # 作答（v0.5.8 体检 P2）：否则统计正确率与当前答案口径脱钩，
+                            # 并与 push 形成「双端互相写回陈旧 passed」的乒乓
+                            if existing_q.answer != old_answer or existing_q.options != old_options:
+                                atts = (
+                                    await db.scalars(
+                                        select(BankAttempt).where(BankAttempt.question_id == str(qid))
+                                    )
+                                ).all()
+                                for att in atts:
+                                    submitted = [x.strip() for x in att.content.split(",") if x.strip()]
+                                    new_passed = judge_answer(
+                                        existing_q.qtype, existing_q.answer, submitted
+                                    )
+                                    if att.passed != new_passed:
+                                        att.passed = new_passed
+                                        att.updated_at = utcnow_iso()
+                                existing_q.ai_explanation = ""
                         else:
                             seq = int(q.get("seq") or 0)
                             if seq in used_seqs:
@@ -497,12 +570,18 @@ async def pull_cloud_data_to_local(
                         passed = bool(a.get("passed") if "passed" in a else a.get("is_correct", True))
                         is_doubtful = bool(a.get("is_doubtful", False))
                         is_revoked = bool(a.get("is_revoked", False))
-                        existing_att = await db.get(BankAttempt, aid)
+                        existing_att = await db.get(BankAttempt, aid, populate_existing=True)
                         if existing_att:
+                            # 新者胜（v0.5.8 体检 P1）：云端旧快照不得回退本地较新的撤回
+                            # （误触撤回 → pull 先行时曾被整体撤销并固化，正是本条实证场景）
+                            att_updated = str(a.get("updated_at") or "")
+                            if att_updated and att_updated < (existing_att.updated_at or ""):
+                                continue
                             existing_att.content = content
                             existing_att.passed = passed
                             existing_att.is_doubtful = is_doubtful
                             existing_att.is_revoked = is_revoked
+                            existing_att.updated_at = att_updated or existing_att.updated_at
                         else:
                             db.add(
                                 BankAttempt(
@@ -518,6 +597,11 @@ async def pull_cloud_data_to_local(
                                 )
                             )
                             counts["attempts"] += 1
+
+                    # 每个 bank 独立提交（v0.5.8 体检 P1）：锁内 commit 才能让
+                    # 「按 bank 粒度持锁」真正成立——原实现单大事务 + 锁外统一
+                    # commit，SQLite 全局写锁横跨整个 pull，阻塞一切并发写
+                    await db.commit()
 
             # 6. 合并思维导图：持 _mm_lock 锁内合并；云端 root 必须过 normalize_node +
             # sanitize_settings（v0.5.2 体检 P1：此前绕过本地全部写路径的不变量，畸形数据可直落库）
@@ -555,6 +639,8 @@ async def pull_cloud_data_to_local(
                             )
                             db.add(new_m)
                         counts["mindmaps"] += 1
+                        # 锁内独立提交（v0.5.8 体检 P1，同 bank 段口径）
+                        await db.commit()
                 except Exception as mm_err:
                     logger.warning("丢弃无法归一化的云端思维导图 (id=%s): %s", mid, mm_err)
                     continue

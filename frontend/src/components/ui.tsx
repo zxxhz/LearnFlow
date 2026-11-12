@@ -116,7 +116,9 @@ export function Spinner({ className = "" }: { className?: string }) {
 // 因此栈非空时 stopImmediatePropagation 能可靠阻止它们在同一次按键里被同时触发；
 // 栈为空时直接放行，不影响阅读页抽屉等原有 Esc 行为。
 type EscEntry = { token: symbol; onEsc: () => void };
-const _escStack: EscEntry[] = [];
+// v0.5.8 体检 P3：导出给自定义抽屉层（如移动端导航抽屉）复用——不进栈的 Esc 层
+// 会让 isModalOpen() 漏判，全局快捷键得以穿透叠加
+export const _escStack: EscEntry[] = [];
 
 /** 供全局快捷键判断当前是否有模态/抽屉打开（打开时屏蔽 Ctrl+B/Ctrl+J 等穿透快捷键） */
 export function isModalOpen(): boolean {
@@ -160,6 +162,16 @@ export function Modal({
   const panelRef = useRef<HTMLDivElement>(null);
   const prevActiveRef = useRef<HTMLElement | null>(null);
 
+  // v0.5.8 体检 P3：可聚焦判定不再单看 offsetParent——visibility:hidden 元素保留
+  // 布局盒（offsetParent 非 null，隐形项混进 Tab 陷阱致焦点「凭空消失」），
+  // position:fixed 元素 offsetParent 为 null（被误杀）。checkVisibility 一并覆盖两类
+  const isElFocusableVisible = (el: HTMLElement): boolean => {
+    if (typeof el.checkVisibility === "function") {
+      return el.checkVisibility({ checkVisibilityCSS: true });
+    }
+    return el.offsetParent !== null || getComputedStyle(el).position === "fixed";
+  };
+
   useEffect(() => {
     if (!open) return;
     prevActiveRef.current = document.activeElement as HTMLElement | null;
@@ -167,9 +179,13 @@ export function Modal({
     const t = setTimeout(() => {
       setShown(true);
       if (panelRef.current) {
-        const focusable = panelRef.current.querySelector<HTMLElement>(
-          'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]):not([aria-label="关闭"]), [tabindex]:not([tabindex="-1"])'
+        const candidates = Array.from(
+          panelRef.current.querySelectorAll<HTMLElement>(
+            'input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]):not([aria-label="关闭"]), [tabindex]:not([tabindex="-1"])'
+          )
         );
+        // v0.5.8 体检 P3：初始焦点跳过 visibility:hidden 的候选（如 Modal 内嵌的关闭态菜单）
+        const focusable = candidates.find(isElFocusableVisible) ?? null;
         if (focusable) {
           focusable.focus();
         } else {
@@ -199,7 +215,7 @@ export function Modal({
         panelRef.current.querySelectorAll<HTMLElement>(
           'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
         )
-      ).filter((el) => el.offsetParent !== null || el === document.activeElement);
+      ).filter((el) => isElFocusableVisible(el) || el === document.activeElement);
       if (focusables.length === 0) return;
       const first = focusables[0];
       const last = focusables[focusables.length - 1];

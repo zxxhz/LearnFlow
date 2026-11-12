@@ -27,7 +27,9 @@ class AppConfig(BaseSettings):
         env_prefix="APP_", env_file=_BASE_DIR / ".env", extra="ignore"
     )
 
-    host: str = "0.0.0.0"
+    # v0.5.8 体检 P2：默认只监听回环——绑定面收窄。开启「局域网访问」时由
+    # main() 按 lan 标志在启动时切到 0.0.0.0（开关改动重启应用后生效）
+    host: str = "127.0.0.1"
     port: int = 8420
     open_browser: bool = True
     data_dir: Path = _BASE_DIR / "data"

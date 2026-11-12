@@ -106,7 +106,6 @@ export default function BankQuestionCard({
   const [aiStreaming, setAiStreaming] = useState(false);
   const [aiText, setAiText] = useState(existingAi);
   const [aiError, setAiError] = useState("");
-  const aiStreamRef = useRef<HTMLDivElement>(null);
 
   // AI 纠错建议检测：优先结构化标记 [AI纠错建议: 正确答案应为X]；回退分支收紧匹配距离
   // 与捕获范围（[A-H]），降低「原题答案C正确…D错误」这类跨距离误报
@@ -145,16 +144,6 @@ export default function BankQuestionCard({
     }
     onQuestionUpdated?.(res.question, res.recalibrated_result ?? null);
   };
-
-  // 数学公式渲染
-  useEffect(() => {
-    if (aiStreamRef.current) {
-      renderMathInElement(aiStreamRef.current, {
-        delimiters: KATEX_DELIMITERS,
-        throwOnError: false,
-      });
-    }
-  }, [aiText]);
 
   function toggle(letter: string) {
     if (result) return;

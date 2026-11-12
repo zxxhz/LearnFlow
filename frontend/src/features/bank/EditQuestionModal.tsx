@@ -176,7 +176,19 @@ export default function EditQuestionModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="✏️ 题目纠错与修改答案 / 选项" width="max-w-xl">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="✏️ 题目纠错与修改答案 / 选项"
+      width="max-w-xl"
+      confirmCloseIf={() =>
+        title !== question.title ||
+        difficulty !== (question.difficulty || "普通") ||
+        explanation.trim() !== (initialExplanation || "").trim() ||
+        answer.trim().toUpperCase() !== (initialCorrectAnswer || (question as BankWrongQuestion).answer || "A").trim().toUpperCase()
+      }
+      confirmCloseMessage="纠错修改尚未保存，确定丢弃并关闭？"
+    >
       <div className="space-y-4 max-h-[72vh] overflow-y-auto pr-1 text-xs">
         {/* 顶部题目元信息与 AI 纠错建议条 */}
         <div className="flex items-center justify-between bg-gray-50 dark:bg-gray-800/60 p-2.5 rounded-lg border border-gray-200 dark:border-gray-700">

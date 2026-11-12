@@ -190,8 +190,9 @@ export async function saveBlobAs(
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  // click 同步建立下载引用后即可回收，10s 长延迟在极慢设备上反而可能 revoke 于取流前
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  // v0.5.8 体检 P2：FileSaver.js 同款宽限——a.click() 对 blob URL 的消费在部分
+  // 引擎/慢设备上是异步取流，立即 revoke 会让下载静默失败（0 字节）；延迟回收宁晚勿早
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 
   showToast(`✅ 导出成功：已保存至系统“下载”目录（${name}）`, {
     action: {

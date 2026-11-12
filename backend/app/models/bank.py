@@ -6,7 +6,7 @@
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, CreatedAt, UUIDPk, UserIdMixin
+from app.models.base import Base, CreatedAt, UUIDPk, UserIdMixin, utcnow_iso
 
 # qtype 取值
 QUESTION_SINGLE = "single"  # 单选
@@ -44,6 +44,9 @@ class BankQuestion(UUIDPk, UserIdMixin, CreatedAt, Base):
     difficulty: Mapped[str] = mapped_column(String(20), default="")
     explanation: Mapped[str] = mapped_column(Text, default="")
     ai_explanation: Mapped[str] = mapped_column(Text, default="")
+    # 字段级新者胜时间戳（v0.5.8 体检 P1）："" 视为最旧（历史遗留行）；任何字段
+    # 变更路径必须刷新，pull 合并据此决定「云端值」是否覆盖「本地值」
+    updated_at: Mapped[str] = mapped_column(String(40), default=utcnow_iso)
 
 
 class BankAttempt(UUIDPk, UserIdMixin, CreatedAt, Base):
@@ -60,3 +63,20 @@ class BankAttempt(UUIDPk, UserIdMixin, CreatedAt, Base):
     # 软撤回（误触撤回）：置 True 后统计口径整体排除。不物理删除：同步链路是
     # upsert-only 合并，本地删行会被云端快照拉回复活，字段更新才能自然传播（对齐纠错重判）
     is_revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 字段级新者胜时间戳（v0.5.8 体检 P1）：撤回/重判等字段变更必须刷新
+    updated_at: Mapped[str] = mapped_column(String(40), default=utcnow_iso)
+
+
+class SyncTombstone(Base):
+    """同步删除墓碑（v0.5.8 体检 P1）：replace 修剪的题与整库删除的题库记录于此。
+
+    push 携带墓碑给云端执行真删除并持久化，pull 侧据其抑制「云端已删条目复活」；
+    没有墓碑时云端 upsert-only 合并会把已删数据拉回来并自我强化（push 再送回去）。
+    """
+
+    __tablename__ = "sync_tombstones"
+
+    object_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # bank / bank_question（后续可扩展其他资源）
+    kind: Mapped[str] = mapped_column(String(32))
+    deleted_at: Mapped[str] = mapped_column(String(40), default=utcnow_iso)

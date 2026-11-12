@@ -25,7 +25,9 @@ class AccessInfoOut(BaseModel):
 @router.get("/access-info", response_model=AccessInfoOut)
 async def access_info():
     lan_enabled = system_service.is_lan_access_enabled()
-    lan_mode = (settings.host == "0.0.0.0") and lan_enabled
+    # v0.5.8 体检 P2：lan_mode 改为纯标志驱动（报告用户设置本身）。绑定面已收窄为
+    # 「启动时按标志决定」——开启开关后需重启应用才真正监听 0.0.0.0，此端口径依旧自洽
+    lan_mode = lan_enabled
     token = system_service.get_access_token() if lan_mode else ""
     urls = system_service.lan_urls() if lan_mode else []
     return AccessInfoOut(

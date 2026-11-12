@@ -354,7 +354,14 @@ def apply_pending_restore() -> None:
 
     staging = settings.data_dir / ".restore-staging"
     try:
-        # 先完整解压到暂存目录——磁盘满/中途失败时旧数据仍完好
+        # 先完整解压到暂存目录——磁盘满/中途失败时旧数据仍完好。
+        # v0.5.8 体检 P2：解压总量上限 2GB——zip-slip 已有防护，但高压缩比
+        # 异常备份可在启动时写满磁盘（本地信任边界内，属纵深防御）
+        _RESTORE_MAX_UNCOMPRESSED = 2 * 1024**3
+        total_unc = sum(m.file_size for m in z.infolist())
+        if total_unc > _RESTORE_MAX_UNCOMPRESSED:
+            _abort(f"备份解压体积超上限（{total_unc // (1024**2)}MB > 2048MB），疑似异常备份，已中止")
+            return
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
         staging.mkdir(parents=True)

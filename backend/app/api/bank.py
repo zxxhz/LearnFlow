@@ -13,7 +13,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory, get_db
+from app.core.sse import SSE_HEADERS
 from app.models.bank import BankAttempt, BankQuestion, QuestionBank
+from app.models.base import utcnow_iso
 from app.schemas.bank import (
     BankAiExplainIn,
     BankAnalysisOut,
@@ -397,8 +399,10 @@ async def submit_attempt(
     if q is None:
         raise HTTPException(status_code=404, detail="题目不存在")
     async with bank_service._bank_lock(q.bank_id):
-        # 锁内重读题目，防止并发替换或修改删除题目导致外键报错
-        fresh_q = await db.get(BankQuestion, body.question_id)
+        # 锁内重读题目，防止并发替换或修改删除题目导致外键报错。
+        # populate_existing 必须加（v0.5.8 体检 P2）：裸 get 命中 identity map 不发 SQL，
+        # 锁外读到的旧答案会被用来判分——与 update_question 同一 bug 类，此处补齐口径
+        fresh_q = await db.get(BankQuestion, body.question_id, populate_existing=True)
         if fresh_q is None:
             raise HTTPException(status_code=404, detail="题目不存在或已被移除")
         q = fresh_q
@@ -446,8 +450,8 @@ async def revoke_attempt(attempt_id: str, db: AsyncSession = Depends(get_db)):
     if att is None or att.is_revoked:
         raise HTTPException(status_code=404, detail="作答记录不存在或已撤回")
     async with bank_service._bank_lock(att.bank_id):
-        # 锁内重读，防并发撤回/题目替换交错
-        fresh = await db.get(BankAttempt, attempt_id)
+        # 锁内重读，防并发撤回/题目替换交错（populate_existing 口径对齐 update_question）
+        fresh = await db.get(BankAttempt, attempt_id, populate_existing=True)
         if fresh is None or fresh.is_revoked:
             raise HTTPException(status_code=404, detail="作答记录不存在或已撤回")
         latest_id = await db.scalar(
@@ -462,6 +466,8 @@ async def revoke_attempt(attempt_id: str, db: AsyncSession = Depends(get_db)):
         if latest_id != fresh.id:
             raise HTTPException(status_code=409, detail="只能撤回本题最近一次作答")
         fresh.is_revoked = True
+        # 新者胜时间戳（v0.5.8 体检 P1）：撤回状态经同步传播时不被云端旧快照回退
+        fresh.updated_at = utcnow_iso()
         await db.commit()
     return {"ok": True, "question_id": fresh.question_id}
 
@@ -580,6 +586,7 @@ async def ai_explain_question(
                         # 仅当题目内容与选项未发生变更时才回写，防止陈旧解析覆盖更新后的题目
                         if saved_q and saved_q.answer == q.answer and saved_q.options == q.options:
                             saved_q.ai_explanation = full_text
+                            saved_q.updated_at = utcnow_iso()
                             await save_db.commit()
             except Exception as se:
                 logger.warning(f"Failed to persist question ai_explanation: {se}")
@@ -599,12 +606,7 @@ async def ai_explain_question(
     return StreamingResponse(
         gen(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-            "Content-Type": "text/event-stream; charset=utf-8",
-        },
+        headers=SSE_HEADERS,
     )
 
 
@@ -671,15 +673,20 @@ async def update_bank_question(
 async def update_bank(
     bank_id: str, body: BankUpdateIn, db: AsyncSession = Depends(get_db)
 ):
-    """更新题库（名称与 AI 自定义答疑提示词）。"""
-    bank = await _bank_or_404(db, bank_id)
-    if body.name is not None:
-        bank.name = body.name
-    if body.ai_prompt is not None:
-        bank.ai_prompt = body.ai_prompt
-    await db.commit()
-    await db.refresh(bank)
-    stats = await bank_service.bank_stats(db, bank)
+    """更新题库（名称与 AI 自定义答疑提示词）。
+
+    v0.5.8 体检 P1：补持 _bank_lock——此前全程无锁，与 pull 合并读 bank→写回的
+    窗口交错构成真实的丢失更新。
+    """
+    async with bank_service._bank_lock(bank_id):
+        bank = await _bank_or_404(db, bank_id)
+        if body.name is not None:
+            bank.name = body.name
+        if body.ai_prompt is not None:
+            bank.ai_prompt = body.ai_prompt
+        await db.commit()
+        await db.refresh(bank)
+        stats = await bank_service.bank_stats(db, bank)
     return BankOut(
         id=bank.id,
         name=bank.name,

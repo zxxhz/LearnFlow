@@ -82,10 +82,12 @@ async def build_annotation_messages(
         .limit(30)
         .all()
     )
-    # 超长对话只带最近 30 条（15 轮）；倒序取最新 30 条后正序回排，保证最新提问在上下文末尾
+    # 超长对话只带最近 30 条（15 轮）；倒序取最新 30 条后正序回排，保证最新提问在上下文末尾。
+    # v0.5.8 体检 P2：逐条裁剪——划线可来自拍照 OCR/第三方导入材料（可携带注入文本），
+    # 不裁剪的长历史最坏 30×8000 字符 ≈ 24 万字符
     trimmed = list(reversed(history))
     messages = [{"role": "system", "content": system}]
-    messages += [{"role": m.role, "content": m.content} for m in trimmed]
+    messages += [{"role": m.role, "content": (m.content or "")[:4000]} for m in trimmed]
     return messages
 
 
