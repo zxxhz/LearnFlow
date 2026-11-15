@@ -417,6 +417,8 @@ async def import_confirm(
             # 知识点落库（提取已在 Phase 1 完成）
             if meta:
                 doc.summary = meta.summary
+                # 内容变更刷新新者胜时间戳（v0.5.8 全量体检 P1-5 同口径）
+                doc.updated_at = utcnow_iso()
                 kp_extracted += len(meta.knowledge_points)
                 rows = (
                     await db.scalars(

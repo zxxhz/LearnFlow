@@ -11,8 +11,10 @@
    - 普通非 AI 请求：本地在线时反向代理，本地离线时友好提示。
 """
 import contextlib
+import json
 import logging
 import mimetypes
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -63,6 +65,27 @@ logger = logging.getLogger("server.main")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
 
+class _TokenLogFilter(logging.Filter):
+    """访问日志 token 脱敏（v0.5.8 全量体检 P1-2）：对齐本地后端 _TokenLogFilter。
+
+    旧客户端兼容路径仍接受 ?token=...，该共享令牌此前会完整落 uvicorn access log /
+    反代 / Docker 日志——任何能读到日志的一方即获得云端全部读写权。"""
+    _TOKEN_RE = re.compile(r"([?&])token=[^&\s]+")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+            if "token=" in msg:
+                record.msg = self._TOKEN_RE.sub(r"\1token=***", msg)
+                record.args = None
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(_TokenLogFilter())
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """服务端生命周期管理。"""
@@ -90,17 +113,69 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 挂载 CORS 中间件
+# 挂载 CORS 中间件（v0.5.8 全量体检 P3-1）：allow_origins=['*'] 与
+# allow_credentials=True 组合是反模式——cookie 一旦调整为 SameSite=None 或关闭
+# 鉴权，任意网页即可携带凭据跨源读写全部 API。本服务只被自家 SPA 同源访问，
+# 默认不放开任何跨源；确有需要经 CORS_ORIGINS 环境变量显式白名单
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origins,
+    allow_credentials=bool(settings.cors_origins),
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["x-server-token", "x-access-token", "content-type"],
 )
 
 # 挂载 Token 鉴权中间件
 app.add_middleware(RelayAuthMiddleware)
+
+
+class SecurityHeadersMiddleware:
+    """安全响应头（v0.5.8 全量体检 P3-2）：对齐本地后端 _SecurityHeaders 基线。
+
+    SPA 为 Vite 产物（无内联脚本），script-src 'self' 收紧；auth 录入页含内联
+    JS 且自行携带宽松 CSP，此处对已有 CSP 的响应不覆盖。最后 add（最外层），
+    使鉴权页短路响应同样经过这里。"""
+
+    _CSP = (
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:; "
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    )
+
+    def __init__(self, app: Any):
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Any):
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                existing = {k.lower() for k, _ in headers}
+
+                def _add(name: bytes, value: bytes) -> None:
+                    if name not in existing:
+                        headers.append((name, value))
+
+                _add(b"x-content-type-options", b"nosniff")
+                _add(b"referrer-policy", b"no-referrer")
+                _add(b"x-frame-options", b"DENY")
+                content_type = next(
+                    (v for k, v in headers if k.lower() == b"content-type"), b""
+                )
+                if b"text/html" in content_type.lower():
+                    _add(b"content-security-policy", self._CSP.encode("latin-1"))
+                    _add(b"permissions-policy", b"camera=(), microphone=(), geolocation=()")
+                message["headers"] = headers
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
+
+
+# 最后挂载 = 最外层：鉴权页 / SPA / API 全部响应都带上安全头
+app.add_middleware(SecurityHeadersMiddleware)
 
 # 挂载数据同步与状态 API 路由
 app.include_router(sync_router)
@@ -229,8 +304,9 @@ async def polish_bank_prompt(request: Request):
                 "POST", "/api/banks/polish-prompt", body=json.dumps(body).encode("utf-8")
             )
             return Response(content=resp_body, status_code=status_code, media_type="application/json")
-        except Exception:
-            pass
+        except Exception as e:
+            # P1-1：吞异常会让「隧道转发本地」分支静默失效且无任何告警，必须留痕
+            logger.warning("polish-prompt 隧道转发本地失败，回退云端: %s", e)
 
     if not settings.is_server_llm_configured():
         raise HTTPException(status_code=400, detail="服务端尚未配置大模型，请在设置中配置 SERVER_LLM_API_KEY")
@@ -256,11 +332,11 @@ async def submit_bank_attempt(body: BankAttemptRequest):
             # 本地成功后云端也备份落库（保证离线与双向同步数据一致）
             try:
                 await relay_db.submit_bank_attempt(body.question_id, body.content, body.is_doubtful)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("作答云端备份落库失败（不影响本地结果）: %s", e)
             return Response(content=resp_body, status_code=status_code, media_type="application/json")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("作答隧道转发本地失败，回退云端判分: %s", e)
 
     try:
         result = await relay_db.submit_bank_attempt(body.question_id, body.content, body.is_doubtful)
@@ -326,8 +402,8 @@ async def draw_bank_round(bank_id: str, body: BankRoundRequest):
                 "POST", f"/api/banks/{bank_id}/round", body=json.dumps(body.model_dump()).encode("utf-8")
             )
             return Response(content=resp_body, status_code=status_code, media_type="application/json")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("抽题轮隧道转发本地失败，回退云端原生抽题: %s", e)
 
     questions, pool_size, bank = await relay_db.draw_bank_round(bank_id, body.mode, body.size)
     if not bank:
@@ -420,11 +496,11 @@ async def update_bank_question(question_id: str, request: Request):
             )
             try:
                 await relay_db.update_bank_question(question_id, body)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("改题云端备份失败（不影响本地结果）: %s", e)
             return Response(content=resp_body, status_code=status_code, media_type="application/json")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("改题隧道转发本地失败，回退云端原生改题: %s", e)
 
     try:
         return await relay_db.update_bank_question(question_id, body)
@@ -444,11 +520,11 @@ async def update_bank(bank_id: str, request: Request):
             if "ai_prompt" in body:
                 try:
                     await relay_db.update_bank_prompt(bank_id, str(body["ai_prompt"]))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning("题库提示词云端备份失败（不影响本地结果）: %s", e)
             return Response(content=resp_body, status_code=status_code, media_type="application/json")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("题库更新隧道转发本地失败，回退云端: %s", e)
 
     if "ai_prompt" in body:
         ok = await relay_db.update_bank_prompt(bank_id, str(body["ai_prompt"]))
@@ -579,8 +655,8 @@ async def update_study_profile(request: Request):
             # 本地更新成功后，也同步更新云端数据库
             await relay_db.update_learner_profile(background_summary=bg, socratic_mode=sm)
             return Response(content=resp_body, status_code=status_code, media_type="application/json")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("画像更新隧道转发本地失败，回退云端独立执行: %s", e)
 
     # 云端独立执行
     return await relay_db.update_learner_profile(background_summary=bg, socratic_mode=sm)
@@ -666,24 +742,13 @@ async def get_study_today():
 # ----------------------------------------------------
 # 4. 智能路由：AI 生成、助教与沙箱执行（接入 dispatch_ai_request 统一调度）
 # ----------------------------------------------------
-_AI_KEYWORDS = (
-    "ask",
-    "chat",
-    "tutor",
-    "diagnose",
-    "agent",
-    "solve",
-    "photo",
-    "regenerate",
-    "revise",
-    "explain",
-    "generate",
-    "outline",
-    "executions",
-    "assistant",
-    "conversations",
-    "stream",
-)
+# 真 LLM 问答端点白名单（v0.5.8 全量体检 P2-1）：此前按 ask/chat/conversations/
+# executions/stream 等关键词子串判定「AI 路径」，Worker 离线且云端配了 LLM 时，
+# GET /api/conversations/{id}/messages、开会话等普通 JSON 接口全被劫持为伪造
+# SSE 问答流（extract_prompt 兜底甚至把空 body 序列化成 "{}" 喂模型）。
+# 白名单只收「确由 LLM 流式生成回答」的端点；其余请求一律走普通反向代理
+_LLM_QA_PATH_RE = re.compile(r"^/api/conversations/[^/]+/messages$")
+_LLM_QA_SUFFIXES = ("ask", "agent", "photo", "qa", "detail", "diagnose", "tutor", "chat")
 
 
 @app.api_route(
@@ -694,25 +759,57 @@ async def proxy_api_catch_all(request: Request, full_path: str):
     """通用 API 路由穿透转发。
 
     根据请求性质智能分发：
-    1. AI 生成与问答类请求（如 /ask, /chat, /diagnose, /outline 等）：
+    1. 真 LLM 问答/生成的 POST 流式请求（P2-1 白名单口径）：
        进入 dispatch_ai_request 统一调度器（按 cloud/local/auto 模式流式直出或隧道转发）；
-    2. 普通非 AI 请求：
+    2. GET 的 SSE 读流（如章节生成进度）：仅本地隧道透传，离线 503；
+    3. 普通非 AI 请求：
        若本地 Worker 在线，通过 tunnel_manager.dispatch_full 反向代理；
        若本地 Worker 离线，返回 503 明确提示。
     """
     path = f"/api/{full_path}"
     accept_header = request.headers.get("accept", "")
-    is_stream_expected = "text/event-stream" in accept_header or any(
-        path.endswith(kw) for kw in ("ask", "diagnose", "agent", "photo", "regenerate", "detail", "qa")
-    )
-    is_ai_path = any(kw in path for kw in _AI_KEYWORDS)
+    is_stream_expected = "text/event-stream" in accept_header
 
     body = await request.body()
     query_params = dict(request.query_params)
     headers = dict(request.headers)
 
-    # 1. AI 类的流式或生成请求：统一进入 dispatch_ai_request
-    if is_stream_expected or is_ai_path:
+    # 0. GET 的 SSE 读流（如 /progress）：仅本地隧道透传——Worker 离线时应 503，
+    #    绝不被云端 LLM 伪造流（P2-1）；旧逻辑经 AI 调度透传，这里直连隧道等价
+    if request.method == "GET" and is_stream_expected:
+        if not tunnel_manager.is_worker_online():
+            return JSONResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content={"detail": "本地客户端未连接，无法读取该实时流", "worker_online": False},
+            )
+        try:
+            stream_iter = tunnel_manager.dispatch_request(
+                method=request.method,
+                path=path,
+                headers=headers,
+                query_params=query_params,
+                body=b"",
+            )
+            return StreamingResponse(
+                stream_iter,
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+        except Exception as e:
+            logger.error("SSE 读流隧道透传异常: %s", e)
+            return JSONResponse(status_code=500, content={"detail": f"实时流传透异常: {e}"})
+
+    # 1. 真 LLM 问答/生成的流式请求：统一进入 dispatch_ai_request
+    is_llm_qa = request.method == "POST" and (
+        is_stream_expected
+        or _LLM_QA_PATH_RE.match(path) is not None
+        or path.endswith(_LLM_QA_SUFFIXES)
+    )
+    if is_llm_qa:
         try:
             stream_iter = dispatch_ai_request(
                 method=request.method,

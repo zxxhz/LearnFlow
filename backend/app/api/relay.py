@@ -207,7 +207,7 @@ async def proxy_relay_system_version() -> dict[str, Any]:
 
     import httpx
     try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
+        async with httpx.AsyncClient(timeout=6.0, trust_env=False) as client:
             resp = await client.get(target, headers=headers)
             if resp.status_code == 200:
                 return resp.json()
@@ -251,7 +251,7 @@ async def proxy_relay_system_update() -> dict[str, Any]:
 
     import httpx
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, trust_env=False) as client:
             resp = await client.post(target, headers=headers)
             if resp.status_code == 200:
                 return resp.json()
@@ -292,7 +292,7 @@ async def proxy_get_server_llm() -> dict[str, Any]:
 
     import httpx
     try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
+        async with httpx.AsyncClient(timeout=6.0, trust_env=False) as client:
             resp = await client.get(target, headers=headers)
             if resp.status_code == 200:
                 return {"ok": True, **resp.json()}
@@ -315,7 +315,7 @@ async def proxy_update_server_llm(body: dict[str, Any]) -> dict[str, Any]:
 
     import httpx
     try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=8.0, trust_env=False) as client:
             resp = await client.post(target, headers=headers, json=body)
             if resp.status_code == 200:
                 return resp.json()
@@ -338,7 +338,7 @@ async def proxy_test_server_llm(body: dict[str, Any]) -> dict[str, Any]:
 
     import httpx
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=20.0, trust_env=False) as client:
             resp = await client.post(target, headers=headers, json=body)
             if resp.status_code == 200:
                 return resp.json()

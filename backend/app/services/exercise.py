@@ -369,20 +369,56 @@ def detect_course_discipline(topic: str, title: str) -> str:
         "医学", "管理", "原理", "协议", "概念", "体系", "概论", "哲学", "文史",
     )
 
-    if any(k in text for k in coding_kws):
-        return "coding"
-    if any(k in text for k in math_kws):
+    # P3-8（v0.5.8 全量体检）：拉丁短词（go/java/c 等）子串匹配曾把 Category
+    # Theory / Ergodic Theory 误判为编程课——拉丁关键词一律按整词匹配（text 分词），
+    # 中文关键词无词边界问题保持子串；数理信号先于编程判定（强数理优先）
+    text_words = set(re.findall(r"[a-zA-Z][a-zA-Z0-9+#]*", text.lower()))
+
+    def _kw_hit(kws: tuple[str, ...]) -> bool:
+        for k in kws:
+            if k.isascii():
+                if k in text_words:
+                    return True
+            elif k in text:
+                return True
+        return False
+
+    if _kw_hit(math_kws):
         return "math"
-    if any(k in text for k in theory_kws):
+    if _kw_hit(coding_kws):
+        return "coding"
+    if _kw_hit(theory_kws):
         return "theory"
     # 无法识别时按理论概念课处理（兜底生成代码关对非编程课伤害最大）
     return "theory"
+
+
+# 同知识点关卡生成互斥（v0.5.8 全量体检 P2-6）：「删旧关卡+插新关卡」此前无锁，
+# 并发触发生成时败者会把胜者刚落的关卡连同 ExerciseAttempt 一并删除，作答历史
+# 丢失。与 quiz._quiz_locks 同款进程内字典锁（单 uvicorn worker 拓扑）
+_kp_exercise_locks: dict[str, asyncio.Lock] = {}
+
+
+def _kp_exercise_lock(kp_id: str) -> asyncio.Lock:
+    lock = _kp_exercise_locks.get(kp_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _kp_exercise_locks[kp_id] = lock
+    return lock
 
 
 async def generate_for_kp(
     db: AsyncSession, knowledge_point_id: str, language: str, count: int
 ) -> list[Exercise]:
     """为知识点生成闯关关卡（替换旧关卡）。count<=0 时取偏好 exercises_per_kp。"""
+    # 锁覆盖生成 → 沙箱自验 → 删旧插新 → 提交全程（对齐 generate_quiz 口径）
+    async with _kp_exercise_lock(knowledge_point_id):
+        return await _generate_for_kp_locked(db, knowledge_point_id, language, count)
+
+
+async def _generate_for_kp_locked(
+    db: AsyncSession, knowledge_point_id: str, language: str, count: int
+) -> list[Exercise]:
     kp = await db.get(KnowledgePoint, knowledge_point_id)
     if kp is None:
         raise LookupError("知识点不存在")
@@ -869,13 +905,19 @@ async def _grade_concept(db: AsyncSession, exercise: Exercise, content: str) -> 
         LEARNER_ANSWER=content,
     )
     adapter = await create_adapter_from_settings(db, scene="chat")
-    return await adapter.chat_json(
+    grade = await adapter.chat_json(
         [
             {"role": "system", "content": system},
             {"role": "user", "content": f"请对学员的作答进行评分与指导分析：\n{content}"},
         ],
         ConceptGrade,
     )
+    # P2-12（v0.5.8 全量体检）：passed 与 score 的一致性在代码侧硬收敛（并把
+    # score 夹回 0-100）——学员作答嵌入了 system prompt，注入「忽略以上规则」
+    # 类文本骗满分只能污染提示词层，无法绕过这里的结构化校验
+    grade.score = max(0, min(100, int(grade.score)))
+    grade.passed = grade.score >= 60
+    return grade
 
 
 async def delete_exercise(db: AsyncSession, exercise_id: str) -> None:

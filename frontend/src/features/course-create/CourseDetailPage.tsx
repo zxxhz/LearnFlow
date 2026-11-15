@@ -162,6 +162,14 @@ export default function CourseDetailPage() {
   });
   const abortRef = useRef<AbortController | null>(null);
 
+  // 卸载时中断进度 SSE 订阅（v0.5.9 体检 P3，与 ReaderPage 同模式）：
+  // retry() 的单章重生成订阅只挂在 abortRef 上，此前组件卸载从不 abort，后台流会一直挂着
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
   // 生成中订阅进度 SSE（snapshot + 实时事件）
   useEffect(() => {
     if (!course || course.status !== "generating" || !courseId) {
@@ -314,7 +322,9 @@ export default function CourseDetailPage() {
               onChange={(e) => setTitleDraft(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && titleDraft.trim()) rename.mutate(titleDraft.trim());
-                if (e.key === "Escape") setRenaming(false);
+                // 输入法合成态的 Esc 是取消候选词，不退出重命名（体检 P2；React 18 合成事件
+                // 类型未暴露 isComposing，从原生事件取）
+                if (e.key === "Escape" && !(e.nativeEvent.isComposing || e.keyCode === 229)) setRenaming(false);
               }}
               autoFocus
               aria-label="课程名称"

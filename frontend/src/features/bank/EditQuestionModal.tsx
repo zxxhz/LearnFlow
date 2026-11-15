@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Modal, Button, Textarea, Input, Select, Spinner, ErrorText, Badge } from "../../components/ui";
+import { Modal, Button, Textarea, Input, Select, Spinner, ErrorText, Badge, ModalCancelButton } from "../../components/ui";
 import { api } from "../../lib/api";
 import type { BankQuestion, BankQuestionUpdateIn, BankQuestionUpdateOut, BankWrongQuestion } from "../../lib/types";
 
@@ -375,9 +375,8 @@ export default function EditQuestionModal({
         {errorMsg && <ErrorText>{errorMsg}</ErrorText>}
 
         <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
-          <Button variant="ghost" onClick={onClose} className="text-xs">
-            取消
-          </Button>
+          {/* 取消与 Esc/✕/遮罩同口径：脏数据时二次确认（v0.5.9 体检 P2） */}
+          <ModalCancelButton variant="ghost" className="text-xs" />
           <Button
             variant="primary"
             disabled={isSubmitting}

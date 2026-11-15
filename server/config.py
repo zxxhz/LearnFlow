@@ -53,6 +53,11 @@ try:
         port: int = int(os.getenv("SERVER_PORT", os.getenv("PORT", "8421")))
         relay_auth_required: bool = _get_bool_env("RELAY_AUTH_REQUIRED", True)
         relay_server_token: str = os.getenv("RELAY_SERVER_TOKEN", os.getenv("SERVER_TOKEN", "")).strip()
+        # CORS 跨源白名单（v0.5.8 全量体检 P3-1）：默认空 = 不放开任何跨源（本服务
+        # 只被自家 SPA 同源访问）；确有跨源需求时以逗号分隔配置，如 CORS_ORIGINS=https://a.example.com
+        cors_origins: list[str] = [
+            h.strip() for h in os.getenv("CORS_ORIGINS", "").split(",") if h.strip()
+        ]
         static_dir: Path = _resolve_default_static_dir()
         data_dir: Path = Path(os.getenv("DATA_DIR", str(Path(__file__).resolve().parent / "data"))).resolve()
 
@@ -105,6 +110,12 @@ except ImportError:
         )
         relay_server_token: str = Field(
             default_factory=lambda: os.getenv("RELAY_SERVER_TOKEN", os.getenv("SERVER_TOKEN", "")).strip()
+        )
+        # CORS 跨源白名单（P3-1 同口径，见上方 BaseSettings 版注释）
+        cors_origins: list[str] = Field(
+            default_factory=lambda: [
+                h.strip() for h in os.getenv("CORS_ORIGINS", "").split(",") if h.strip()
+            ]
         )
         static_dir: Path = Field(default_factory=_resolve_default_static_dir)
         data_dir: Path = Field(

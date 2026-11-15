@@ -1,6 +1,6 @@
 // 错题本：最近一次作答未通过的练习（跨课程），重刷通过后自动出池
 // v0.5.0：接入统一 AI 助教——错题卡「问 AI 助教」打开 document 会话，与对应章节阅读页上下文延续
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../lib/api";
@@ -8,6 +8,7 @@ import { EmptyState, Spinner } from "../../components/ui";
 import ExerciseCard from "../reader/ExerciseCard";
 import AssistantPanel from "../../components/AssistantPanel";
 import { ReaderAssistantContext } from "../reader/assistantContext";
+import { markPageAssistantOpen } from "../../lib/pageAssistant";
 import FontSizeControl from "../../components/FontSizeControl";
 import { useFontSize } from "../../lib/fontSize";
 import type { AssistantSceneContext } from "../../lib/types";
@@ -34,6 +35,8 @@ export default function WrongBookPage() {
     assistantCloseTimerRef.current = setTimeout(() => {
       assistantCloseTimerRef.current = null;
       setAssistant(null);
+      // 页内面板已收起：解除标记，全局 Ctrl+J 恢复可用（v0.5.9 体检 P3）
+      markPageAssistantOpen(false);
       setClosing(false);
     }, 300);
   }, []);
@@ -48,10 +51,30 @@ export default function WrongBookPage() {
         }
         setClosing(false);
         setAssistant({ scene, label });
+        // 标记页内面板打开：Layout 的全局 Ctrl+J 据此避让，不再叠开双层面板（体检 P3）
+        markPageAssistantOpen(true);
       },
     }),
     []
   );
+
+  // 页内助教面板 Esc 关闭出口（v0.5.9 体检 P3）：全局面板有 Esc 出口，页内面板此前
+  // 只能点 ✕ 关闭；输入法合成态的 Esc 是取消候选词，不关闭
+  useEffect(() => {
+    if (!assistant) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.isComposing || e.keyCode === 229) return;
+      if (closing) return;
+      closeAssistant();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [assistant, closing, closeAssistant]);
+
+  // 卸载时清除页内助教标记：离开页面后全局 Ctrl+J 不再被误判避让（v0.5.9 体检 P3）
+  useEffect(() => {
+    return () => markPageAssistantOpen(false);
+  }, []);
 
   return (
     <ReaderAssistantContext.Provider value={assistantApi}>

@@ -202,14 +202,24 @@ export default function MindMapCanvasPage() {
   useEffect(() => {
     treeDataRef.current = treeData;
   }, [treeData]);
+  // 卸载冲刷：防抖未触发（timer 在）或已触发但 PUT 失败（status 停在 unsaved）都
+  // 补发一次保存，防止快速返回列表页丢失最后一次编辑（体检 P2：旧条件只在 timer
+  // 存在时补救，防抖已触发但保存失败的「未保存」态卸载后无人重试）。fire-and-forget
+  // 不 await；无新防抖任务且已有在途 PUT 时不重复写同一棵树
   useEffect(() => {
     return () => {
+      const hadPendingTimer = saveTimerRef.current !== null;
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
-        if (mapId && treeDataRef.current && saveStatusRef.current !== "saved") {
-          api.mindmaps.update(mapId, { root: treeDataRef.current }).catch(() => {});
-        }
+      }
+      if (
+        mapId &&
+        treeDataRef.current &&
+        saveStatusRef.current !== "saved" &&
+        (hadPendingTimer || !savePromiseRef.current)
+      ) {
+        api.mindmaps.update(mapId, { root: treeDataRef.current }).catch(() => {});
       }
     };
   }, [mapId]);
@@ -427,6 +437,8 @@ export default function MindMapCanvasPage() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
         if (e.key === "Escape") {
+          // 输入法合成态的 Esc 是取消候选词，不退出连线/面板（体检 P2）
+          if (e.isComposing || e.keyCode === 229) return;
           if (linkingFromId) {
             // 连线模式提示「取消 (Esc)」：Esc 必须能退出连线，否则只能点按钮取消
             setLinkingFromId(null);

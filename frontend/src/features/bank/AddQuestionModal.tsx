@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Modal, Button, Textarea, Input, Select, Spinner, ErrorText, Badge } from "../../components/ui";
+import { Modal, Button, Textarea, Input, Select, Spinner, ErrorText, Badge, ModalCancelButton } from "../../components/ui";
 import { api } from "../../lib/api";
 import type { BankAnalysis, ParsedTextQuestionItem } from "../../lib/types";
 
@@ -424,9 +424,8 @@ export default function AddQuestionModal({ open, bankId, bankName, onClose, onSu
             {errorMsg && <ErrorText>{errorMsg}</ErrorText>}
 
             <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
-              <Button variant="ghost" onClick={handleReset} className="text-xs">
-                取消
-              </Button>
+              {/* 取消与 Esc/✕/遮罩同口径：未提交内容二次确认后再丢弃（v0.5.9 体检 P2） */}
+              <ModalCancelButton variant="ghost" className="text-xs" />
               <Button
                 variant="primary"
                 disabled={isSubmitting || !file || isAnalyzing}
@@ -606,9 +605,8 @@ export default function AddQuestionModal({ open, bankId, bankName, onClose, onSu
             {errorMsg && <ErrorText>{errorMsg}</ErrorText>}
 
             <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
-              <Button variant="ghost" onClick={handleReset} className="text-xs">
-                取消
-              </Button>
+              {/* 取消与 Esc/✕/遮罩同口径：未提交内容二次确认后再丢弃（v0.5.9 体检 P2） */}
+              <ModalCancelButton variant="ghost" className="text-xs" />
               <Button
                 variant="primary"
                 disabled={isSubmitting}
@@ -662,9 +660,7 @@ B. 选项2
                 {errorMsg && <ErrorText>{errorMsg}</ErrorText>}
 
                 <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
-                  <Button variant="ghost" onClick={handleReset} className="text-xs">
-                    取消
-                  </Button>
+                  <ModalCancelButton variant="ghost" className="text-xs" />
                   <Button
                     variant="primary"
                     disabled={isParsing || !rawText.trim()}
@@ -784,9 +780,7 @@ B. 选项2
                 {errorMsg && <ErrorText>{errorMsg}</ErrorText>}
 
                 <div className="flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
-                  <Button variant="ghost" onClick={handleReset} className="text-xs">
-                    取消
-                  </Button>
+                  <ModalCancelButton variant="ghost" className="text-xs" />
                   <Button
                     variant="primary"
                     disabled={isSubmitting || parsedQuestions.length === 0}

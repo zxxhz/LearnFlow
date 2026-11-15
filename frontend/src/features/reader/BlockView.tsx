@@ -434,8 +434,14 @@ export default function BlockView({
   };
 
   if (!sectionId) {
+    // 无锚定 code 块此前返回空壳 div：Shiki effect 对无 sectionId 早退永不填充，
+    // 代码整块消失（体检 P2）。与普通块一样走 html 兜底（markdown-it 产出的
+    // <pre><code> 至少内容可见），并加虚线弱标记提示该块未锚定（编辑/运行不可用）
     return isCode ? (
-      <div ref={codeRef} className="code-block my-3" />
+      <div
+        className="code-block my-3 rounded-lg border border-dashed border-gray-300 dark:border-gray-700 opacity-90"
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
     ) : (
       <div className={`doc-content ${adhdClass}`} dangerouslySetInnerHTML={{ __html: html }} />
     );

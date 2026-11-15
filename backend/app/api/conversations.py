@@ -58,7 +58,6 @@ async def post_message(
         raise HTTPException(status_code=400, detail="标注不存在")
 
     # LLM 配置校验先于任何持久化：未配置时快速 400，不留下没有回应的孤儿提问（v0.5.1 体检 P2）
-    messages = await build_annotation_messages(db, conv)
     adapter = await create_adapter_from_settings(db, scene="chat")
 
     user_msg = Message(conversation_id=conv.id, role="user", content=body.content)
@@ -68,6 +67,10 @@ async def post_message(
     await db.refresh(user_msg)
 
     user_msg_dict = MessageOut.model_validate(user_msg).model_dump()
+    # P2-4（v0.5.8 全量体检）：build_annotation_messages 的契约是「调用前本次提问
+    # 已入库」（context.py）。v0.5.1 重排把组装挪到落库前，模型收到的上下文不含
+    # 本次提问、只能基于旧历史瞎答——恢复先落库后组装
+    messages = await build_annotation_messages(db, conv)
     deltas = await adapter.chat(messages, stream=True)
     conv_id = conv.id
     # 划线所在课程学科域：盲区盖章 scope + 证据溯源（在请求会话存活期内解析好）

@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from app.core.config import APP_VERSION, settings
 from app.core.db import async_session_factory
@@ -19,18 +19,20 @@ from app.models import (
     Annotation,
     BankAttempt,
     BankQuestion,
+    Conversation,
     Course,
     Document,
     Exercise,
     ExerciseAttempt,
     LearnerMisconception,
     LearnerProfile,
+    Message,
     MindMap,
     QuestionBank,
     StudyDay,
     SyncTombstone,
 )
-from app.services.bank import bank_lock, judge_answer
+from app.services.bank import _record_tombstones, bank_lock, judge_answer
 from app.services.mindmap import _mm_lock, normalize_node, sanitize_settings
 from app.models.base import utcnow_iso
 from app.services.relay.config import (
@@ -200,7 +202,10 @@ async def push_local_data_to_server(
         payload = await collect_local_sync_payload(since=cfg.last_sync_at)
 
         timeout = httpx.Timeout(timeout=60.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        # trust_env=False（v0.5.8 全量体检 P2-11）：与 relay 链路其他位置（client.py
+        # proxy=None、worker.py trust_env=False）同口径——否则用户开系统代理时，
+        # 全量学习数据与 x-server-token 会流经本地代理进程
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             resp = await client.post(push_endpoint, json=payload, headers=headers)
 
             if resp.status_code == 200:
@@ -269,7 +274,10 @@ async def pull_cloud_data_to_local(
 
     try:
         timeout = httpx.Timeout(timeout=60.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        # trust_env=False（v0.5.8 全量体检 P2-11）：与 relay 链路其他位置（client.py
+        # proxy=None、worker.py trust_env=False）同口径——否则用户开系统代理时，
+        # 全量学习数据与 x-server-token 会流经本地代理进程
+        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
             resp = await client.get(pull_endpoint, headers=headers)
 
             if resp.status_code != 200:
@@ -311,20 +319,112 @@ async def pull_cloud_data_to_local(
             # 其后的合并分支——否则「本地 replace 修剪/整库删除 → pull 复活 → push 再
             # 送回」的死循环会永久污染双端
             if tombstone_ids:
-                tbanks = [x for x in tombstone_ids if _SAFE_ID_RE.fullmatch(x)]
-                for i in range(0, len(tbanks), 500):
-                    chunk = tbanks[i : i + 500]
+                # 按 kind 分桶（v0.5.8 全量体检 P1-3 扩展）：墓碑现覆盖
+                # bank / bank_question / course / document / mindmap / annotation
+                tomb_by_kind: dict[str, set[str]] = {}
+                for t in tombstones:
+                    oid = str(t.get("object_id") or t.get("id") or "")
+                    if oid and _SAFE_ID_RE.fullmatch(oid):
+                        tomb_by_kind.setdefault(str(t.get("kind") or ""), set()).add(oid)
+                tombstone_ids = set().union(*tomb_by_kind.values()) if tomb_by_kind else set()
+
+                # P0（v0.5.8 全量体检）：题库域必须按「作答 → 题目 → 题库」级联顺序
+                # 删除（对齐 delete_bank）。原实现直接 DELETE question_banks，在本地
+                # 仍有子题/作答时必撞 FK IntegrityError（无 ON DELETE CASCADE +
+                # PRAGMA foreign_keys=ON），且服务端墓碑只增不删——之后每次 pull 都
+                # 在同一处复现，多端同步被永久阻断
+                bank_tomb_ids = sorted(
+                    tomb_by_kind.get("bank", set()) | tomb_by_kind.get("bank_question", set())
+                )
+                for i in range(0, len(bank_tomb_ids), 500):
+                    chunk = bank_tomb_ids[i : i + 500]
+                    await db.execute(delete(BankAttempt).where(BankAttempt.bank_id.in_(chunk)))
+                    await db.execute(delete(BankQuestion).where(BankQuestion.bank_id.in_(chunk)))
+                    await db.execute(
+                        delete(BankAttempt).where(BankAttempt.question_id.in_(chunk))
+                    )
+                    await db.execute(delete(BankQuestion).where(BankQuestion.id.in_(chunk)))
                     res = await db.execute(
                         delete(QuestionBank).where(QuestionBank.id.in_(chunk))
                     )
                     counts.setdefault("tombstoned_banks", 0)
                     counts["tombstoned_banks"] += res.rowcount or 0
+
+                # 收到的全部墓碑落本地 SyncTombstone（P2-2）：即使本地没有对应行也
+                # 记录——随下次 push 传播给云端，防其他未同步设备的旧快照复活
+                #（服务端持久化墓碑拦截是主防线，本地落墓碑是纵深）
+                for kind, ids in tomb_by_kind.items():
+                    if kind in ("bank", "bank_question", "course", "document", "mindmap", "annotation"):
+                        await _record_tombstones(db, kind, sorted(ids))
+
+                # 课程域墓碑（P1-3）：复用 purge_course_data 的全量级联（练习/知识点/
+                # 划线/对话/文件）
+                try:
+                    from app.services.generation.pipeline import purge_course_data
+
+                    for cid in sorted(tomb_by_kind.get("course", set())):
+                        course = await db.get(Course, cid)
+                        if course is None:
+                            continue
+                        # 课程删除后解除导图的课程关联（对齐 delete_course：避免列表页
+                        # 残留「🎓 来自课程」的悬空标记）
+                        await db.execute(
+                            update(MindMap)
+                            .where(MindMap.course_id == cid)
+                            .values(source="manual", course_id=None)
+                        )
+                        await purge_course_data(db, course)
+                        await db.delete(course)
+                except Exception as purge_err:
+                    logger.warning("应用课程墓碑失败: %s", purge_err)
+                for did in sorted(tomb_by_kind.get("document", set())):
+                    doc = await db.get(Document, did)
+                    if doc is None:
+                        continue
+                    await db.execute(delete(Annotation).where(Annotation.document_id == did))
+                    await db.delete(doc)
+                for mid in sorted(tomb_by_kind.get("mindmap", set())):
+                    async with _mm_lock(mid):
+                        mm = await db.get(MindMap, mid)
+                        if mm is not None:
+                            await db.delete(mm)
+                for ann_id in sorted(tomb_by_kind.get("annotation", set())):
+                    ann = await db.get(Annotation, ann_id)
+                    if ann is None:
+                        continue
+                    convs = (
+                        await db.scalars(
+                            select(Conversation).where(Conversation.annotation_id == ann_id)
+                        )
+                    ).all()
+                    conv_ids = [c.id for c in convs]
+                    if conv_ids:
+                        await db.execute(
+                            delete(Message).where(Message.conversation_id.in_(conv_ids))
+                        )
+                        await db.execute(
+                            delete(Conversation).where(Conversation.id.in_(conv_ids))
+                        )
+                    await db.delete(ann)
+
                 banks = [b for b in banks if str(b.get("id") or "") not in tombstone_ids]
                 bank_questions = [
                     q for q in bank_questions if str(q.get("id") or "") not in tombstone_ids
                 ]
                 bank_attempts = [
                     a for a in bank_attempts if str(a.get("id") or "") not in tombstone_ids
+                ]
+                courses = [
+                    c for c in courses if str(c.get("id") or "") not in tombstone_ids
+                ]
+                documents = [
+                    d
+                    for d in documents
+                    if str(d.get("id") or "") not in tombstone_ids
+                    and str(d.get("course_id") or "") not in tombstone_ids
+                ]
+                mindmaps = [
+                    m for m in mindmaps if str(m.get("id") or "") not in tombstone_ids
                 ]
                 await db.commit()
 
@@ -340,6 +440,13 @@ async def pull_cloud_data_to_local(
 
                 existing_c = await db.get(Course, cid)
                 if existing_c:
+                    # 新者胜护栏（v0.5.8 全量体检 P1-5）：此前课程域合并无条件整字段
+                    # 覆盖，pull 先行时序下本地编辑被云端旧快照回退后经 push 固化。
+                    # "" 一律视为最旧（P1-4 同口径）
+                    cloud_c_updated = str(c.get("updated_at") or "")
+                    if cloud_c_updated < (existing_c.updated_at or ""):
+                        counts["courses"] += 1
+                        continue
                     existing_c.title = c.get("title", existing_c.title)
                     existing_c.topic = c.get("topic", existing_c.topic)
                     existing_c.level = c.get("level", existing_c.level)
@@ -348,7 +455,7 @@ async def pull_cloud_data_to_local(
                     existing_c.course_settings = settings_str
                     existing_c.scope = c.get("scope", existing_c.scope)
                     existing_c.chapter_count = c.get("chapter_count", existing_c.chapter_count)
-                    existing_c.updated_at = c.get("updated_at") or utcnow_iso()
+                    existing_c.updated_at = cloud_c_updated or existing_c.updated_at
                 else:
                     new_c = Course(
                         id=cid,
@@ -366,6 +473,9 @@ async def pull_cloud_data_to_local(
                     )
                     db.add(new_c)
                 counts["courses"] += 1
+            # 课程父行先落（分阶段 flush，FK 立即约束；见上方 new_bank 注）——
+            # 否则下方文档 loop 的 flush 一次发射 [course, document] 时顺序不保
+            await db.flush()
 
             # 2. 合并章节文档并持久化保存 Markdown
             for d in documents:
@@ -395,18 +505,26 @@ async def pull_cloud_data_to_local(
                     logger.warning("丢弃路径不安全的云端文档条目 (did=%s): %s", did, guard_err)
                     continue
 
-                # 写入本地磁盘 data/courses/{cid}/{did}/current.md 与 data/courses/{cid}/{did}.md
-                # （先落盘后 commit：commit 失败只留无害孤儿文件，反向分裂会让 DB 指向缺失文件）
-                try:
-                    full_path.parent.mkdir(parents=True, exist_ok=True)
-                    full_path.write_text(content_md, encoding="utf-8")
-                    alt_path.parent.mkdir(parents=True, exist_ok=True)
-                    alt_path.write_text(content_md, encoding="utf-8")
-                except Exception as write_err:
-                    logger.warning("持久化文档 Markdown 失败 (id=%s): %s", did, write_err)
-
                 existing_doc = await db.get(Document, did)
                 if existing_doc:
+                    # 新者胜护栏（v0.5.8 全量体检 P1-5）：云端旧快照不得覆盖本地较新的
+                    # 修订/重生成——旧文档连磁盘 Markdown 一并不写（写早了会先污染文件
+                    # 再被行级跳过，双端口径分裂）。"" 一律视为最旧（P1-4 同口径）
+                    cloud_d_updated = str(d.get("updated_at") or "")
+                    if cloud_d_updated < (existing_doc.updated_at or ""):
+                        counts["documents"] += 1
+                        continue
+
+                    # 写入本地磁盘 data/courses/{cid}/{did}/current.md 与 data/courses/{cid}/{did}.md
+                    # （先落盘后 commit：commit 失败只留无害孤儿文件，反向分裂会让 DB 指向缺失文件）
+                    try:
+                        full_path.parent.mkdir(parents=True, exist_ok=True)
+                        full_path.write_text(content_md, encoding="utf-8")
+                        alt_path.parent.mkdir(parents=True, exist_ok=True)
+                        alt_path.write_text(content_md, encoding="utf-8")
+                    except Exception as write_err:
+                        logger.warning("持久化文档 Markdown 失败 (id=%s): %s", did, write_err)
+
                     existing_doc.course_id = cid
                     existing_doc.chapter_index = d.get("chapter_index", existing_doc.chapter_index)
                     existing_doc.title = d.get("title", existing_doc.title)
@@ -415,8 +533,18 @@ async def pull_cloud_data_to_local(
                     existing_doc.summary = d.get("summary", existing_doc.summary)
                     existing_doc.status = d.get("status", existing_doc.status)
                     existing_doc.source = d.get("source", existing_doc.source)
-                    existing_doc.updated_at = d.get("updated_at") or utcnow_iso()
+                    existing_doc.updated_at = cloud_d_updated or existing_doc.updated_at
                 else:
+                    # 新文档：写入本地磁盘 data/courses/{cid}/{did}/current.md 与
+                    # data/courses/{cid}/{did}.md（先落盘后 commit：commit 失败只留
+                    # 无害孤儿文件，反向分裂会让 DB 指向缺失文件）
+                    try:
+                        full_path.parent.mkdir(parents=True, exist_ok=True)
+                        full_path.write_text(content_md, encoding="utf-8")
+                        alt_path.parent.mkdir(parents=True, exist_ok=True)
+                        alt_path.write_text(content_md, encoding="utf-8")
+                    except Exception as write_err:
+                        logger.warning("持久化文档 Markdown 失败 (id=%s): %s", did, write_err)
                     new_doc = Document(
                         id=did,
                         course_id=cid,
@@ -432,6 +560,8 @@ async def pull_cloud_data_to_local(
                         user_id=d.get("user_id", "local"),
                     )
                     db.add(new_doc)
+                    # 课程父行与文档同事务时分阶段 flush（FK 立即约束，见上方 new_bank 注）
+                    await db.flush()
                 counts["documents"] += 1
 
             # 课程/文档段独立提交（v0.5.8 体检 P1）：pull 不再是一个横跨全部域的
@@ -474,6 +604,9 @@ async def pull_cloud_data_to_local(
                             user_id=b.get("user_id", "local"),
                         )
                         db.add(new_bank)
+                        # 分阶段 flush（对齐 create_bank 惯例）：本环境 SQLAlchemy 2.1
+                        # 一次性跨表 flush 的发射顺序不能保证父行先落，FK 立即约束会炸
+                        await db.flush()
                     counts["banks"] += 1
 
                     # 4. 合并该库题目：seq 与本地现有/本批已有撞号时改派 max+1，
@@ -495,9 +628,11 @@ async def pull_cloud_data_to_local(
                         existing_q = await db.get(BankQuestion, qid, populate_existing=True)
                         if existing_q:
                             # 新者胜（v0.5.8 体检 P1）：字段级 updated_at 比较，云端旧快照
-                            # 不得回退本地较新的纠错/重判（"" 视为最旧的历史行）
+                            # 不得回退本地较新的纠错/重判。空串一律视为最旧（v0.5.8 全量
+                            # 体检 P1-4：原 `cloud_updated and ...` 短路让 "" 判「云端胜」，
+                            # 存量行（迁移置 ''）的本地编辑在 pull 先行时被旧快照覆盖后固化）
                             cloud_updated = str(q.get("updated_at") or "")
-                            if cloud_updated and cloud_updated < (existing_q.updated_at or ""):
+                            if cloud_updated < (existing_q.updated_at or ""):
                                 counts["questions"] += 1
                                 continue
                             old_answer, old_options = existing_q.answer, existing_q.options
@@ -573,9 +708,10 @@ async def pull_cloud_data_to_local(
                         existing_att = await db.get(BankAttempt, aid, populate_existing=True)
                         if existing_att:
                             # 新者胜（v0.5.8 体检 P1）：云端旧快照不得回退本地较新的撤回
-                            # （误触撤回 → pull 先行时曾被整体撤销并固化，正是本条实证场景）
+                            # （误触撤回 → pull 先行时曾被整体撤销并固化，正是本条实证场景）。
+                            # 空串一律视为最旧（P1-4 同口径）
                             att_updated = str(a.get("updated_at") or "")
-                            if att_updated and att_updated < (existing_att.updated_at or ""):
+                            if att_updated < (existing_att.updated_at or ""):
                                 continue
                             existing_att.content = content
                             existing_att.passed = passed
@@ -617,13 +753,20 @@ async def pull_cloud_data_to_local(
                     async with _mm_lock(str(mid)):
                         existing_m = await db.get(MindMap, mid)
                         if existing_m:
+                            # 新者胜护栏（v0.5.8 全量体检 P1-5）：导图是高频编辑对象，
+                            # 无条件整字段覆盖会让 pull 先行时序回退本地新树后经 push 固化。
+                            # "" 一律视为最旧（P1-4 同口径）
+                            cloud_m_updated = str(m.get("updated_at") or "")
+                            if cloud_m_updated < (existing_m.updated_at or ""):
+                                counts["mindmaps"] += 1
+                                continue
                             existing_m.title = m.get("title", existing_m.title)
                             existing_m.topic = m.get("topic", existing_m.topic)
                             if isinstance(root, dict) and root:
                                 existing_m.root = normalize_node(root, existing_m.title)
                             if isinstance(settings_val, dict) and settings_val:
                                 existing_m.settings = sanitize_settings(settings_val, existing_m.root)
-                            existing_m.updated_at = m.get("updated_at") or utcnow_iso()
+                            existing_m.updated_at = cloud_m_updated or existing_m.updated_at
                         else:
                             new_m = MindMap(
                                 id=mid,

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.models import Annotation, Document, Section
+from app.models.base import utcnow_iso
 from app.schemas.course import RegenerateRequest
 from app.schemas.document import (
     CompareHighlightItem,
@@ -179,6 +180,9 @@ async def revise_section(
         revised_text = body.revised_markdown
         if not revised_text or not revised_text.strip():
             raise HTTPException(status_code=400, detail="修订后的正文不能为空")
+        # 内容变更刷新新者胜时间戳（v0.5.8 全量体检 P1-5）：修订应用前刷新，
+        # 使其随 apply_section_revision 的事务一并落库，pull 合并护栏才能感知本地较新
+        doc.updated_at = utcnow_iso()
         new_full_md = await apply_section_revision(
             db, doc, sec, revised_text.strip()
         )

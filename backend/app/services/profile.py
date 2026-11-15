@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory
@@ -15,6 +16,10 @@ from app.services.prompt import render_prompt
 from app.services.llm import create_adapter_from_settings, extract_json
 
 logger = logging.getLogger(__name__)
+
+# 画像演进写回互斥（v0.5.8 全量体检 P2-9）：LLM 提炼（数十秒）可并发触发，
+# 写回阶段持锁 + fresh 会话合并，防 background_summary 整包互覆
+_profile_evolve_write_lock = asyncio.Lock()
 
 # 单用户本地桌面端默认用户 ID
 DEFAULT_PROFILE_ID = "local"
@@ -226,39 +231,57 @@ async def evolve_profile_from_interaction(
                 return None
 
             updated_summary = data.get("updated_summary")
-            if updated_summary and isinstance(updated_summary, str) and updated_summary.strip():
-                # 仅在非空且有内容时更新画像
-                profile.background_summary = updated_summary.strip()
-                profile.updated_at = utcnow_iso()
-
             new_miscs = data.get("new_misconceptions") or []
-            if isinstance(new_miscs, list):
-                for item in new_miscs:
-                    if isinstance(item, dict) and item.get("topic"):
-                        topic_str = str(item["topic"])[:64]
-                        tag_str = str(item.get("tag", "理解偏差"))[:32]
-                        # 去重看全部历史行（含 resolved）：用户已判定掌握的盲区
-                        # 不得被 LLM 再诊断复活
-                        existing = await db.scalar(
-                            select(LearnerMisconception).where(
-                                LearnerMisconception.topic == topic_str,
-                                LearnerMisconception.tag == tag_str,
-                            )
-                        )
-                        if existing:
-                            continue
-                        misc = LearnerMisconception(
-                            topic=topic_str,
-                            tag=tag_str,
-                            evidence=str(item.get("evidence", ""))[:128],
-                            status="active",
-                            scope=str(scope or "general")[:20],
-                            source_type=str(source_type or "")[:20],
-                            source_id=str(source_id or "")[:64],
-                        )
-                        db.add(misc)
 
-            await db.commit()
+            # P2-9（v0.5.8 全量体检）：LLM 提炼窗口达数十秒，期间并发演进/画像更新
+            # 可能已写库——写回阶段改为「持锁 + 全新短会话重读画像后仅合并本次
+            # 增量」（对齐 mindmap Agent 的 fresh 重放模式），不再基于陈旧快照整包
+            # 覆盖 background_summary
+            async with _profile_evolve_write_lock:
+                async with async_session_factory() as fresh_db:
+                    fresh_profile = await get_or_create_profile(fresh_db)
+                    if (
+                        updated_summary
+                        and isinstance(updated_summary, str)
+                        and updated_summary.strip()
+                    ):
+                        # 仅在非空且有内容时更新画像
+                        fresh_profile.background_summary = updated_summary.strip()
+                        fresh_profile.updated_at = utcnow_iso()
+                    await fresh_db.commit()
+
+                    if isinstance(new_miscs, list):
+                        for item in new_miscs:
+                            if not (isinstance(item, dict) and item.get("topic")):
+                                continue
+                            topic_str = str(item["topic"])[:64]
+                            tag_str = str(item.get("tag", "理解偏差"))[:32]
+                            # 去重看全部历史行（含 resolved）：用户已判定掌握的盲区
+                            # 不得被 LLM 再诊断复活
+                            existing = await fresh_db.scalar(
+                                select(LearnerMisconception).where(
+                                    LearnerMisconception.scope == str(scope or "general")[:20],
+                                    LearnerMisconception.topic == topic_str,
+                                    LearnerMisconception.tag == tag_str,
+                                )
+                            )
+                            if existing:
+                                continue
+                            misc = LearnerMisconception(
+                                topic=topic_str,
+                                tag=tag_str,
+                                evidence=str(item.get("evidence", ""))[:128],
+                                status="active",
+                                scope=str(scope or "general")[:20],
+                                source_type=str(source_type or "")[:20],
+                                source_id=str(source_id or "")[:64],
+                            )
+                            fresh_db.add(misc)
+                            try:
+                                # (scope, topic, tag) 唯一索引兜底并发插入（P2-9 同源）
+                                await fresh_db.flush()
+                            except IntegrityError:
+                                await fresh_db.rollback()
         except Exception as e:
             logger.warning(f"Failed to evolve learner profile: {e}")
             return None

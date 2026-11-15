@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import async_session_factory, get_db
+from app.core.sse import with_idle_ping
 from app.models import Conversation, Message
 from app.models.conversation import CONVERSATION_KIND_ASSISTANT
 from app.schemas.conversation import MessageOut
@@ -121,7 +122,9 @@ async def assistant_message_stream(
         stream_finished = False
         # 已落库的消息 id（finally 与正常路径共用，幂等防重复保存）
         saved_msg_id: list[int | None] = [None]
-        agent_stream = stream_assistant_reply(db, conv, scene, adapter)
+        # P3-10（v0.5.8 全量体检）：慢工具执行期（create_course 含 LLM 重试链路可
+        # 达数分钟）SSE 空闲无帧，代理可掐断连接且 UI 假死——空闲期下发注释帧保活
+        agent_stream = with_idle_ping(stream_assistant_reply(db, conv, scene, adapter))
 
         async def persist_reply() -> int | None:
             """已生成的回复（含断连/异常时的半截）落库，保证 user/assistant 成对。"""

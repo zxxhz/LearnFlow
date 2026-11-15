@@ -237,6 +237,19 @@ class ServerLLMService:
         """将云端大模型生成的流式内容包装为前端可直接消费的 LearnFlow 标准 SSE 格式。"""
         system_prompt, messages = self.extract_prompt_from_request(path, body)
 
+        # P2-1：无有效提问绝不喂模型——旧 extract 兜底会把空 body 序列化成
+        # "{}" 当作问题发给大模型白烧 token
+        if not messages or not str(messages[-1].get("content") or "").strip():
+            yield (
+                "data: "
+                + json.dumps(
+                    {"type": "error", "detail": "请求缺少有效的提问内容，已拒绝调用大模型。"},
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            ).encode("utf-8")
+            return
+
         try:
             async for delta_text in self.stream_chat(messages, system_prompt=system_prompt):
                 sse_frame = f"data: {json.dumps({'type': 'delta', 'text': delta_text}, ensure_ascii=False)}\n\n"
@@ -301,14 +314,29 @@ async def dispatch_ai_request(
         if tunnel_manager.is_worker_online():
             logger.info("[AI Dispatch] [Auto] 本地 Worker 在线，优先派发到本地: %s", path)
             try:
+                emitted = False
                 async for chunk in tunnel_manager.dispatch_request(
                     method=method, path=path, headers=headers, query_params=query_params, body=body, timeout=timeout
                 ):
+                    emitted = True
                     yield chunk
                 return
             except (WorkerOfflineError, WorkerRequestTimeoutError) as e:
-                logger.warning("[AI Dispatch] 本地 Worker 派发异常 (%s)，平滑回退到云端 LLM...", e)
-                # 本地派发失败时尝试平滑回退到云端
+                logger.warning("[AI Dispatch] 本地 Worker 派发异常 (%s)", e)
+                if emitted:
+                    # P2-5（v0.5.8 全量体检）：已向客户端下发过本地半截回答——
+                    # 再回退云端重发完整回答会拼成「半截本地 + 完整云端」重复内容。
+                    # 终止并如实告知，而不是静默二次拼接
+                    yield (
+                        "data: "
+                        + json.dumps(
+                            {"type": "error", "detail": "本地节点流式中途中断，本次回答不完整，请重试。"},
+                            ensure_ascii=False,
+                        )
+                        + "\n\n"
+                    ).encode("utf-8")
+                    return
+                # 未产出任何内容，才平滑回退到云端
 
         # 本地离线或异常，回退至云端
         if settings.is_server_llm_configured():

@@ -117,8 +117,9 @@ export default function MindMapListPage() {
     const file = e.dataTransfer.files[0];
     if (!file) return;
     // drop 不受 accept 属性约束：文本类以外的文件会被读成乱码并按 Markdown 大纲解析出一张乱码导图
-    if (!/\.(md|markdown|txt|text)$/i.test(file.name)) {
-      showToast(`❌ ${"仅支持 Markdown / 纯文本文件（.md / .txt）"}`);
+    // （v0.5.9 体检 P3：补 .json，与下方文案/accept=".md,.markdown,.txt,.json" 对齐）
+    if (!/\.(md|markdown|txt|text|json)$/i.test(file.name)) {
+      showToast(`❌ ${"仅支持 Markdown / 纯文本 / JSON 文件"}`);
       return;
     }
     if (file.size > 5 * 1024 * 1024) {

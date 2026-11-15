@@ -214,6 +214,105 @@ async def init_db() -> None:
                 logger.error("轻量迁移执行失败，中止启动: %s；原因: %s", ddl, e)
                 raise
 
+        # v0.5.8 全量体检 P1-4 修复：存量行 updated_at 一次性回填为当前时刻。
+        # 空串在 pull 合并中「视为最旧」，但存量行的 raw_json 快照里 updated_at=""
+        # 会被旧比较逻辑判「云端胜」覆盖本地较新的编辑/撤回；回填后本地行带上
+        # 真实时间戳，新者胜比较立即正确生效。幂等：回填后不再命中 WHERE 条件
+        from app.models.base import utcnow_iso as _ts
+
+        for _tbl in ("bank_questions", "bank_attempts"):
+            await conn.execute(
+                text(
+                    f"UPDATE {_tbl} SET updated_at = :ts "
+                    "WHERE updated_at IS NULL OR updated_at = ''"
+                ),
+                {"ts": _ts()},
+            )
+
+        # v0.5.8 全量体检 P2-9/P3-5/P3-7：唯一索引兜底（进程内锁在多进程/并发窗口
+        # 下失效时的 DB 层防线）。存量重复行先就地修复，再建索引；索引创建失败仅
+        # 告警不阻断启动（应用层已有同语义守卫）
+        try:
+            dup_rows = (
+                await conn.execute(
+                    text(
+                        "SELECT rowid, bank_id FROM bank_questions "
+                        "WHERE rowid NOT IN ("
+                        "SELECT MIN(rowid) FROM bank_questions GROUP BY bank_id, seq)"
+                    )
+                )
+            ).fetchall()
+            for r in dup_rows:
+                mx = (
+                    await conn.execute(
+                        text(
+                            "SELECT COALESCE(MAX(seq), 0) FROM bank_questions "
+                            "WHERE bank_id = :b"
+                        ),
+                        {"b": r[1]},
+                    )
+                ).scalar()
+                await conn.execute(
+                    text("UPDATE bank_questions SET seq = :s WHERE rowid = :r"),
+                    {"s": int(mx or 0) + 1, "r": r[0]},
+                )
+            if dup_rows:
+                logger.info("bank_questions 存量 (bank_id, seq) 撞号已重排 %d 行", len(dup_rows))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("bank_questions seq 重复行修复失败（跳过）: %s", e)
+        try:
+            # P3-7：标注会话历史重复（无则建 TOCTOU 遗留）——保留最早一条，连消息一并清理
+            dup_convs = (
+                await conn.execute(
+                    text(
+                        "SELECT rowid FROM conversations "
+                        "WHERE kind = 'annotation' AND annotation_id IS NOT NULL "
+                        "AND rowid NOT IN ("
+                        "SELECT MIN(rowid) FROM conversations "
+                        "WHERE kind = 'annotation' AND annotation_id IS NOT NULL "
+                        "GROUP BY annotation_id)"
+                    )
+                )
+            ).fetchall()
+            for r in dup_convs:
+                await conn.execute(
+                    text(
+                        "DELETE FROM messages WHERE conversation_id IN "
+                        "(SELECT id FROM conversations WHERE rowid = :r)"
+                    ),
+                    {"r": r[0]},
+                )
+                await conn.execute(
+                    text("DELETE FROM conversations WHERE rowid = :r"), {"r": r[0]}
+                )
+            if dup_convs:
+                logger.info("标注会话存量重复已清理 %d 条", len(dup_convs))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("标注会话重复行清理失败（跳过）: %s", e)
+        try:
+            # P2-9：(scope, topic, tag) 跨学科唯一——保留每组最早一行
+            await conn.execute(
+                text(
+                    "DELETE FROM learner_misconceptions WHERE rowid NOT IN ("
+                    "SELECT MIN(rowid) FROM learner_misconceptions "
+                    "GROUP BY scope, topic, tag)"
+                )
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("learner_misconceptions 重复行清理失败（跳过）: %s", e)
+        for ddl in (
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_bank_questions_bank_seq "
+            "ON bank_questions(bank_id, seq)",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_conversations_annotation "
+            "ON conversations(annotation_id) WHERE kind = 'annotation' AND annotation_id IS NOT NULL",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_learner_misconceptions_topic "
+            "ON learner_misconceptions(scope, topic, tag)",
+        ):
+            try:
+                await conn.execute(text(ddl))
+            except Exception as e:  # noqa: BLE001
+                logger.warning("兜底唯一索引创建失败（不影响启动）: %s；原因: %s", ddl, e)
+
         # v0.5.5 一次性数据修复：撤回历史误触重答流水（marker 门控，幂等）
         await _revoke_misclick_double_submissions(conn)
 

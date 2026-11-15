@@ -12,6 +12,8 @@ v0.5.1：模型自主沙箱运行须学员授权（会话级记忆）；护栏�
 import asyncio
 import json
 import logging
+from collections import deque
+from contextlib import suppress
 from typing import Any, AsyncIterator
 
 from sqlalchemy import select
@@ -53,7 +55,10 @@ ASSISTANT_SCENE_KINDS = ("reading", "exercise", "bank", "global")
 # 未授权时每个 run_sandbox_code 工具调用先向学员要一次许可，超时/拒绝即跳过——
 # 导入内容里的间接提示注入在无人值守场景下永远拿不到授权。
 CONFIRM_TIMEOUT_SECONDS = 180
-_pending_tool_confirms: dict[str, "asyncio.Future[bool]"] = {}
+# P3-9（v0.5.8 全量体检）：改为 Future 队列——同会话并发两条流同时请求授权时，
+# 原单值字典后者覆盖前者，被覆盖的旧流悬空到 180s 超时；队列让 resolve 按等待
+# 顺序逐个落结果
+_pending_tool_confirms: "dict[str, deque[asyncio.Future[bool]]]" = {}
 _sandbox_allowed_conversations: set[str] = set()
 
 # 苏格拉底护栏文本：注入练习未通过 / 未作答场景（防泄题），其余场景为空（放开直答）
@@ -381,28 +386,37 @@ def _make_confirm_callback(conv_id: str):
         if conv_id in _sandbox_allowed_conversations:
             return True
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
-        _pending_tool_confirms[conv_id] = fut
+        _pending_tool_confirms.setdefault(conv_id, deque()).append(fut)
         try:
             return await asyncio.wait_for(fut, timeout=CONFIRM_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
             logger.info("沙箱授权等待超时（conv=%s seq=%s），跳过工具执行", conv_id, seq)
             return False
         finally:
-            if _pending_tool_confirms.get(conv_id) is fut:
-                _pending_tool_confirms.pop(conv_id, None)
+            q = _pending_tool_confirms.get(conv_id)
+            if q is not None:
+                with suppress(ValueError):
+                    q.remove(fut)
+                if not q:
+                    _pending_tool_confirms.pop(conv_id, None)
 
     return confirm
 
 
 def resolve_tool_confirm(conv_id: str, approve: bool, remember: bool) -> bool:
     """落学员的授权决定。返回 False 表示当前没有等待中的授权请求。"""
-    fut = _pending_tool_confirms.get(conv_id)
+    q = _pending_tool_confirms.get(conv_id)
+    fut = q[0] if q else None
     if fut is None or fut.done():
         return False
     if approve and remember:
         _sandbox_allowed_conversations.add(conv_id)
     if not fut.done():
         fut.set_result(bool(approve))
+    if q and q[0] is fut:
+        q.popleft()
+        if not q:
+            _pending_tool_confirms.pop(conv_id, None)
     return True
 
 

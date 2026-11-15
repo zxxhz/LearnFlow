@@ -10,8 +10,9 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
-from app.models import Course, Document, MindMap
+from app.models import Annotation, Course, Document, MindMap
 from app.models.base import utcnow_iso
+from app.services.bank import _record_tombstones
 from app.schemas.common import OutlineItem
 from app.schemas.course import (
     ChapterProgress,
@@ -233,6 +234,28 @@ async def delete_course(course_id: str, db: AsyncSession = Depends(get_db)):
         tasks = [raw]
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
+    # 删除墓碑（v0.5.8 全量体检 P1-3）：课程/文档/划线三类一并记录，云端据其
+    # 真删除——否则 upsert-only 快照在下次 pull 把整门课程原样复活（单机+云端也必现）
+    c_doc_ids = [
+        d.id
+        for d in (
+            await db.scalars(select(Document).where(Document.course_id == course_id))
+        ).all()
+    ]
+    c_ann_ids = (
+        list(
+            (
+                await db.scalars(
+                    select(Annotation.id).where(Annotation.document_id.in_(c_doc_ids))
+                )
+            ).all()
+        )
+        if c_doc_ids
+        else []
+    )
+    await _record_tombstones(db, "course", [course_id])
+    await _record_tombstones(db, "document", c_doc_ids)
+    await _record_tombstones(db, "annotation", c_ann_ids)
     await pipeline.purge_course_data(db, course)
     # 课程删除后解除导图的课程关联（避免列表页残留「🎓 来自课程」的悬空标记）
     await db.execute(

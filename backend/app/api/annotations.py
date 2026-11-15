@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
@@ -11,6 +12,7 @@ from app.schemas.annotation import (
     AnnotationOut,
     AnnotationUpdate,
 )
+from app.services.bank import _record_tombstones
 
 router = APIRouter(tags=["annotations"])
 
@@ -125,7 +127,19 @@ async def annotation_conversation(annotation_id: str, db: AsyncSession = Depends
     if conv is None:
         conv = Conversation(kind="annotation", annotation_id=ann.id)
         db.add(conv)
-        await db.commit()
+        try:
+            await db.commit()
+        except IntegrityError:
+            # P3-7（v0.5.8 全量体检）：并发首访撞 ux_conversations_annotation 唯一
+            # 护栏——回滚后复用抢先创建的会话（对齐 assistant 会话既有范式）
+            await db.rollback()
+            conv = (
+                await db.scalars(
+                    select(Conversation).where(Conversation.annotation_id == annotation_id)
+                )
+            ).first()
+            if conv is None:
+                raise HTTPException(status_code=500, detail="标注会话创建失败，请重试")
     return {"conversation_id": conv.id}
 
 
@@ -141,6 +155,8 @@ async def delete_annotation(annotation_id: str, db: AsyncSession = Depends(get_d
     if conv_ids:
         await db.execute(delete(Message).where(Message.conversation_id.in_(conv_ids)))
         await db.execute(delete(Conversation).where(Conversation.id.in_(conv_ids)))
+    # 删除墓碑（v0.5.8 全量体检 P1-3）：划线随同步上云，不记墓碑会被云端快照复活
+    await _record_tombstones(db, "annotation", [annotation_id])
     await db.delete(ann)
     await db.commit()
     return {"ok": True}

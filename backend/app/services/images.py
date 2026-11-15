@@ -69,8 +69,16 @@ def compress_to_data_urls(uploads: list[UploadFile], max_count: int) -> list[str
             from PIL import ImageOps
 
             img = ImageOps.exif_transpose(img)
-            if img.mode != "RGB":
-                # PNG 透明通道 / 灰度统一转 RGB，JPEG 不支持透明
+            if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
+                # P3-11（v0.5.8 全量体检）：透明通道直接 convert("RGB") 会把透明区域
+                # 变黑底（JPEG 不支持 alpha），深色主题截图/透明公式图送视觉模型
+                # OCR 质量骤降——先合成白底再转 RGB
+                bg = Image.new("RGB", img.size, (255, 255, 255))
+                rgba = img.convert("RGBA")
+                bg.paste(rgba, mask=rgba.split()[3])
+                img = bg
+            elif img.mode != "RGB":
+                # 灰度等无透明语义的模式统一转 RGB
                 img = img.convert("RGB")
             w, h = img.size
             if max(w, h) > _MAX_SIDE:

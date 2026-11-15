@@ -5,6 +5,7 @@ import { getServerSystemVersion, triggerServerUpdate } from "../../lib/api";
 import type { ServerSystemVersion, ServerUpdateTriggerResult } from "../../lib/types";
 import { Button, Spinner , ConfirmDialog } from "../../components/ui";
 import { showToast } from "../../lib/toast";
+import { probeServerRestartThenReload } from "../../lib/serverRestartProbe";
 
 export default function ServerUpdateCard({ embedded = false }: { embedded?: boolean }) {
   const qc = useQueryClient();
@@ -43,17 +44,21 @@ export default function ServerUpdateCard({ embedded = false }: { embedded?: bool
     },
   });
 
-  // 倒计时刷新逻辑
+  // 倒计时刷新逻辑（v0.5.9 体检 P3）：归零后不再盲目 reload——容器重启耗时可能
+  // 超过预估秒数，撞上停机窗口会直接白屏；与 ServerUpdateDialog 共用指数退避探测，
+  // 目标接口保持本卡片既有口径（getServerSystemVersion），服务恢复后才刷新重连
   useEffect(() => {
     if (countdown === null) return;
-    if (countdown <= 0) {
-      window.location.reload();
-      return;
+    if (countdown > 0) {
+      const timer = setTimeout(() => {
+        setCountdown((prev) => (prev !== null ? prev - 1 : 0));
+      }, 1000);
+      return () => clearTimeout(timer);
     }
-    const timer = setTimeout(() => {
-      setCountdown((prev) => (prev !== null ? prev - 1 : 0));
-    }, 1000);
-    return () => clearTimeout(timer);
+    probeServerRestartThenReload(async () => {
+      await getServerSystemVersion();
+      return true;
+    });
   }, [countdown]);
 
   // 如果请求失败（例如纯本地单机且非云端中转环境），可安全降级不阻碍主界面
@@ -210,7 +215,7 @@ export default function ServerUpdateCard({ embedded = false }: { embedded?: bool
                 <span>服务端正在拉取最新镜像并重启，请稍候…</span>
               </div>
               <div className="mt-2 text-2xl font-bold text-blue-600 dark:text-blue-400">
-                {countdown} 秒后自动刷新网页
+                {countdown > 0 ? `${countdown} 秒后自动刷新网页` : "正在探测服务恢复，恢复后自动刷新…"}
               </div>
               {updateMsg && (
                 <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{updateMsg}</div>

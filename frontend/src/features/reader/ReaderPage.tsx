@@ -424,6 +424,8 @@ export default function ReaderPage() {
         return;
       }
       if (e.key === "Escape") {
+        // 输入法合成态的 Esc 是取消候选词，不触发阅读页各级面板关闭（体检 P2）
+        if (e.isComposing || e.keyCode === 229) return;
         if (tocOpen) {
           setTocOpen(false);
           return;

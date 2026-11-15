@@ -17,6 +17,7 @@ import ReplaceBankModal from "./ReplaceBankModal";
 import MarkdownLite from "../../components/MarkdownLite";
 import AssistantPanel from "../../components/AssistantPanel";
 import { createStreamFlusher } from "../../lib/streamFlusher";
+import { markPageAssistantOpen } from "../../lib/pageAssistant";
 import type { AssistantSceneContext, Bank, BankAttemptResult, BankQuestion, BankRound, BankWrongQuestion } from "../../lib/types";
 
 const md = new MarkdownIt({ html: false, linkify: true, breaks: false });
@@ -106,6 +107,8 @@ export default function BankDrillPage() {
     assistantCloseTimerRef.current = setTimeout(() => {
       assistantCloseTimerRef.current = null;
       setAssistant(null);
+      // 页内面板已收起：解除标记，全局 Ctrl+J 恢复可用（v0.5.9 体检 P3）
+      markPageAssistantOpen(false);
       setAssistantClosing(false);
     }, 300);
   };
@@ -116,7 +119,27 @@ export default function BankDrillPage() {
     }
     setAssistantClosing(false);
     setAssistant({ scene, label });
+    // 标记页内面板打开：Layout 的全局 Ctrl+J 据此避让，不再叠开双层面板（体检 P3）
+    markPageAssistantOpen(true);
   };
+
+  // 页内助教面板 Esc 关闭出口（v0.5.9 体检 P3）：全局面板有 Esc 出口，页内面板此前
+  // 只能点 ✕ 关闭；输入法合成态的 Esc 是取消候选词，不关闭
+  useEffect(() => {
+    if (!assistant) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.isComposing || e.keyCode === 229) return;
+      if (assistantClosing) return;
+      closeAssistant();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [assistant, assistantClosing]);
+
+  // 卸载时清除页内助教标记：离开页面后全局 Ctrl+J 不再被误判避让（v0.5.9 体检 P3）
+  useEffect(() => {
+    return () => markPageAssistantOpen(false);
+  }, []);
 
   const handleAddSuccess = (addedCount: number) => {
     qc.invalidateQueries({ queryKey: ["banks"] });
@@ -801,8 +824,12 @@ function WrongQuestionItem({
         ctrl.signal
       );
     } catch (e) {
-      flusher.flushNow();
-      if ((e as Error).name !== "AbortError") {
+      if ((e as Error).name === "AbortError") {
+        // 用户主动中止：丢弃缓冲，不把半截解析当终稿回调落草稿
+        //（v0.5.2 体检 P2，与 BankQuestionCard 同口径）
+        flusher.cancel();
+      } else {
+        flusher.flushNow();
         setAiThinking(false);
         setAiStreaming(false);
         setAiError(`网络或服务异常：${(e as Error).message}`);

@@ -277,8 +277,21 @@ class RelayDatabase:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
+            # 墓碑过滤前置（v0.5.8 全量体检 P2-3）：此前仅凭本包携带的墓碑过滤
+            # banks/questions/attempts/mistakes，另一设备尚未 pull 删除时 push 的
+            # 旧快照会把已删条目复活——持久化墓碑表全集一并拦截（六类资源统一）
+            cursor.execute("SELECT object_id FROM sync_tombstones")
+            _tomb_ids: set[str] = {
+                str(t.get("object_id") or "")
+                for t in (payload.get("tombstones") or [])
+                if isinstance(t, dict) and t.get("object_id")
+            } | {str(r[0]) for r in cursor.fetchall() if r[0]}
+
             # 1. Courses
-            courses = payload.get("courses") or []
+            courses = [
+                c for c in (payload.get("courses") or [])
+                if str(c.get("id") or "") not in _tomb_ids
+            ]
             for c in courses:
                 cid = c.get("id")
                 if not cid:
@@ -316,8 +329,13 @@ class RelayDatabase:
                 )
                 counts["courses"] += 1
 
-            # 2. Documents
-            documents = payload.get("documents") or []
+            # 2. Documents（课程已墓碑的文档一并跳过，P1-3 同口径）
+            documents = [
+                d
+                for d in (payload.get("documents") or [])
+                if str(d.get("id") or "") not in _tomb_ids
+                and str(d.get("course_id") or "") not in _tomb_ids
+            ]
             for d in documents:
                 did = d.get("id")
                 cid = d.get("course_id")
@@ -358,12 +376,7 @@ class RelayDatabase:
 
             # 3. Question Banks
             banks = payload.get("banks") or payload.get("question_banks") or []
-            # 墓碑先行过滤（v0.5.8 体检 P1）：已删条目不得再经 upsert 复活
-            _tomb_ids = {
-                str(t.get("object_id") or "")
-                for t in (payload.get("tombstones") or [])
-                if isinstance(t, dict) and t.get("object_id")
-            }
+            # 墓碑先行过滤（v0.5.8 体检 P1；P2-3 起全集前置见函数开头）
             banks = [b for b in banks if str(b.get("id") or "") not in _tomb_ids]
             for b in banks:
                 bid = b.get("id")
@@ -451,24 +464,65 @@ class RelayDatabase:
                 for t in (payload.get("tombstones") or [])
                 if isinstance(t, dict) and t.get("kind") == "bank" and t.get("object_id")
             ]
-            for chunk in (q_tombs[i : i + 500] for i in range(0, len(q_tombs), 500)):
+            c_tombs = [
+                str(t.get("object_id"))
+                for t in (payload.get("tombstones") or [])
+                if isinstance(t, dict) and t.get("kind") == "course" and t.get("object_id")
+            ]
+            d_tombs = [
+                str(t.get("object_id"))
+                for t in (payload.get("tombstones") or [])
+                if isinstance(t, dict) and t.get("kind") == "document" and t.get("object_id")
+            ]
+            mm_tombs = [
+                str(t.get("object_id"))
+                for t in (payload.get("tombstones") or [])
+                if isinstance(t, dict) and t.get("kind") == "mindmap" and t.get("object_id")
+            ]
+            ann_tombs = [
+                str(t.get("object_id"))
+                for t in (payload.get("tombstones") or [])
+                if isinstance(t, dict) and t.get("kind") == "annotation" and t.get("object_id")
+            ]
+
+            def _tomb_chunks(ids: list[str]):
+                for i in range(0, len(ids), 500):
+                    yield ids[i : i + 500]
+
+            for chunk in _tomb_chunks(q_tombs):
+                ph = ",".join("?" * len(chunk))
+                # 孤儿作答清理（v0.5.8 全量体检 P2-8）：只删题不清作答，孤儿流水会
+                # 虚增云端 attempts/accuracy 统计并随 pull 持续下发给各端
+                cursor.execute(f"DELETE FROM bank_attempts WHERE question_id IN ({ph})", chunk)
+                cursor.execute(f"DELETE FROM bank_questions WHERE id IN ({ph})", chunk)
+                cursor.execute(f"DELETE FROM mistakes WHERE question_id IN ({ph})", chunk)
+            for chunk in _tomb_chunks(b_tombs):
+                ph = ",".join("?" * len(chunk))
+                cursor.execute(f"DELETE FROM bank_attempts WHERE bank_id IN ({ph})", chunk)
+                cursor.execute(f"DELETE FROM bank_questions WHERE bank_id IN ({ph})", chunk)
+                cursor.execute(f"DELETE FROM question_banks WHERE id IN ({ph})", chunk)
+                cursor.execute(f"DELETE FROM mistakes WHERE bank_id IN ({ph})", chunk)
+            # 课程/文档/导图/划线域真删（v0.5.8 全量体检 P1-3）：此前这些域只 upsert
+            # 不删，删除语义传不到云端，云端 Web 视图与统计永久失真
+            for chunk in _tomb_chunks(c_tombs):
+                ph = ",".join("?" * len(chunk))
                 cursor.execute(
-                    f"DELETE FROM bank_questions WHERE id IN ({','.join('?' * len(chunk))})",
+                    f"DELETE FROM annotations WHERE document_id IN "
+                    f"(SELECT id FROM documents WHERE course_id IN ({ph}))",
                     chunk,
                 )
-                cursor.execute(
-                    f"DELETE FROM mistakes WHERE question_id IN ({','.join('?' * len(chunk))})",
-                    chunk,
-                )
-            for chunk in (b_tombs[i : i + 500] for i in range(0, len(b_tombs), 500)):
-                cursor.execute(
-                    f"DELETE FROM question_banks WHERE id IN ({','.join('?' * len(chunk))})",
-                    chunk,
-                )
-                cursor.execute(
-                    f"DELETE FROM mistakes WHERE bank_id IN ({','.join('?' * len(chunk))})",
-                    chunk,
-                )
+                cursor.execute(f"DELETE FROM documents WHERE course_id IN ({ph})", chunk)
+                cursor.execute(f"DELETE FROM courses WHERE id IN ({ph})", chunk)
+            for chunk in _tomb_chunks(d_tombs):
+                ph = ",".join("?" * len(chunk))
+                cursor.execute(f"DELETE FROM annotations WHERE document_id IN ({ph})", chunk)
+                cursor.execute(f"DELETE FROM documents WHERE id IN ({ph})", chunk)
+            for chunk in _tomb_chunks(mm_tombs):
+                ph = ",".join("?" * len(chunk))
+                cursor.execute(f"DELETE FROM mindmaps WHERE id IN ({ph})", chunk)
+            for chunk in _tomb_chunks(ann_tombs):
+                ph = ",".join("?" * len(chunk))
+                cursor.execute(f"DELETE FROM annotations WHERE id IN ({ph})", chunk)
             for t in payload.get("tombstones") or []:
                 oid = str(t.get("object_id") or "")
                 if not oid:
@@ -478,8 +532,9 @@ class RelayDatabase:
                     "ON CONFLICT(object_id) DO NOTHING",
                     (oid, str(t.get("kind") or ""), str(t.get("deleted_at") or _now_iso())),
                 )
-            if q_tombs or b_tombs:
-                counts["tombstones_applied"] = len(q_tombs) + len(b_tombs)
+            _all_tombs = q_tombs + b_tombs + c_tombs + d_tombs + mm_tombs + ann_tombs
+            if _all_tombs:
+                counts["tombstones_applied"] = len(_all_tombs)
             for m in mistakes:
                 mid = m.get("id") or f"{m.get('bank_id')}_{m.get('question_id')}"
                 if not mid:
@@ -526,7 +581,16 @@ class RelayDatabase:
 
             # 5b. Bank Attempts
             attempts = payload.get("bank_attempts") or payload.get("attempts") or []
-            attempts = [a for a in attempts if str(a.get("id") or "") not in _tomb_ids]
+            # 作答没有独立墓碑（delete_bank 级联物理删除且只记 bank/bank_question
+            # 墓碑）——旧设备 push 的作答若 bank_id/question_id 已墓碑，同样必须拦截，
+            # 否则已删库/已删题的孤儿流水经 upsert 复活并虚增云端统计（P2-8 对偶面）
+            attempts = [
+                a
+                for a in attempts
+                if str(a.get("id") or "") not in _tomb_ids
+                and str(a.get("bank_id") or "") not in _tomb_ids
+                and str(a.get("question_id") or "") not in _tomb_ids
+            ]
             for att in attempts:
                 aid = att.get("id")
                 bid = att.get("bank_id")
@@ -566,7 +630,10 @@ class RelayDatabase:
                 counts["bank_attempts"] += 1
 
             # 6. Mindmaps
-            mindmaps = payload.get("mindmaps") or []
+            mindmaps = [
+                mm for mm in (payload.get("mindmaps") or [])
+                if str(mm.get("id") or "") not in _tomb_ids
+            ]
             for mm in mindmaps:
                 mmid = mm.get("id")
                 if not mmid:
@@ -597,7 +664,12 @@ class RelayDatabase:
                 counts["mindmaps"] += 1
 
             # 7. Annotations
-            annotations = payload.get("annotations") or []
+            annotations = [
+                a
+                for a in (payload.get("annotations") or [])
+                if str(a.get("id") or "") not in _tomb_ids
+                and str(a.get("document_id") or "") not in _tomb_ids
+            ]
             for a in annotations:
                 aid = a.get("id")
                 did = a.get("document_id")
@@ -676,6 +748,11 @@ class RelayDatabase:
         """获取全量已存储的同步数据。"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+
+            # 一致性快照（v0.5.8 全量体检 P2-10）：autocommit 下十余条 SELECT 各自
+            # 独立快照，并发 push 提交时可产出「新题缺旧作答」型撕裂 pull 包——
+            # 显式 BEGIN 让全部读取共享同一 WAL 快照（with 退出时统一 commit）
+            conn.execute("BEGIN")
 
             # courses
             cursor.execute("SELECT raw_json FROM courses ORDER BY created_at DESC")
@@ -1309,26 +1386,30 @@ class RelayDatabase:
 
     def delete_misconception_sync(self, misconception_id: str) -> bool:
         """从学习者画像中移除单个认知盲区。"""
-        current = self.get_learner_profile_sync()
-        misconceptions = current.get("misconceptions", [])
-        new_misconceptions = [m for m in misconceptions if m.get("id") != misconception_id]
-        current["misconceptions"] = new_misconceptions
-        now_str = _now_iso()
-        current["updated_at"] = now_str
+        # 全程持 _profile_lock（v0.5.8 全量体检 P3-6）：读-改-写画像与并发的
+        # update_learner_profile_sync / save_sync_payload 画像整包写交错时，
+        # 后写者基于旧快照整包覆盖，先删的盲区复活或另一请求的修改丢失
+        with self._profile_lock:
+            current = self.get_learner_profile_sync()
+            misconceptions = current.get("misconceptions", [])
+            new_misconceptions = [m for m in misconceptions if m.get("id") != misconception_id]
+            current["misconceptions"] = new_misconceptions
+            now_str = _now_iso()
+            current["updated_at"] = now_str
 
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                INSERT INTO learner_profile (id, data, updated_at)
-                VALUES ('local', ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    data = excluded.data,
-                    updated_at = excluded.updated_at
-                """,
-                (json.dumps(current, ensure_ascii=False), now_str),
-            )
-            conn.commit()
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    INSERT INTO learner_profile (id, data, updated_at)
+                    VALUES ('local', ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        data = excluded.data,
+                        updated_at = excluded.updated_at
+                    """,
+                    (json.dumps(current, ensure_ascii=False), now_str),
+                )
+                conn.commit()
         return True
 
     async def delete_misconception(self, misconception_id: str) -> bool:
@@ -1488,8 +1569,11 @@ class RelayDatabase:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             # 读题放进与写同一事务（v0.5.8 体检 P2）：SELECT 在 autocommit 下
-            # 与并发改题交错会读到半新状态
-            conn.execute("BEGIN")
+            # 与并发改题交错会读到半新状态。改 BEGIN IMMEDIATE（v0.5.8 全量体检
+            # P2-7）：deferred 读事务在并发 push 大事务提交后升级写会抛
+            # SQLITE_BUSY_SNAPSHOT（busy_timeout 不适用）→ 刷题提交间歇性 500；
+            # 立即事务一开始就拿写锁，靠 busy_timeout 排队等待
+            conn.execute("BEGIN IMMEDIATE")
             cursor.execute("SELECT * FROM bank_questions WHERE id = ?", (question_id,))
             row = cursor.fetchone()
             if not row:
@@ -1583,7 +1667,8 @@ class RelayDatabase:
     ) -> dict[str, Any]:
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            conn.execute("BEGIN")
+            # BEGIN IMMEDIATE（P2-7 同口径）：deferred 读事务升级写撞 BUSY_SNAPSHOT
+            conn.execute("BEGIN IMMEDIATE")
             cursor.execute("SELECT * FROM bank_questions WHERE id = ?", (question_id,))
             row = cursor.fetchone()
             if not row:

@@ -6,6 +6,7 @@ import type { UpdateCheckResult, ServerSystemVersion } from "../lib/types";
 import { useTheme } from "../lib/theme";
 import { safeSessionStorage, safeStorage } from "../lib/safeStorage";
 import { isTauri, openExternalUrl } from "../lib/updater";
+import { isPageAssistantOpen } from "../lib/pageAssistant";
 import UpdateDialog from "./UpdateDialog";
 import ServerUpdateDialog from "./ServerUpdateDialog";
 import AssistantPanel from "./AssistantPanel";
@@ -370,6 +371,9 @@ export default function Layout() {
         // v0.5.8 体检 P2：沉浸式页面（阅读/导图画布）有自己的页内会话面板——
         // 此前 Ctrl+J 不避让，全局面板会盖住页内面板形成双面板叠加与一次 Esc 双关
         if (isImmersive) return;
+        // v0.5.9 体检 P3：题库刷题/错题本等页面同样有页内助教面板（非沉浸式路由），
+        // 页内面板打开时标记为真，全局面板不再叠开（页内面板自带 Esc 关闭出口）
+        if (isPageAssistantOpen()) return;
         const target = e.target as HTMLElement | null;
         if (
           target &&
@@ -383,6 +387,8 @@ export default function Layout() {
         e.preventDefault();
         openGlobalAssistant();
       } else if (e.key === "Escape" && assistantOpen) {
+        // 输入法合成态的 Esc 是取消候选词，不能顺手关掉面板（体检 P2）
+        if (e.isComposing || e.keyCode === 229) return;
         closeGlobalAssistant();
       }
     };

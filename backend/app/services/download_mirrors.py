@@ -178,6 +178,24 @@ def _get_preset(mirror_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _validate_mirror_prefix(prefix: str) -> None:
+    """镜像前缀基础校验：协议白名单 + 仿冒官方域拦截（v0.5.3 体检 P2）。
+
+    仿冒官方域（hostname 含 github.com 等子串，如 github.com.evil.example）会让
+    仿冒源进入下载白名单与 latest.json 信息源；安装包有 SHA-256 锚点兜底，
+    但更新提示可被钓鱼利用，官方系域名不允许出现在第三方镜像 host 的任意位置。
+    （v0.5.8 全量体检 P3-3：提取为公共函数，add/update 两路径强制同口径——
+    update 路径此前漏检，仿冒前缀可经 PUT 写入缓存并立即生效）"""
+    if not (prefix.startswith("http://") or prefix.startswith("https://")):
+        raise ValueError("镜像地址前缀必须以 http:// 或 https:// 开头")
+    from urllib.parse import urlparse as _urlparse
+
+    mirror_host = (_urlparse(prefix).hostname or "").lower()
+    for official in ("github.com", "raw.githubusercontent.com", "objects.githubusercontent.com", "api.github.com"):
+        if official in mirror_host:
+            raise ValueError(f"镜像地址不能包含官方域名「{official}」（疑似仿冒），请使用真正的加速服务域名")
+
+
 def add_custom_mirror(name: str, prefix: str, desc: str = "") -> dict[str, Any]:
     """添加用户自定义镜像源。
 
@@ -187,17 +205,7 @@ def add_custom_mirror(name: str, prefix: str, desc: str = "") -> dict[str, Any]:
     prefix = (prefix or "").strip()
     if not name:
         raise ValueError("镜像名称不能为空")
-    if not (prefix.startswith("http://") or prefix.startswith("https://")):
-        raise ValueError("镜像地址前缀必须以 http:// 或 https:// 开头")
-    # 仿冒官方域拦截（v0.5.3 体检 P2）：hostname 含官方域名子串（如 github.com.evil.example）
-    # 会让仿冒源进入下载白名单与 latest.json 信息源；安装包有 SHA-256 锚点兜底，
-    # 但更新提示可被钓鱼利用，官方系域名不允许出现在第三方镜像 host 的任意位置
-    from urllib.parse import urlparse as _urlparse
-
-    mirror_host = (_urlparse(prefix).hostname or "").lower()
-    for official in ("github.com", "raw.githubusercontent.com", "objects.githubusercontent.com", "api.github.com"):
-        if official in mirror_host:
-            raise ValueError(f"镜像地址不能包含官方域名「{official}」（疑似仿冒），请使用真正的加速服务域名")
+    _validate_mirror_prefix(prefix)
     if not prefix.endswith("/"):
         prefix += "/"
 
@@ -262,8 +270,8 @@ def update_custom_mirror(mirror_id: str, name: str, prefix: str, desc: str = "")
     prefix = (prefix or "").strip()
     if not name:
         raise ValueError("镜像名称不能为空")
-    if not (prefix.startswith("http://") or prefix.startswith("https://")):
-        raise ValueError("镜像地址前缀必须以 http:// 或 https:// 开头")
+    # P3-3：与 add 同口径校验（协议 + 仿冒官方域），堵住经 PUT 写入仿冒前缀的缺口
+    _validate_mirror_prefix(prefix)
     if not prefix.endswith("/"):
         prefix += "/"
 

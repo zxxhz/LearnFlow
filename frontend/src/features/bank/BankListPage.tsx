@@ -177,7 +177,9 @@ export default function BankListPage() {
           onChange={(e) => setRenameValue(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && renameValue.trim()) rename.mutate({ id: renameTarget!.id, name: renameValue.trim() });
-            if (e.key === "Escape") setRenameTarget(null);
+            // 输入法合成态的 Esc 是取消候选词，不退出重命名（体检 P2；React 18 合成事件
+            // 类型未暴露 isComposing，从原生事件取）
+            if (e.key === "Escape" && !(e.nativeEvent.isComposing || e.keyCode === 229)) setRenameTarget(null);
           }}
           autoFocus
           aria-label="题库名称"

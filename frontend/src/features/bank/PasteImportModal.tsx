@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Modal, Button, Textarea, Input, Spinner, Badge } from "../../components/ui";
+import { Modal, Button, Textarea, Input, Spinner, Badge, ModalCancelButton } from "../../components/ui";
 import { api } from "../../lib/api";
 import type { Bank, ParsedTextQuestionItem } from "../../lib/types";
 
@@ -125,9 +125,8 @@ export default function PasteImportModal({ open, onClose, onSuccess }: Props) {
             />
 
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="ghost" onClick={handleReset} className="text-xs">
-                取消
-              </Button>
+              {/* 取消与 Esc/✕/遮罩同口径：未入库内容二次确认后再丢弃（v0.5.9 体检 P2） */}
+              <ModalCancelButton variant="ghost" className="text-xs" />
               <Button
                 variant="primary"
                 disabled={isParsing || !rawText.trim()}
@@ -246,9 +245,7 @@ export default function PasteImportModal({ open, onClose, onSuccess }: Props) {
                 ← 重新粘贴
               </Button>
               <div className="flex items-center gap-2">
-                <Button variant="secondary" onClick={handleReset} className="text-xs">
-                  取消
-                </Button>
+                <ModalCancelButton className="text-xs" />
                 <Button
                   variant="primary"
                   disabled={isImporting || questions.length === 0}

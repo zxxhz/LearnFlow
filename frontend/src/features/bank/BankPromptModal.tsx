@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../lib/api";
-import { Button, Modal, Spinner, Textarea } from "../../components/ui";
+import { Button, Modal, Spinner, Textarea, ModalCancelButton } from "../../components/ui";
 import type { Bank } from "../../lib/types";
 
 interface Props {
@@ -174,9 +174,8 @@ export default function BankPromptModal({ open, bank, onClose, onSaved }: Props)
         </div>
 
         <div className="mt-4 flex justify-end gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
-          <Button variant="secondary" onClick={onClose}>
-            取消
-          </Button>
+          {/* 取消与 Esc/✕/遮罩同口径：未保存修改时二次确认（v0.5.9 体检 P2） */}
+          <ModalCancelButton />
           <Button disabled={save.isPending || polish.isPending} onClick={() => save.mutate()}>
             {save.isPending ? "保存中…" : "保存设置"}
           </Button>

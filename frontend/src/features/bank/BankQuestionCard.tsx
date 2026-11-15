@@ -127,19 +127,22 @@ export default function BankQuestionCard({
       setResult(res.recalibrated_result);
     } else if (result) {
       // 未触发重判（如仅改难度）或用户取消自动重判：同步 result 的答案字段，
-      // 保证选项高亮与再次打开纠错弹窗回填的是新答案而非旧值
+      // 保证选项高亮与再次打开纠错弹窗回填的是新答案而非旧值。
+      // answer 为空时保留旧值（与父级 BankDrillPage 口径一致），replace 前保证是 string
+      //（v0.5.9 体检 P3）
+      const nextAnswer = res.question.answer ?? result.answer;
       setResult({
         ...result,
-        answer: res.question.answer,
+        answer: nextAnswer,
         correct_answer:
           res.question.answer_raw ||
           (res.question.qtype === "judge"
-            ? res.question.answer === "A"
+            ? nextAnswer === "A"
               ? "正确"
               : "错误"
-            : res.question.answer.replace(/,/g, "、")),
-        answer_raw: res.question.answer_raw,
-        explanation: res.question.explanation,
+            : nextAnswer.replace(/,/g, "、")),
+        answer_raw: res.question.answer_raw ?? result.answer_raw,
+        explanation: res.question.explanation ?? result.explanation,
       });
     }
     onQuestionUpdated?.(res.question, res.recalibrated_result ?? null);

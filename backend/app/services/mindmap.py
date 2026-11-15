@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator
 from sqlalchemy import desc, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.base import utcnow_iso
 from app.models.mindmap import MindMap
 from app.schemas.mindmap import (
     MINDMAP_SOURCES,
@@ -21,6 +22,7 @@ from app.schemas.mindmap import (
     MindMapSummary,
     MindMapUpdate,
 )
+from app.services.bank import _record_tombstones
 from app.services.llm import create_adapter_from_settings, extract_json
 from app.services.prompt import render_prompt
 from app.services.profile import discipline_for_course, discipline_for_course_id, format_profile_for_prompt
@@ -472,6 +474,9 @@ async def update_mindmap(db: AsyncSession, mindmap_id: str, data: MindMapUpdate)
         if data.settings is not None:
             merged = {**(mm.settings or {}), **data.settings}
             mm.settings = sanitize_settings(merged, mm.root)
+        # 编辑时间戳（v0.5.8 全量体检 P1-5）：pull 合并的「新者胜」护栏依赖本地
+        # 写路径可靠刷新 updated_at，漏刷会让本地编辑被云端旧快照回退
+        mm.updated_at = utcnow_iso()
         await db.commit()
         await db.refresh(mm)
         return mm
@@ -484,6 +489,9 @@ async def delete_mindmap(db: AsyncSession, mindmap_id: str) -> bool:
         mm = await db.get(MindMap, mindmap_id)
         if not mm:
             return False
+        # 删除墓碑（v0.5.8 全量体检 P1-3）：否则云端 upsert-only 快照在下次 pull
+        # 把整幅导图原样复活
+        await _record_tombstones(db, "mindmap", [mindmap_id])
         await db.delete(mm)
         await db.commit()
         return True
@@ -950,6 +958,8 @@ async def stream_mindmap_agent(
                             # delete_nodes 后悬空横向连线清理（v0.5.8 体检 P2）：
                             # PUT 与 pull 路径都有强制 sanitize_settings，Agent 路径此前漏掉
                             fresh.settings = sanitize_settings(fresh.settings, fresh.root)
+                            # Agent 树修改同样刷新新者胜时间戳（P1-5 同口径）
+                            fresh.updated_at = utcnow_iso()
                             await fresh_db.commit()
                             mindmap.root = fresh.root
                             persisted = True
@@ -1081,6 +1091,8 @@ async def stream_node_detail(
                     if target is not None:
                         target["detail"] = full_text.strip()
                         fresh.root = normalize_node(fresh.root, fresh.title)
+                        # 节点详情回写同样刷新新者胜时间戳（P1-5 同口径）
+                        fresh.updated_at = utcnow_iso()
                         await fresh_db.commit()
                         persisted = True
     except Exception:

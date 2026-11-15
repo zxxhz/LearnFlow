@@ -1498,6 +1498,8 @@ async def _tool_import_course_material(
 
             if meta is not None:
                 doc.summary = getattr(meta, "summary", "") or ""
+                # 内容变更刷新新者胜时间戳（v0.5.8 全量体检 P1-5 同口径）
+                doc.updated_at = utcnow_iso()
                 kp_extracted += len(getattr(meta, "knowledge_points", []) or [])
                 rows = (
                     await db.scalars(select(Section).where(Section.document_id == doc.id))

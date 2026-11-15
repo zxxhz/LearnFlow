@@ -18,6 +18,11 @@ from app.services.llm.openai_compat import OpenAICompatAdapter
 
 logger = logging.getLogger(__name__)
 
+# 工具执行统一兜底超时（v0.5.8 全量体检 P3-10）：个别工具（绘图）自带 10s 短超时，
+# 其余无界——create_course 含 LLM 重试链路（3 次 × 180s）加生成落库的最坏时长
+# 仍在限内，上游卡死时由 wait_for 中止并回错误事件，SSE 不再永久无帧
+_TOOL_TIMEOUT_SECONDS = 900.0
+
 
 def _summarize_args(args: dict[str, Any]) -> str:
     """确认卡用的参数摘要：取前几个非空参数值截断拼接，避免整段内容上卡。"""
@@ -128,7 +133,20 @@ async def stream_agent_with_tools(
             else:
                 yield {"type": "tool_call", "name": fn_name, "args": args}
 
-            result = await execute_tool(fn_name, args, db=db, context=context)
+            # P3-10（v0.5.8 全量体检）：execute_tool 无统一超时（仅绘图工具自带 10s），
+            # 上游卡死会让 SSE 永久无帧。15 分钟兜底上限——create_course 含 LLM
+            # 重试链路（3 次 × 180s）加生成落库的最坏时长仍在限内
+            try:
+                result = await asyncio.wait_for(
+                    execute_tool(fn_name, args, db=db, context=context),
+                    timeout=_TOOL_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("工具执行超时中止: %s", fn_name)
+                result = {
+                    "status": "error",
+                    "message": "工具执行超时（15 分钟上限），已中止；请把任务拆小后重试。",
+                }
             yield {"type": "tool_result", "name": fn_name, "result": result}
 
             # 大体积二进制产物（如 SVG 图像）只走前端事件，不进 LLM 历史，防止撑爆上下文

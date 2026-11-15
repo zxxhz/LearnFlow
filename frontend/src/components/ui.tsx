@@ -1,5 +1,5 @@
 // 通用 UI 原语：全应用一致的轻量组件集
-import { ReactNode, useEffect, useRef, useState } from "react";
+import { createContext, ReactNode, useContext, useEffect, useRef, useState } from "react";
 
 type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 
@@ -129,6 +129,8 @@ if (typeof window !== "undefined") {
     "keydown",
     (e) => {
       if (e.key !== "Escape" || _escStack.length === 0) return;
+      // 输入法合成态的 Esc 是取消候选词，不关闭栈顶模态/菜单（体检 P2）
+      if (e.isComposing || e.keyCode === 229) return;
       e.stopImmediatePropagation();
       e.preventDefault();
       _escStack[_escStack.length - 1].onEsc();
@@ -136,6 +138,10 @@ if (typeof window !== "undefined") {
     true,
   );
 }
+
+// Modal 脏数据守卫关闭入口的 context：guardedClose 定义在 Modal 内部，页脚「取消」
+// 按钮经 ModalCancelButton 消费，与 Esc/✕/遮罩同口径（v0.5.9 体检 P2）
+const ModalGuardedCloseContext = createContext<() => void>(() => {});
 
 export function Modal({
   open,
@@ -291,7 +297,11 @@ export function Modal({
             ✕
           </button>
         </div>
-        {children}
+        {/* guardedClose 经 context 下发：页脚「取消」按钮用 ModalCancelButton 即可与
+            Esc/✕/遮罩同口径走脏数据二次确认（v0.5.9 体检 P2） */}
+        <ModalGuardedCloseContext.Provider value={guardedClose}>
+          {children}
+        </ModalGuardedCloseContext.Provider>
         {confirmDiscard && (
           <ConfirmDialog
             open
@@ -307,6 +317,24 @@ export function Modal({
         )}
       </div>
     </div>
+  );
+}
+
+/** Modal 页脚「取消」按钮：onClick 走所在 Modal 的 guardedClose（脏数据二次确认），
+ *  与 Esc/✕/遮罩同口径，不再绕过 confirmCloseIf（v0.5.9 体检 P2）。
+ *  仅可在 <Modal> 的 children 内使用。 */
+export function ModalCancelButton({
+  variant = "secondary",
+  className = "",
+}: {
+  variant?: ButtonVariant;
+  className?: string;
+}) {
+  const guardedClose = useContext(ModalGuardedCloseContext);
+  return (
+    <Button variant={variant} className={className} onClick={guardedClose}>
+      取消
+    </Button>
   );
 }
 

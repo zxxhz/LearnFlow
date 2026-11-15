@@ -5,6 +5,7 @@ import type { ServerSystemVersion, ServerUpdateTriggerResult } from "../lib/type
 import { Button, Modal, Spinner } from "./ui";
 import { triggerServerUpdate } from "../lib/api";
 import { showToast } from "../lib/toast";
+import { probeServerRestartThenReload } from "../lib/serverRestartProbe";
 import MarkdownLite from "./MarkdownLite";
 
 export default function ServerUpdateDialog({
@@ -30,27 +31,26 @@ export default function ServerUpdateDialog({
       return () => clearTimeout(timer);
     }
     setReconnecting(true);
-    let cancelled = false;
-    let delay = 2000;
-    const poll = async () => {
-      while (!cancelled) {
-        try {
-          const res = await fetch("/api/relay/system/version", { cache: "no-store" });
-          if (res.ok) {
-            window.location.reload();
-            return;
-          }
-        } catch {
-          /* 服务仍在重启，继续退避重试 */
-        }
-        await new Promise((r) => setTimeout(r, delay));
-        delay = Math.min(delay * 2, 60_000);
+    // 探测目标与旧实现一致（/api/relay/system/version），退避轮询抽到共享 helper。
+    // 总时限 10 分钟（v0.5.9 体检 P3）：更新失败/卡死时不再永久锁死弹窗，
+    // 超时解锁关闭并提示手动检查
+    const ac = new AbortController();
+    probeServerRestartThenReload(
+      async () => {
+        const res = await fetch("/api/relay/system/version", { cache: "no-store" });
+        return res.ok;
+      },
+      {
+        signal: ac.signal,
+        timeoutMs: 10 * 60_000,
+        onTimeout: () => {
+          setReconnecting(false);
+          setUpdating(false);
+          showToast("❌ 服务端更新未完成，请稍后检查服务器状态");
+        },
       }
-    };
-    poll();
-    return () => {
-      cancelled = true;
-    };
+    );
+    return () => ac.abort();
   }, [countdown]);
 
   if (!update || !update.has_update) return null;

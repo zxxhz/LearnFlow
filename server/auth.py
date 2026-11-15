@@ -200,6 +200,7 @@ def render_token_entry_html(title: str = "访问鉴权 · LearnFlow 云端中转
         <h1>中转服务访问验证</h1>
         <p class="subtitle">该 LearnFlow 云端中转服务端已启用安全令牌验证，请输入访问 Token 授权此设备。</p>
         {error_html}
+        <div id="client-error" class="error-banner" style="display:none;"></div>
         <form id="token-form" onsubmit="handleTokenSubmit(event)">
             <div class="form-group">
                 <label for="token-input">访问令牌 (Server Token)</label>
@@ -216,14 +217,26 @@ def render_token_entry_html(title: str = "访问鉴权 · LearnFlow 云端中转
             e.preventDefault();
             var token = document.getElementById('token-input').value.trim();
             if (!token) return;
-            // 将 Token 存入 cookie 并以 query 参数重定向验证
-            document.cookie = "lf_server_token=" + encodeURIComponent(token) + "; path=/; max-age=2592000; SameSite=Lax";
-            try {{
-                localStorage.setItem("lf_access_token", token);
-            }} catch(e) {{}}
-            var url = new URL(window.location.href);
-            url.searchParams.set('token', token);
-            window.location.href = url.toString();
+            var errBox = document.getElementById('client-error');
+            errBox.style.display = 'none';
+            var btn = e.target.querySelector('button');
+            if (btn) {{ btn.disabled = true; btn.textContent = '正在验证...'; }}
+            // P1-2：不再把 Token 放进 URL query（query 会落入浏览器历史与服务端
+            // 访问日志）。先经 /health 携 header 校验，成功后仅写 Cookie 并重载
+            fetch('/health', {{ headers: {{ 'x-server-token': token }} }})
+                .then(function (resp) {{
+                    if (!resp.ok) {{
+                        throw new Error(resp.status === 401 ? '访问令牌错误或已失效' : '服务端返回 HTTP ' + resp.status);
+                    }}
+                    document.cookie = "lf_server_token=" + encodeURIComponent(token) + "; path=/; max-age=2592000; SameSite=Lax";
+                    try {{ localStorage.setItem("lf_access_token", token); }} catch (err) {{}}
+                    window.location.reload();
+                }})
+                .catch(function (err) {{
+                    if (btn) {{ btn.disabled = false; btn.textContent = '立即验证并进入'; }}
+                    errBox.textContent = '⚠ ' + err.message;
+                    errBox.style.display = 'block';
+                }});
         }}
     </script>
 </body>
@@ -344,6 +357,17 @@ class RelayAuthMiddleware:
                 resp = HTMLResponse(
                     status_code=401,
                     content=render_token_entry_html(error_msg=error_reason),
+                    headers={
+                        # P3-2：鉴权页含内联 JS，CSP 需放开 unsafe-inline 并自带
+                        # 头部（外层 SecurityHeadersMiddleware 对已有 CSP 不覆盖）
+                        "Content-Security-Policy": (
+                            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                            "style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+                        ),
+                        "X-Content-Type-Options": "nosniff",
+                        "Referrer-Policy": "no-referrer",
+                        "X-Frame-Options": "DENY",
+                    },
                 )
             else:
                 resp = JSONResponse(

@@ -84,7 +84,9 @@ export default function SelectionToolbar({
             if (e.key === "Enter") {
               e.preventDefault();
               handleNoteSubmit();
-            } else if (e.key === "Escape") {
+              // 输入法合成态的 Esc 是取消候选词，不关闭随笔输入（体检 P2；React 18 合成事件
+              // 类型未暴露 isComposing，从原生事件取）
+            } else if (e.key === "Escape" && !(e.nativeEvent.isComposing || e.keyCode === 229)) {
               setIsWritingNote(false);
             }
           }}
