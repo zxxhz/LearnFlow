@@ -593,7 +593,7 @@ AGENT_TOOLS_SCHEMA = [
                     "annotation_id": {"type": "string", "description": "划线 ID（来自 list_annotations）"},
                     "color": {"type": "string", "enum": ["yellow", "green", "blue", "pink"], "description": "新颜色"},
                     "note": {"type": "string", "description": "新备注（空串=清空）"},
-                    "status": {"type": "string", "enum": ["active", "resolved", "orphan"], "description": "新状态"},
+                    "status": {"type": "string", "enum": ["active", "orphan"], "description": "新状态（resolved 由掌握判定流程自动维护，不接受直接设置）"},
                 },
                 "required": ["annotation_id"],
             },
@@ -1947,9 +1947,12 @@ async def _tool_update_annotation(db: AsyncSession, args: dict[str, Any]) -> dic
     annotation_id = str(args.get("annotation_id") or "")
     if not any(k in args for k in ("color", "note", "status")):
         return {"error": "没有提供任何要修改的字段（color/note/status）"}
+    # C3（v0.5.10 体检）：模型传 {"note": null} 意图清空备注时，str(None) 会把
+    # 字面量 "None" 写进备注——显式区分「未提供」与「显式 null/空串」
+    raw_note = args.get("note")
     body = AnnotationUpdate(
         color=(str(args["color"]) if args.get("color") else None),
-        note=(str(args["note"]) if "note" in args else None),
+        note=(str(raw_note) if raw_note is not None else None),
         status=(str(args["status"]) if args.get("status") else None),
     )
     updated = await _api(annotation_id=annotation_id, body=body, db=db)
@@ -2021,10 +2024,15 @@ async def _tool_resolve_misconception(db: AsyncSession, args: dict[str, Any]) ->
     return {"status": "success", "note": "该盲区已标记为 resolved（保留作为演进查重依据）"}
 
 
-def _tool_create_backup() -> dict[str, Any]:
+async def _tool_create_backup() -> dict[str, Any]:
+    import asyncio as _asyncio
+
     from app.services.system import create_backup
 
-    path = create_backup()
+    # C2（v0.5.10 体检）：VACUUM INTO + 全量 zip 是重阻塞 IO，放线程池执行——
+    # 同步直跑会让整个事件循环（全部 API/SSE/心跳）冻结到备份完成。
+    # 对齐 api/system.py 备份端点的既有口径
+    path = await _asyncio.to_thread(create_backup)
     return {
         "status": "success",
         "backup": path.name,
@@ -2311,7 +2319,7 @@ async def execute_tool(
         elif name == "resolve_misconception":
             return await _tool_resolve_misconception(db, args)
         elif name == "create_backup":
-            return _tool_create_backup()
+            return await _tool_create_backup()
         elif name == "trigger_sync":
             return await _tool_trigger_sync(args)
         elif name == "delete_resource":

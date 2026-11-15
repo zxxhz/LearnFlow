@@ -323,7 +323,11 @@ async def run_course(course_id: str) -> None:
         except Exception:  # noqa: BLE001
             logger.exception("course %s: 标记 error 状态失败", course_id)
     finally:
-        _tasks.pop(course_id, None)
+        # C5（v0.5.10 体检）：守卫式 pop（对齐 queue_single_document 口径）——
+        # cancel 先 pop 的窗口内并发的 generate 注册的新任务不再被垂死任务抹掉
+        _task = _tasks.get(course_id)
+        if _task is not None and _task.done():
+            _tasks.pop(course_id, None)
         _course_options.pop(course_id, None)
 
 

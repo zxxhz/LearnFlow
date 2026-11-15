@@ -13,6 +13,9 @@ router = APIRouter(prefix="/system", tags=["system"])
 
 
 class AccessInfoOut(BaseModel):
+    # B1（v0.5.10 体检）：固定应用标识——桌面壳探测本端口时校验该字段，防同端口
+    # 抢占者返回任意 JSON 骗过 backend_ready 后借壳 IPC 能力钓鱼
+    app: str = "learnflow"
     host: str
     port: int
     lan_mode: bool
@@ -31,6 +34,7 @@ async def access_info():
     token = system_service.get_access_token() if lan_mode else ""
     urls = system_service.lan_urls() if lan_mode else []
     return AccessInfoOut(
+        app="learnflow",
         host=settings.host,
         port=settings.port,
         lan_mode=lan_mode,

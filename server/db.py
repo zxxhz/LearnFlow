@@ -409,7 +409,14 @@ class RelayDatabase:
 
             # 4. Bank Questions
             questions = payload.get("bank_questions") or payload.get("questions") or []
-            questions = [q for q in questions if str(q.get("id") or "") not in _tomb_ids]
+            # A7（v0.5.10 体检）：补 bank_id 口径——与 attempts 对齐，旧设备快照里
+            # 「已墓碑题库的题目」不再被反复插回云端成为孤儿行
+            questions = [
+                q
+                for q in questions
+                if str(q.get("id") or "") not in _tomb_ids
+                and str(q.get("bank_id") or "") not in _tomb_ids
+            ]
             for q in questions:
                 qid = q.get("id")
                 bid = q.get("bank_id")
@@ -709,17 +716,39 @@ class RelayDatabase:
                 # 附带将 learner_misconceptions 一并存入 profile，保障纯 Web 端离线直读完整数据
                 if not profile.get("misconceptions") and payload.get("learner_misconceptions"):
                     profile["misconceptions"] = payload.get("learner_misconceptions")
-                cursor.execute(
-                    """
-                    INSERT INTO learner_profile (id, data, updated_at)
-                    VALUES ('local', ?, ?)
-                    ON CONFLICT(id) DO UPDATE SET
-                        data = excluded.data,
-                        updated_at = excluded.updated_at
-                    """,
-                    (json.dumps(profile, ensure_ascii=False), now_str),
-                )
-                counts["learner_profile"] = 1
+                # A8/C1（v0.5.10 体检）：画像整包写补 _profile_lock（对齐删除/更新路径）
+                # + updated_at 新者胜——未同步重置的旧设备 push 旧 blob 不再把云端
+                # 已重置画像整体回退（空 updated_at 视为最旧，仅在双方均有值时比较）
+                incoming_updated = str(profile.get("updated_at") or "")
+                with self._profile_lock:
+                    cursor.execute("SELECT data FROM learner_profile WHERE id = 'local'")
+                    _prof_row = cursor.fetchone()
+                    _existing_updated = ""
+                    if _prof_row and _prof_row[0]:
+                        try:
+                            _existing_updated = str(
+                                (json.loads(_prof_row[0]) or {}).get("updated_at") or ""
+                            )
+                        except Exception:  # noqa: BLE001
+                            _existing_updated = ""
+                    if (
+                        _existing_updated
+                        and incoming_updated
+                        and incoming_updated < _existing_updated
+                    ):
+                        counts["learner_profile_skipped_stale"] = 1
+                    else:
+                        cursor.execute(
+                            """
+                            INSERT INTO learner_profile (id, data, updated_at)
+                            VALUES ('local', ?, ?)
+                            ON CONFLICT(id) DO UPDATE SET
+                                data = excluded.data,
+                                updated_at = excluded.updated_at
+                            """,
+                            (json.dumps(profile, ensure_ascii=False), now_str),
+                        )
+                        counts["learner_profile"] = 1
 
             # 更新元信息
             cursor.execute(

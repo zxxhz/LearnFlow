@@ -36,6 +36,8 @@ NSIS_DIR = REPO / "desktop/src-tauri/target/release/bundle/nsis"
 API = "https://api.github.com"
 UPLOAD = "https://uploads.github.com"
 OWNER, REPO_NAME = "zxxhz", "LearnFlow"
+# B5（v0.5.10 体检）：从资产上传 URL 提取 release_id，供 422 删旧资产重传
+_RELEASE_ID_RE = __import__("re").compile(r"/releases/(\d+)/assets")
 
 
 def run(cmd: list[str], cwd: Path | None = None, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -162,6 +164,26 @@ def upload_with_retry(client: httpx.Client, headers: dict, url: str, name: str, 
             if r.status_code in (200, 201):
                 print(f"  ✅ 资产已上传：{name}")
                 return
+            # B5（v0.5.10 体检）：同名资产 422——删旧资产后重传（断点续传半发布的
+            # 恢复路径；旧实现重试同错并退出，重跑又被「exe 已存在」拒绝卡死）
+            if r.status_code == 422:
+                m = _RELEASE_ID_RE.search(url)
+                if m:
+                    lst = client.get(
+                        f"{API}/repos/{OWNER}/{REPO_NAME}/releases/{m.group(1)}/assets",
+                        headers=headers,
+                        timeout=30,
+                    )
+                    if lst.status_code == 200:
+                        for a in lst.json():
+                            if a.get("name") == name:
+                                d = client.delete(
+                                    f"{API}/repos/{OWNER}/{REPO_NAME}/releases/assets/{a['id']}",
+                                    headers=headers,
+                                    timeout=60,
+                                )
+                                print(f"  ℹ️ 已删除旧同名资产 {name}（HTTP {d.status_code}），重传")
+                                continue
             last_err = f"HTTP {r.status_code}: {r.text[:300]}"
         except Exception as e:  # noqa: BLE001 — 网络/超时一律可重试
             last_err = repr(e)
@@ -199,6 +221,25 @@ def main() -> int:
     latest_meta = json.loads(latest_path.read_text(encoding="utf-8"))
     if latest_meta.get("version") != version or not (latest_meta.get("notes") or "").strip():
         print(f"❌ latest.json 元数据异常：version={latest_meta.get('version')!r} notes 为空")
+        return 1
+
+    # B6（v0.5.10 体检）：上传前交叉核验 latest.json 的 sha256 与实际安装包——
+    # 构建重跑后拿旧 latest.json 配新 exe，全体客户端 updater 验签会失败
+    import hashlib as _hashlib
+
+    exe_sha = _hashlib.sha256(exe.read_bytes()).hexdigest()
+    claimed_sha = ""
+    try:
+        claimed_sha = str(
+            (latest_meta.get("platforms") or {}).get("windows-x86_64", {}).get("sha256") or ""
+        )
+    except Exception:  # noqa: BLE001
+        claimed_sha = ""
+    if claimed_sha and claimed_sha.lower() != exe_sha:
+        print(
+            f"❌ latest.json 的 sha256 与实际安装包不一致（latest={claimed_sha[:16]}… 实际={exe_sha[:16]}…），"
+            "请重跑 build_latest.py 后再发布"
+        )
         return 1
 
     pat = get_pat()
@@ -268,11 +309,23 @@ def main() -> int:
                 push_ok = True
                 break
         if not push_ok:
-            chk = run(["git", "ls-remote", "--tags", auth_url, f"refs/tags/{tag}"])
-            if chk.returncode == 0 and chk.stdout.strip():
-                push_ok = True
+            # B2（v0.5.10 体检）：回落判定同时校验 main 与 tag——旧逻辑只查 tag，
+            # main 非 fast-forward 被拒时误报「已推送」，造成 tag 已发而 main 缺提交
+            chk = run(["git", "ls-remote", auth_url, f"refs/tags/{tag}", "refs/heads/main"])
+            if chk.returncode == 0:
+                out = chk.stdout
+                tag_ok = f"refs/tags/{tag}" in out
+                main_ok = "refs/heads/main" in out
+                if tag_ok and main_ok:
+                    push_ok = True
+                elif tag_ok:
+                    print(
+                        "❌ tag 已推送但 main 分支未更新（推送被拒）——终止发布，"
+                        "请先同步 main 分叉后重跑（本脚本支持断点续发）"
+                    )
+                    return 1
         if not push_ok:
-            print("❌ git push 最终失败")
+            print("❌ git push 最终失败（tag/Release 未创建，可解决网络后直接重跑）")
             return 1
         print("  ✅ 已推送 origin main --tags")
 
@@ -290,7 +343,13 @@ def main() -> int:
                 timeout=60,
             )
             if r.status_code not in (200, 201):
+                # B3（v0.5.10 体检）：tag 已推上的半发布状态给出明确恢复指引，
+                # 避免重跑被 preflight 卡死后无从下手
                 print(f"❌ 创建 Release 失败：HTTP {r.status_code}\n{r.text[:500]}")
+                print(
+                    "  ℹ️ 恢复指引：代码与标签已推送。解决网络后直接重跑 publish_release.py"
+                    "（断点续传会复用 tag 与 Release），或到 GitHub 网页端手工创建 Release 并上传资产。"
+                )
                 return 1
             release = r.json()
             release_id = release["id"]

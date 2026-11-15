@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 
 from server.api_sync import router as sync_router
 from server.api_system import router as system_router
-from server.auth import RelayAuthMiddleware
+from server.auth import RelayAuthMiddleware, extract_token_from_scope, verify_token
 from server.config import settings
 from server.db import relay_db
 from server.llm import dispatch_ai_request, server_llm_service
@@ -204,6 +204,32 @@ async def health_check():
         "ai_mode": settings.ai_mode,
         "auth_enabled": settings.is_auth_enabled(),
     }
+
+
+@app.post("/auth/verify")
+async def auth_verify(request: Request):
+    """鉴权表单校验成功后由服务端下发 HttpOnly Cookie。
+
+    A3（v0.5.10 体检）：JS 的 document.cookie 无法覆盖 query 兼容路径此前落下的
+    同名 HttpOnly Cookie——令牌轮换后旧 Cookie 失效，新令牌经 JS 写入被静默拒绝，
+    用户死循环卡在录入页。现由本端点（经 x-server-token 头携带候选令牌，由
+    鉴权中间件先行校验）以 Set-Cookie 服务端覆盖，再由前端 reload。
+    """
+    token, _source = extract_token_from_scope(request.scope)
+    if not verify_token(token):
+        # 中间件已拦 401，防御性兜底
+        raise HTTPException(status_code=401, detail="访问令牌错误或已失效")
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(
+        "lf_server_token",
+        token,
+        max_age=2592000,
+        path="/",
+        samesite="lax",
+        httponly=True,
+        secure=request.url.scheme == "https",
+    )
+    return resp
 
 
 # ----------------------------------------------------

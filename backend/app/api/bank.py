@@ -84,9 +84,15 @@ async def _read_upload(file: UploadFile) -> tuple[bytes, str]:
     name = file.filename or "bank.xlsx"
     if not name.lower().endswith(bank_service.BANK_EXTENSIONS):
         raise HTTPException(status_code=400, detail=f"仅支持 .xls / .xlsx 题库文件，收到：{name}")
+    # C4（v0.5.10 体检）：补 5MB 大小帽（对齐 imports 的 MAX_FILE_BYTES），读前
+    # 先查 size 快速拒绝——此前题库上传完全无上限，数 GB 上传会整读入内存 OOM
+    if file.size is not None and file.size > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail=f"文件过大（上限 5MB）：{name}")
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="文件为空")
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail=f"文件过大（上限 5MB）：{name}")
     return data, name
 
 

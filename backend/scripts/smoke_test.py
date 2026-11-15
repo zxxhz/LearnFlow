@@ -398,7 +398,23 @@ def main() -> None:
     config = uvicorn.Config("app.main:app", host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
     threading.Thread(target=server.run, daemon=True).start()
-    time.sleep(2.5)
+    # B11（v0.5.10 体检）：就绪轮询替代固定 sleep——端口占用/慢启动时 uvicorn
+    # 线程静默失败，旧写法后续 113 项检查全挂且无诊断
+    import socket as _socket
+
+    _deadline = time.time() + 15
+    _ready = False
+    while time.time() < _deadline:
+        try:
+            with _socket.create_connection(("127.0.0.1", port), timeout=0.5):
+                _ready = True
+                break
+        except OSError:
+            time.sleep(0.2)
+    if not _ready:
+        print(f"❌ 冒烟服务端 15s 内未就绪（port={port}，端口冲突或启动失败）")
+        sys.exit(2)
+    time.sleep(0.5)
 
     ok = True
 

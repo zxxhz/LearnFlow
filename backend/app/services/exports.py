@@ -129,4 +129,13 @@ async def course_html(db: AsyncSession, course: Course) -> str:
         parts.append(f"<hr class='chapter'><h2>第 {d.chapter_index} 章 · {html_mod.escape(d.title)}</h2>")
         parts.append(md.render(load_document_markdown(d)))
     body = "\n".join(parts)
-    return _HTML_TMPL.replace("__TITLE__", html_mod.escape(course.title)).replace("__BODY__", body)
+    # C6（v0.5.10 体检）：两段 str.replace 会因课程标题含 "__BODY__" 字面量把
+    # 整份正文注入 <title>——改单趟正则替换，替换产物不参与二次匹配
+    import re as _re
+
+    escaped_title = html_mod.escape(course.title)
+    return _re.sub(
+        r"__(TITLE|BODY)__",
+        lambda m: escaped_title if m.group(1) == "TITLE" else body,
+        _HTML_TMPL,
+    )

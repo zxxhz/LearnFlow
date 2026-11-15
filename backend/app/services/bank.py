@@ -654,6 +654,14 @@ async def _replace_bank_locked(
             await db.execute(delete(BankAttempt).where(BankAttempt.question_id.in_(chunk)))
             await db.execute(delete(BankQuestion).where(BankQuestion.id.in_(chunk)))
 
+    # 1.5 两阶段 seq 重排（v0.5.10 体检 A1）：新增的 (bank_id, seq) 立即唯一索引下，
+    # 保留题相对换序时原地互换 UPDATE 必中途撞约束（SQLite 唯一约束不可 DEFERRABLE，
+    # 真实链路已实证 500 回滚）——先把全部保留题挪到负数暂存位并 flush，再落最终 seq
+    for i, old_q in enumerate(matched_old_lookup.values()):
+        old_q.seq = -(i + 1)
+    if matched_old_lookup:
+        await db.flush()
+
     # 2. 按新表格顺序更新对齐题目并插入新题目。
     #    选项内容/顺序变化同样触发重判：旧作答字母按新选项位置解释，语义可能漂移
     for seq_idx, nq in enumerate(new_questions, 1):

@@ -354,7 +354,7 @@ async def pull_cloud_data_to_local(
                 # 记录——随下次 push 传播给云端，防其他未同步设备的旧快照复活
                 #（服务端持久化墓碑拦截是主防线，本地落墓碑是纵深）
                 for kind, ids in tomb_by_kind.items():
-                    if kind in ("bank", "bank_question", "course", "document", "mindmap", "annotation"):
+                    if kind in ("bank", "bank_question", "course", "document", "mindmap", "annotation", "misconception"):
                         await _record_tombstones(db, kind, sorted(ids))
 
                 # 课程域墓碑（P1-3）：复用 purge_course_data 的全量级联（练习/知识点/
@@ -406,6 +406,14 @@ async def pull_cloud_data_to_local(
                             delete(Conversation).where(Conversation.id.in_(conv_ids))
                         )
                     await db.delete(ann)
+                # 认知盲区墓碑（C1，v0.5.10 体检）：画像重置是物理删除，另一设备的
+                # 旧盲区靠本墓碑落地删除收敛（画像 blob 本身有新者胜护栏）
+                misc_tombs = sorted(tomb_by_kind.get("misconception", set()))
+                for i in range(0, len(misc_tombs), 500):
+                    chunk = misc_tombs[i : i + 500]
+                    await db.execute(
+                        delete(LearnerMisconception).where(LearnerMisconception.id.in_(chunk))
+                    )
 
                 banks = [b for b in banks if str(b.get("id") or "") not in tombstone_ids]
                 bank_questions = [
@@ -619,6 +627,10 @@ async def pull_cloud_data_to_local(
                             )
                         )
                     }
+                    # A2（v0.5.10 体检）：更新路径的 seq 不再直赋——立即唯一索引下与本地
+                    # 现值/其他更新行互换必撞约束（多端混版本时该库 pull 永久失败的同根
+                    # 隐患），记录后在循环外两阶段落位（见下方 seq_rebinds 处理）
+                    seq_rebinds: list[tuple[BankQuestion, int]] = []
                     for q in questions_by_bank.get(str(bid), []):
                         qid = q.get("id")
                         if not qid:
@@ -637,7 +649,13 @@ async def pull_cloud_data_to_local(
                                 continue
                             old_answer, old_options = existing_q.answer, existing_q.options
                             existing_q.bank_id = bid
-                            existing_q.seq = q.get("seq", existing_q.seq)
+                            cloud_seq = q.get("seq")
+                            try:
+                                cloud_seq_int = int(cloud_seq)
+                            except (TypeError, ValueError):
+                                cloud_seq_int = None
+                            if cloud_seq_int is not None and cloud_seq_int > 0 and cloud_seq_int != existing_q.seq:
+                                seq_rebinds.append((existing_q, cloud_seq_int))
                             existing_q.qtype = q.get("qtype", existing_q.qtype)
                             existing_q.title = q.get("title", existing_q.title)
                             existing_q.options = opts_str
@@ -687,6 +705,30 @@ async def pull_cloud_data_to_local(
                             )
                             db.add(new_q)
                         counts["questions"] += 1
+
+                    # A2：更新路径 seq 两阶段落位——先全部挪负数暂存位 flush（释放原
+                    # seq），再按云端目标落最终值；目标与现存/新插行冲突时改派 max+1
+                    #（与新增路径 used_seqs 同口径）
+                    if seq_rebinds:
+                        for i, (row, _t) in enumerate(seq_rebinds):
+                            row.seq = -(i + 1)
+                        await db.flush()
+                        occupied = {
+                            int(s)
+                            for s in (
+                                await db.scalars(
+                                    select(BankQuestion.seq).where(BankQuestion.bank_id == bid)
+                                )
+                            )
+                            if int(s) > 0
+                        }
+                        for row, target in seq_rebinds:
+                            if target not in occupied:
+                                row.seq = target
+                            else:
+                                row.seq = (max(occupied) if occupied else 0) + 1
+                            occupied.add(row.seq)
+                        await db.flush()
 
                     # 5. 合并该库作答（FK 安全，v0.5.2 体检 P1 实证）：云端残留已被本地
                     # replace 删除的题目的作答时，直接重插会 FK 失败并整体回滚整个 pull。
@@ -796,48 +838,62 @@ async def pull_cloud_data_to_local(
                     if "data" in learner_profile and isinstance(learner_profile["data"], dict)
                     else learner_profile
                 )
-                if prof:
+                # C1（v0.5.10 体检）：画像域补新者胜护栏——「画像重置」物理清空后的
+                # 本地空画像此前被云端旧快照整体复活并固化（pull 先行时序）。
+                # 空串一律视为最旧（同 P1-4 口径）；云端较旧时整块跳过（含盲区合并）
+                cloud_prof_updated = str(data_dict.get("updated_at") or learner_profile.get("updated_at") or "")
+                skip_profile_merge = bool(prof) and cloud_prof_updated < (prof.updated_at or "")
+                if prof and not skip_profile_merge:
                     if "background_summary" in data_dict:
                         prof.background_summary = str(data_dict.get("background_summary", ""))
                     if "socratic_mode" in data_dict:
                         prof.socratic_mode = bool(data_dict.get("socratic_mode", True))
-                    prof.updated_at = utcnow_iso()
-                else:
+                    prof.updated_at = cloud_prof_updated or prof.updated_at
+                elif not prof:
                     new_prof = LearnerProfile(
                         id="local",
                         background_summary=str(data_dict.get("background_summary", "")),
                         socratic_mode=bool(data_dict.get("socratic_mode", True)),
-                        updated_at=utcnow_iso(),
+                        updated_at=cloud_prof_updated or utcnow_iso(),
                     )
                     db.add(new_prof)
 
-                # 合并认知盲区（复活守卫：本地已 resolve 的盲区不被云端 active 快照回退，v0.5.1 体检遗留）
-                misconceptions_list = data_dict.get("misconceptions") or data.get("learner_misconceptions") or []
-                for m in misconceptions_list:
-                    mid = m.get("id")
-                    if not mid:
-                        continue
-                    existing_m = await db.get(LearnerMisconception, mid)
-                    if existing_m:
-                        existing_m.topic = m.get("topic", existing_m.topic)
-                        existing_m.tag = m.get("tag", existing_m.tag)
-                        existing_m.evidence = m.get("evidence", existing_m.evidence)
-                        if not (existing_m.status == "resolved" and m.get("status") == "active"):
-                            existing_m.status = m.get("status", existing_m.status)
-                        existing_m.scope = m.get("scope", existing_m.scope)
-                    else:
-                        new_m = LearnerMisconception(
-                            id=mid,
-                            topic=m.get("topic", ""),
-                            tag=m.get("tag", ""),
-                            evidence=m.get("evidence", ""),
-                            status=m.get("status", "active"),
-                            resolved_at=m.get("resolved_at"),
-                            scope=m.get("scope", "general"),
-                            source_type=m.get("source_type", ""),
-                            source_id=m.get("source_id", ""),
-                        )
-                        db.add(new_m)
+                # 合并认知盲区（复活守卫：本地已 resolve 的盲区不被云端 active 快照回退，
+                # v0.5.1 体检遗留；已收到墓碑的行不再按缺即建——C1 同源）。
+                # 云端画像较旧（skip_profile_merge）时整块跳过：否则 reset 清空的本地
+                # 盲区会被旧快照按缺即建原样重建
+                if not skip_profile_merge:
+                    misconceptions_list = data_dict.get("misconceptions") or data.get("learner_misconceptions") or []
+                    misconceptions_list = [
+                        m
+                        for m in misconceptions_list
+                        if str(m.get("id") or "") not in tombstone_ids
+                    ]
+                    for m in misconceptions_list:
+                        mid = m.get("id")
+                        if not mid:
+                            continue
+                        existing_m = await db.get(LearnerMisconception, mid)
+                        if existing_m:
+                            existing_m.topic = m.get("topic", existing_m.topic)
+                            existing_m.tag = m.get("tag", existing_m.tag)
+                            existing_m.evidence = m.get("evidence", existing_m.evidence)
+                            if not (existing_m.status == "resolved" and m.get("status") == "active"):
+                                existing_m.status = m.get("status", existing_m.status)
+                            existing_m.scope = m.get("scope", existing_m.scope)
+                        else:
+                            new_m = LearnerMisconception(
+                                id=mid,
+                                topic=m.get("topic", ""),
+                                tag=m.get("tag", ""),
+                                evidence=m.get("evidence", ""),
+                                status=m.get("status", "active"),
+                                resolved_at=m.get("resolved_at"),
+                                scope=m.get("scope", "general"),
+                                source_type=m.get("source_type", ""),
+                                source_id=m.get("source_id", ""),
+                            )
+                            db.add(new_m)
 
             await db.commit()
 

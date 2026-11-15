@@ -222,13 +222,14 @@ def render_token_entry_html(title: str = "访问鉴权 · LearnFlow 云端中转
             var btn = e.target.querySelector('button');
             if (btn) {{ btn.disabled = true; btn.textContent = '正在验证...'; }}
             // P1-2：不再把 Token 放进 URL query（query 会落入浏览器历史与服务端
-            // 访问日志）。先经 /health 携 header 校验，成功后仅写 Cookie 并重载
-            fetch('/health', {{ headers: {{ 'x-server-token': token }} }})
+            // 访问日志）。经 /auth/verify 携 header 校验，成功后由服务端 Set-Cookie
+            // 覆盖（A3：JS 无法覆盖 query 兼容路径留下的 HttpOnly 旧 Cookie），
+            // 前端补写 localStorage 后重载
+            fetch('/auth/verify', {{ method: 'POST', headers: {{ 'x-server-token': token }} }})
                 .then(function (resp) {{
                     if (!resp.ok) {{
                         throw new Error(resp.status === 401 ? '访问令牌错误或已失效' : '服务端返回 HTTP ' + resp.status);
                     }}
-                    document.cookie = "lf_server_token=" + encodeURIComponent(token) + "; path=/; max-age=2592000; SameSite=Lax";
                     try {{ localStorage.setItem("lf_access_token", token); }} catch (err) {{}}
                     window.location.reload();
                 }})

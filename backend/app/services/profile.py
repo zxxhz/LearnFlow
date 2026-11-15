@@ -278,10 +278,13 @@ async def evolve_profile_from_interaction(
                             )
                             fresh_db.add(misc)
                             try:
+                                # A6（v0.5.10 体检）：begin_nested savepoint 只回滚当前条，
+                                # 同批已 flush 的其余盲区不再被整事务 rollback 静默丢弃；
                                 # (scope, topic, tag) 唯一索引兜底并发插入（P2-9 同源）
-                                await fresh_db.flush()
+                                async with fresh_db.begin_nested():
+                                    await fresh_db.flush()
                             except IntegrityError:
-                                await fresh_db.rollback()
+                                fresh_db.expunge(misc)
         except Exception as e:
             logger.warning(f"Failed to evolve learner profile: {e}")
             return None

@@ -38,10 +38,15 @@ def main() -> int:
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
         errors.append(f"版本号格式不合法：{version!r}（应为 X.Y.Z 三段数字）")
 
-    # 2a. 本地标签不存在
+    # 2a. 本地标签不存在（B3，v0.5.10 体检：指向 HEAD 的本地 tag 是「git 已提交/
+    # 打标但 Release API 失败」的半发布断点——放行以支持断点续发，不再卡死重跑）
     local_tag = run_git(["rev-parse", "-q", "--verify", f"refs/tags/{tag}"])
     if local_tag.returncode == 0:
-        errors.append(f"本地标签 {tag} 已存在（{local_tag.stdout.strip()}），疑似重复发版")
+        head_sha = run_git(["rev-parse", "HEAD"]).stdout.strip()
+        if local_tag.stdout.strip() == head_sha:
+            print(f"  ℹ️ 本地标签 {tag} 已指向 HEAD：进入断点续发模式（跳过本地标签检查）")
+        else:
+            errors.append(f"本地标签 {tag} 已存在（{local_tag.stdout.strip()}），疑似重复发版")
 
     # 2b. 远程标签不存在
     remote_tags = run_git(["ls-remote", "--tags", "origin", f"refs/tags/{tag}"])

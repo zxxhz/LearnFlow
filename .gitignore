@@ -62,3 +62,7 @@ backend/server/
 # 并行会话 E2E 验证临时产物（验证后由该会话自行删除）
 backend/data-e2e-fix/
 frontend/vite.config.e2e.ts
+
+# 运行时验证脚本临时设备目录
+backend/treg_*/
+backend/treg2_*/

@@ -84,7 +84,11 @@ fn backend_ready(port: u16) -> bool {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(body.trim()) else {
         return false;
     };
-    v.get("port").is_some() || v.get("lan_mode").is_some()
+    // B1（v0.5.10 体检）：身份断言加强——除 port/lan_mode 外必须命中 /access-info
+    // 的固定应用标识 learnflow，防同端口抢占者返回任意 JSON 骗过就绪探测后
+    // 借壳 IPC 能力（notification/updater/process）实施钓鱼
+    v.get("app").and_then(|x| x.as_str()) == Some("learnflow")
+        && (v.get("port").is_some() || v.get("lan_mode").is_some())
 }
 
 fn packaged_backend_exe(app: &AppHandle) -> Option<PathBuf> {

@@ -116,6 +116,10 @@ async def _read_uploads(files: list[UploadFile]) -> tuple[list[str], list[str]]:
                 status_code=400, detail=f"仅支持 Markdown 文件（.md 等），收到：{name}"
             )
         data = await f.read()
+        # C4（v0.5.10 体检）：读前先查 size 快速拒绝（UploadFile.size 来自
+        # multipart 头，越限请求不必先整体载入内存）
+        if f.size is not None and f.size > MAX_FILE_BYTES:
+            raise HTTPException(status_code=400, detail=f"文件过大（上限 5MB）：{name}")
         if len(data) > MAX_FILE_BYTES:
             raise HTTPException(status_code=400, detail=f"文件过大（上限 5MB）：{name}")
         texts.append(decode_text(data))

@@ -9,6 +9,7 @@ from app.models import Annotation, Course, Document, Exercise, StudyDay
 from app.models.bank import BankAttempt
 from app.models.base import utcnow_iso
 from app.models.study import LearnerMisconception, LearnerProfile
+from app.services.bank import _record_tombstones
 from app.services.prefs import local_today
 from app.services.profile import (
     DEFAULT_PROFILE_ID,
@@ -314,7 +315,10 @@ async def reset_profile(db: AsyncSession = Depends(get_db)):
     profile.socratic_mode = True
     profile.updated_at = utcnow_iso()
 
-    # 清空所有认知盲区
+    # 清空所有认知盲区（C1，v0.5.10 体检）：物理删除记墓碑随 push 传播，否则
+    # 其他设备的旧盲区在 pull 后按缺即建复活，重置语义无法跨端收敛
+    misc_ids = list((await db.scalars(select(LearnerMisconception.id))).all())
+    await _record_tombstones(db, "misconception", misc_ids)
     await db.execute(delete(LearnerMisconception))
     await db.commit()
     await db.refresh(profile)

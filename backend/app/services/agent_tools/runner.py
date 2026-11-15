@@ -1,5 +1,6 @@
 """Agent 工具调度执行器：多轮 Tool Calling 闭环与流式生成。"""
 import asyncio
+import contextlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -143,6 +144,10 @@ async def stream_agent_with_tools(
                 )
             except asyncio.TimeoutError:
                 logger.warning("工具执行超时中止: %s", fn_name)
+                # A9（v0.5.10 体检）：被取消工具的半截 ORM 变更必须回滚隔离——
+                # 否则会被后续写工具的 commit 顺带落库，残留写事务也会持锁到流结束
+                with contextlib.suppress(Exception):
+                    await db.rollback()
                 result = {
                     "status": "error",
                     "message": "工具执行超时（15 分钟上限），已中止；请把任务拆小后重试。",

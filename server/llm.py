@@ -213,6 +213,10 @@ class ServerLLMService:
             title = data.get("title") or data.get("question") or data.get("hint") or ""
             picked = data.get("picked") or []
             system_prompt = "你是一位擅长归纳总结解题技巧的特级名师，对各类经典考题提供循循善诱、直击要害的深度解析与思路拆解。"
+            # A4（v0.5.10 体检）：题面为空且无选项时不产出消息——dispatch 层守卫
+            # 据此拒绝喂模型（旧实现拼出「题目内容：\n…[]」静态串绕过守卫）
+            if not str(title).strip() and not picked:
+                return system_prompt, []
             messages.append({
                 "role": "user",
                 "content": f"题目内容：{title}\n用户所选选项或疑问：{picked}\n请给出详尽透彻的题目剖析、正确答案推导过程与核心考点巩固。",
@@ -228,8 +232,12 @@ class ServerLLMService:
             })
 
         else:
-            msg_str = data.get("message") or data.get("content") or json.dumps(data, ensure_ascii=False)
-            messages.append({"role": "user", "content": str(msg_str)})
+            # A4：无真实提问内容时不产出消息（旧实现把空 body 序列化成 "{}" 喂模型），
+            # 交给 stream_sse_response 的空消息守卫拒绝调用
+            msg_str = str(data.get("message") or data.get("content") or "")
+            if not msg_str.strip():
+                return system_prompt, []
+            messages.append({"role": "user", "content": msg_str})
 
         return system_prompt, messages
 
