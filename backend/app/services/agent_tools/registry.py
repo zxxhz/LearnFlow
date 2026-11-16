@@ -7,15 +7,22 @@ v0.5.6 全量工具扩权：课程/讲义/练习/题库/导图/批注/画像/学
 刻意不设工具，见 prompt 操作准则与仓库安全边界。
 """
 import asyncio
+import contextlib
 import json
 import logging
+import re
 import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.base import new_id, utcnow_iso
 from app.services.execution.runner import run_code
 
@@ -686,6 +693,42 @@ AGENT_TOOLS_SCHEMA = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_workbuddy_task",
+            "description": (
+                "把一个独立任务委派给本机安装的 WorkBuddy（腾讯 CodeBuddy）Agent 无头执行。"
+                "它会自主读写任务目录里的文件、运行命令、联网检索，完成后返回文字总结与产出文件清单。"
+                "适合多步骤工作：整理资料生成课程/讲义/题目文件、需要真实跑代码验证的编程任务、"
+                "需要联网查证的调研。普通问答、讲题、题目解析这类单轮文本任务请直接回答，不要委派。"
+                "执行无人值守且以学员确认卡授权为前提，prompt 必须自包含全部上下文"
+                "（目标、要求、产出文件名与格式、语言）。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "任务完整描述：做什么、有什么约束、产出什么文件（文件名+格式）、用什么语言",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "WorkBuddy 使用的模型 ID（可选，如 hy4flash、glm-5.3、deepseek-v4-pro）；学员指定模型时才传",
+                    },
+                    "fallback_model": {
+                        "type": "string",
+                        "description": "主模型过载/限流时自动切换的备用模型 ID（可选）",
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "任务超时秒数（30~870，默认 600）；大任务应拆成多次委派而不是无限加大超时",
+                    },
+                },
+                "required": ["prompt"],
+            },
+        },
+    },
 ]
 
 
@@ -714,6 +757,7 @@ SENSITIVE_TOOLS = {
     "trigger_sync",
     "delete_resource",
     "update_resource_title",
+    "run_workbuddy_task",
 }
 
 # 破坏性/覆盖性操作子集：前端确认卡用红色警示文案，提示词要求先复述影响
@@ -764,6 +808,7 @@ TOOL_LABELS: dict[str, str] = {
     "trigger_sync": "触发云端同步",
     "delete_resource": "删除资源",
     "update_resource_title": "重命名资源",
+    "run_workbuddy_task": "委派 WorkBuddy 任务",
 }
 
 
@@ -2144,6 +2189,226 @@ async def _tool_update_resource_title(
     return {"status": "success", "kind": kind, "id": resource_id, "title": title}
 
 
+def _kill_workbuddy_proc(proc: asyncio.subprocess.Process) -> None:
+    """终止 WorkBuddy CLI 进程树。Windows 下 npm 的 .cmd 启动器会再拉起真实 CLI
+    子进程，proc.kill() 只杀得到壳，必须树杀（taskkill /T）才不留孤儿进程。"""
+    if sys.platform == "win32":
+        with contextlib.suppress(Exception):
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                capture_output=True,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+    else:
+        with contextlib.suppress(Exception):
+            proc.kill()
+
+
+async def _tool_run_workbuddy_task(args: dict[str, Any]) -> dict[str, Any]:
+    """把独立任务委派给本机 WorkBuddy CLI（codebuddy）无头执行。
+
+    不经 MCP：官方 CLI 自带 `-p` 无头模式，直接 spawn 子进程即可
+    （workbuddy-mcp 等社区封装本质上也只是替不能 spawn 的 agent 拼这条命令）。
+    提示词经 stdin 传入——可能很长且含任意字符，走 argv 有长度上限与转义风险。
+    任务产物落在隔离目录 data_dir/workbuddy_tasks/<task_id>/ 下，供导入管线认领。
+    """
+    prompt = str(args.get("prompt") or "").strip()
+    if not prompt:
+        return {"error": "任务提示词为空"}
+
+    try:
+        timeout = int(args.get("timeout_seconds") or 600)
+    except (TypeError, ValueError):
+        timeout = 600
+    # runner 层 900s 统一兜底会直接取消本协程：内部超时必须留出余量才能给出可读错误，
+    # 下限防模型给出无意义的秒级超时把任务误杀
+    timeout = max(30, min(timeout, 870))
+
+    cli = _resolve_workbuddy_cli()
+    if cli is None:
+        return {
+            "error": (
+                "本机未找到 WorkBuddy CLI（codebuddy）。请先安装并登录一次："
+                "npm install -g @tencent-ai/codebuddy-code，然后任意目录执行 codebuddy -p \"hello\"；"
+                "若命令不在 PATH，可在 .env 里配置 APP_WORKBUDDY_CMD 为绝对路径。"
+            ),
+        }
+
+    task_id = new_id()
+    workspace = settings.data_dir / "workbuddy_tasks" / task_id
+    try:
+        workspace.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return {"error": f"任务目录创建失败：{exc}"}
+
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    # --dangerously-skip-permissions 为无头模式必需（否则权限交互会挂到超时）。
+    # 该风险已在 LearnFlow 侧把关：学员经确认卡放行的正是"无人值守执行本任务"这件事
+    cmd = [cli, "-p", "--dangerously-skip-permissions", "--output-format", "json"]
+    # 模型 ID 只进 argv（exec 列表无 shell 注入面），但白名单字符兜底防转义歧义
+    for key, flag in (("model", "--model"), ("fallback_model", "--fallback-model")):
+        value = str(args.get(key) or "").strip()
+        if value:
+            if not re.fullmatch(r"[\w.\-]+", value):
+                return {"error": f"非法{key}：{value}"}
+            cmd += [flag, value]
+
+    started = time.monotonic()
+    stdout_b = stderr_b = b""
+    # 实测坑：mkdir 任务目录后毫秒级 spawn，Windows（Defender/句柄竞态）下 CLI 偶发
+    # "ENOENT ... projects/<key>/<session>.jsonl" 秒退——瞬态失败自动重试一次
+    MAX_SPAWN_ATTEMPTS = 2
+    for attempt in range(1, MAX_SPAWN_ATTEMPTS + 1):
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(workspace),
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                creationflags=creationflags,
+            )
+            # 多次尝试共享总超时：剩余时间不足 30s 就按 30s 给（下限与入参钳制一致）
+            remaining = max(30, timeout - (time.monotonic() - started))
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    proc.communicate(prompt.encode("utf-8")), timeout=remaining
+                )
+            except asyncio.TimeoutError:
+                _kill_workbuddy_proc(proc)
+                with contextlib.suppress(Exception):
+                    await proc.wait()
+                return {
+                    "status": "error",
+                    "task_id": task_id,
+                    "message": f"任务超时（{timeout}s）已中止；请把任务拆小后重试，或缩短任务目标。",
+                }
+        finally:
+            # runner 层 wait_for 取消本协程（900s 兜底）或上游断连时，不能留下孤儿 CLI 进程
+            if proc is not None and proc.returncode is None:
+                _kill_workbuddy_proc(proc)
+        if attempt < MAX_SPAWN_ATTEMPTS and not stdout_b and b"enoent" in stderr_b.lower():
+            await asyncio.sleep(1.5)
+            continue
+        break
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+    stdout = (stdout_b or b"").decode("utf-8", "replace").strip()
+    stderr = (stderr_b or b"").decode("utf-8", "replace").strip()
+
+    # --output-format json：优先取结构化结果字段；拿不到再回落原文。
+    # 兼容 claude 风格字段（result/session_id）、蛇形变体与 NDJSON 事件流（取末条）
+    summary = stdout
+    session_id = ""
+    result_is_error = False
+    try:
+        payload = json.loads(stdout) if stdout[:1] in ("{", "[") else None
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, list):
+        payload = payload[-1] if payload and isinstance(payload[-1], dict) else None
+    if isinstance(payload, dict):
+        summary = str(
+            payload.get("result")
+            or payload.get("result_text")
+            or payload.get("content")
+            or stdout
+        )
+        session_id = str(payload.get("session_id") or payload.get("sessionId") or "")
+        # 实测格式（codebuddy 2.184.0，claude 风格事件数组）：末元素 type=result，
+        # 任务失败也可能是退出码 0，is_error 才是权威失败信号
+        result_is_error = bool(payload.get("is_error"))
+
+    files: list[dict[str, Any]] = []
+    try:
+        for path in sorted(workspace.rglob("*")):
+            if path.is_file():
+                files.append({
+                    "path": path.relative_to(workspace).as_posix(),
+                    "size": path.stat().st_size,
+                })
+    except OSError:
+        pass
+
+    # 实测（codebuddy 2.184.0 未登录）：stderr 报 "Authentication required..." 且退出码为 0、
+    # stdout 全空——退出码不可信，必须按输出内容分类，否则未登录会被误报成空 success
+    low = stderr.lower()
+    if "authentication required" in low or "please use /login" in low:
+        return {
+            "status": "error",
+            "task_id": task_id,
+            "error": (
+                "WorkBuddy CLI 未登录。请学员在终端运行 codebuddy 进入交互界面后输入 /login "
+                "完成一次登录（与 WorkBuddy 桌面端同账号体系），登录后重试本任务。"
+            ),
+            "stderr_tail": _clip(stderr, 800),
+        }
+
+    if proc.returncode != 0:
+        return {
+            "status": "error",
+            "exit_code": proc.returncode,
+            "duration_ms": duration_ms,
+            "task_id": task_id,
+            "result": _clip(summary, 2000),
+            "stderr_tail": _clip(stderr, 800) if stderr else "",
+            "files": files[:50],
+            "note": "WorkBuddy 以非零退出码结束（额度不足、网络或任务内部报错都可能）；看 stderr_tail 定位，产出文件若有半成品也已列出。",
+        }
+
+    if not summary:
+        return {
+            "status": "error",
+            "task_id": task_id,
+            "duration_ms": duration_ms,
+            "error": "CLI 退出码为 0 但没有任何输出；请检查 codebuddy 版本是否支持 --output-format json。",
+            "stderr_tail": _clip(stderr, 800) if stderr else "",
+        }
+
+    if result_is_error:
+        err_result = {
+            "status": "error",
+            "task_id": task_id,
+            "duration_ms": duration_ms,
+            "error": "WorkBuddy 报告任务执行失败。",
+            "result": _clip(summary, 2000),
+            "files": files[:50],
+        }
+        if stderr:
+            err_result["stderr_tail"] = _clip(stderr, 800)
+        if session_id:
+            err_result["session_id"] = session_id
+        return err_result
+
+    result = {
+        "status": "success",
+        "exit_code": proc.returncode,
+        "duration_ms": duration_ms,
+        "task_id": task_id,
+        "workspace_dir": f"workbuddy_tasks/{task_id}",
+        "result": _clip(summary, 6000),
+        "result_truncated": len(summary) > 6000,
+        "files": files[:50],
+    }
+    if session_id:
+        result["session_id"] = session_id
+    if len(files) > 50:
+        result["file_note"] = f"产出文件共 {len(files)} 个，已列出前 50 个"
+    return result
+
+
+def _resolve_workbuddy_cli() -> str | None:
+    """解析 WorkBuddy CLI 路径：配置为命令名时走 PATH 查找，含路径分隔符时按文件直接使用。"""
+    configured = settings.workbuddy_cmd.strip()
+    if not configured:
+        return None
+    if "/" in configured or "\\" in configured or Path(configured).suffix:
+        candidate = Path(configured)
+        return str(candidate) if candidate.is_file() else None
+    return shutil.which(configured) or shutil.which(configured + ".cmd")
+
+
 async def execute_tool(
     name: str,
     arguments: dict[str, Any] | str,
@@ -2326,6 +2591,8 @@ async def execute_tool(
             return await _tool_delete_resource(db, args)
         elif name == "update_resource_title":
             return await _tool_update_resource_title(db, args)
+        elif name == "run_workbuddy_task":
+            return await _tool_run_workbuddy_task(args)
 
         else:
             return {"error": f"未注册的工具：{name}"}

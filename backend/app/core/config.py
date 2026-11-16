@@ -34,6 +34,9 @@ class AppConfig(BaseSettings):
     open_browser: bool = True
     data_dir: Path = _BASE_DIR / "data"
     github_repo: str = DEFAULT_GITHUB_REPO
+    # WorkBuddy CLI（codebuddy）命令名或绝对路径；Windows npm 装的是 codebuddy.cmd，
+    # 报 command not found 时在此填绝对路径
+    workbuddy_cmd: str = "codebuddy"
 
     @property
     def db_path(self) -> Path:
