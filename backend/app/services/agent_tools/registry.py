@@ -15,7 +15,6 @@ import shutil
 import subprocess
 import sys
 import time
-from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
@@ -2189,21 +2188,6 @@ async def _tool_update_resource_title(
     return {"status": "success", "kind": kind, "id": resource_id, "title": title}
 
 
-def _kill_workbuddy_proc(proc: asyncio.subprocess.Process) -> None:
-    """终止 WorkBuddy CLI 进程树。Windows 下 npm 的 .cmd 启动器会再拉起真实 CLI
-    子进程，proc.kill() 只杀得到壳，必须树杀（taskkill /T）才不留孤儿进程。"""
-    if sys.platform == "win32":
-        with contextlib.suppress(Exception):
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
-                capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-    else:
-        with contextlib.suppress(Exception):
-            proc.kill()
-
-
 async def _tool_run_workbuddy_task(args: dict[str, Any]) -> dict[str, Any]:
     """把独立任务委派给本机 WorkBuddy CLI（codebuddy）无头执行。
 
@@ -2224,13 +2208,18 @@ async def _tool_run_workbuddy_task(args: dict[str, Any]) -> dict[str, Any]:
     # 下限防模型给出无意义的秒级超时把任务误杀
     timeout = max(30, min(timeout, 870))
 
-    cli = _resolve_workbuddy_cli()
+    # CLI 与默认模型来自设置卡本机配置（data_dir/workbuddy_config.json），
+    # 依次回落 APP_WORKBUDDY_CMD 环境覆盖 / 默认命令名
+    from app.services.workbuddy import get_config, kill_proc_tree, resolve_cli
+
+    cfg = await get_config()
+    cli = resolve_cli(cfg["cmd"])
     if cli is None:
         return {
             "error": (
                 "本机未找到 WorkBuddy CLI（codebuddy）。请先安装并登录一次："
-                "npm install -g @tencent-ai/codebuddy-code，然后任意目录执行 codebuddy -p \"hello\"；"
-                "若命令不在 PATH，可在 .env 里配置 APP_WORKBUDDY_CMD 为绝对路径。"
+                "npm install -g @tencent-ai/codebuddy-code，然后在终端运行 codebuddy 输入 /login；"
+                "命令不在 PATH 时可在设置页「WorkBuddy 集成」卡或 .env 的 APP_WORKBUDDY_CMD 配置绝对路径。"
             ),
         }
 
@@ -2245,12 +2234,15 @@ async def _tool_run_workbuddy_task(args: dict[str, Any]) -> dict[str, Any]:
     # --dangerously-skip-permissions 为无头模式必需（否则权限交互会挂到超时）。
     # 该风险已在 LearnFlow 侧把关：学员经确认卡放行的正是"无人值守执行本任务"这件事
     cmd = [cli, "-p", "--dangerously-skip-permissions", "--output-format", "json"]
-    # 模型 ID 只进 argv（exec 列表无 shell 注入面），但白名单字符兜底防转义歧义
-    for key, flag in (("model", "--model"), ("fallback_model", "--fallback-model")):
-        value = str(args.get(key) or "").strip()
+    # 模型：工具参数显式指定 > 设置卡默认模型；只进 argv（exec 列表无 shell 注入面），
+    # 白名单字符兜底防转义歧义
+    for flag, value in (
+        ("--model", str(args.get("model") or "").strip() or cfg["model"]),
+        ("--fallback-model", str(args.get("fallback_model") or "").strip()),
+    ):
         if value:
             if not re.fullmatch(r"[\w.\-]+", value):
-                return {"error": f"非法{key}：{value}"}
+                return {"error": f"非法模型参数：{value}"}
             cmd += [flag, value]
 
     started = time.monotonic()
@@ -2276,7 +2268,7 @@ async def _tool_run_workbuddy_task(args: dict[str, Any]) -> dict[str, Any]:
                     proc.communicate(prompt.encode("utf-8")), timeout=remaining
                 )
             except asyncio.TimeoutError:
-                _kill_workbuddy_proc(proc)
+                kill_proc_tree(proc)
                 with contextlib.suppress(Exception):
                     await proc.wait()
                 return {
@@ -2287,7 +2279,7 @@ async def _tool_run_workbuddy_task(args: dict[str, Any]) -> dict[str, Any]:
         finally:
             # runner 层 wait_for 取消本协程（900s 兜底）或上游断连时，不能留下孤儿 CLI 进程
             if proc is not None and proc.returncode is None:
-                _kill_workbuddy_proc(proc)
+                kill_proc_tree(proc)
         if attempt < MAX_SPAWN_ATTEMPTS and not stdout_b and b"enoent" in stderr_b.lower():
             await asyncio.sleep(1.5)
             continue
@@ -2396,17 +2388,6 @@ async def _tool_run_workbuddy_task(args: dict[str, Any]) -> dict[str, Any]:
     if len(files) > 50:
         result["file_note"] = f"产出文件共 {len(files)} 个，已列出前 50 个"
     return result
-
-
-def _resolve_workbuddy_cli() -> str | None:
-    """解析 WorkBuddy CLI 路径：配置为命令名时走 PATH 查找，含路径分隔符时按文件直接使用。"""
-    configured = settings.workbuddy_cmd.strip()
-    if not configured:
-        return None
-    if "/" in configured or "\\" in configured or Path(configured).suffix:
-        candidate = Path(configured)
-        return str(candidate) if candidate.is_file() else None
-    return shutil.which(configured) or shutil.which(configured + ".cmd")
 
 
 async def execute_tool(

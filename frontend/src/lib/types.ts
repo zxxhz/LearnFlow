@@ -211,6 +211,7 @@ export interface AssistantSessionInfo {
 }
 
 export interface LLMConfig {
+  provider: "openai" | "codebuddy";
   base_url: string;
   api_key: string;
   model: string;
@@ -883,6 +884,32 @@ export interface RelayConfig {
   server_llm_configured?: boolean;
   server_llm_model?: string;
   server_llm_base_url?: string;
+}
+
+export interface WorkBuddyStatus {
+  installed: boolean;
+  version: string | null;
+  cmd: string;
+  cmd_effective: string;
+  cmd_source: "db" | "env" | "default";
+  model: string;
+  model_presets: string[];
+  install_hint: string;
+}
+
+export interface WorkBuddyTestResult {
+  status: "success" | "error";
+  exit_code?: number | null;
+  duration_ms?: number;
+  task_id?: string;
+  workspace_dir?: string;
+  result?: string;
+  result_truncated?: boolean;
+  session_id?: string;
+  files?: { path: string; size: number }[];
+  error?: string;
+  message?: string;
+  stderr_tail?: string;
 }
 
 export interface RelayStatus {

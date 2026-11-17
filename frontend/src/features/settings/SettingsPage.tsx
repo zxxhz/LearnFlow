@@ -1,11 +1,12 @@
 // 设置页：LLM 配置（OpenAI 兼容）+ 学习偏好 + 数据目录（PRD §5.7）
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, getRelayConfig, getServerSystemVersion } from "../../lib/api";
-import type { AnnotationColor, AdhdMode, LLMConfig, Preferences, SceneLLMConfig, SceneName, SettingsData } from "../../lib/types";
+import { api, getRelayConfig, getServerSystemVersion, getWorkBuddyStatus } from "../../lib/api";
+import type { AnnotationColor, AdhdMode, LLMConfig, Preferences, SceneLLMConfig, SceneName, SettingsData, WorkBuddyStatus } from "../../lib/types";
 import DataSafetySection from "./DataSafetySection";
 import RelaySettingsCard from "./RelaySettingsCard";
 import ServerUpdateCard from "./ServerUpdateCard";
+import WorkBuddySettingsCard from "./WorkBuddySettingsCard";
 import { Button, Input, Select, Spinner } from "../../components/ui";
 import { HL_COLOR_KEYS, HL_DEFAULTS, HL_LABELS } from "../reader/colors";
 import RuntimeEnvSection from "./RuntimeEnvSection";
@@ -47,10 +48,17 @@ export default function SettingsPage() {
     relayConfig?.is_relay_server || relayConfig?.service === "LearnFlow-Relay-Server"
   );
 
-  const [llm, setLlm] = useState<LLMConfig>({ base_url: "", api_key: "", model: "" });
+  const [llm, setLlm] = useState<LLMConfig>({ provider: "openai", base_url: "", api_key: "", model: "" });
   const emptyScenes = () =>
     Object.fromEntries(SCENE_META.map(({ name }) => [name, { ...EMPTY_SCENE }])) as Record<SceneName, SceneLLMConfig>;
   const [scenes, setScenes] = useState<Record<SceneName, SceneLLMConfig>>(emptyScenes());
+  // WorkBuddy 引擎的模型预设（provider=codebuddy 时启用；与集成卡共用同一份查询缓存）
+  const { data: wbStatus } = useQuery<WorkBuddyStatus>({
+    queryKey: ["workbuddy-status"],
+    queryFn: getWorkBuddyStatus,
+    enabled: llm.provider === "codebuddy",
+    staleTime: 60_000,
+  });
   const [prefs, setPrefs] = useState<Preferences>({
     chapter_length: 3000,
     exercises_per_kp: 3,
@@ -82,6 +90,7 @@ export default function SettingsPage() {
     mutationFn: () =>
       api.settings.update({
         llm: {
+          provider: llm.provider,
           base_url: llm.base_url,
           model: llm.model,
           ...(llm.api_key ? { api_key: llm.api_key } : {}),
@@ -217,11 +226,25 @@ export default function SettingsPage() {
 
       {/* LLM 服务 */}
       <section className="mt-6 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-6">
-        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">LLM 服务（OpenAI 兼容）</h2>
+        <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">LLM 服务</h2>
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          支持智谱 GLM、DeepSeek、OpenAI 等任何 OpenAI 兼容端点。API Key 留空表示不修改。
+          {llm.provider === "codebuddy"
+            ? "当前引擎：本机 WorkBuddy CLI（codebuddy）——调用走你 codebuddy 账号的模型配额，无需 API Key；助教对话将降级为纯文本（不支持 43 工具环），讲义/解析/导图/画像等生成类功能完整。"
+            : "支持智谱 GLM、DeepSeek、OpenAI 等任何 OpenAI 兼容端点。API Key 留空表示不修改。"}
         </p>
         <div className="mt-4 space-y-3">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">引擎类型</label>
+            <Select
+              value={llm.provider}
+              onChange={(e) => setLlm((prev) => ({ ...prev, provider: e.target.value as LLMConfig["provider"] }))}
+            >
+              <option value="openai">OpenAI 兼容 API（直连，功能完整）</option>
+              <option value="codebuddy">WorkBuddy CLI（codebuddy 账号配额，免 API Key）</option>
+            </Select>
+          </div>
+          {llm.provider !== "codebuddy" && (
+          <>
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
             <span className="text-gray-500 dark:text-gray-400">快捷填入：</span>
             {PROVIDER_PRESETS.map((p) => (
@@ -275,16 +298,37 @@ export default function SettingsPage() {
               placeholder={settings?.llm.api_key ? `已保存：${settings.llm.api_key}` : "sk-…"}
             />
           </div>
+          </>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">模型名</label>
-              <Input
-                value={llm.model}
-                onChange={(e) => setLlm({ ...llm, model: e.target.value })}
-                placeholder="glm-4-flash / deepseek-chat"
-              />
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                {llm.provider === "codebuddy" ? "模型 ID" : "模型名"}
+              </label>
+              {llm.provider === "codebuddy" ? (
+                <Select value={llm.model} onChange={(e) => setLlm({ ...llm, model: e.target.value })}>
+                  <option value="">请选择 codebuddy 模型</option>
+                  {(wbStatus?.model_presets ?? []).map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </Select>
+              ) : (
+                <Input
+                  value={llm.model}
+                  onChange={(e) => setLlm({ ...llm, model: e.target.value })}
+                  placeholder="glm-4-flash / deepseek-chat"
+                />
+              )}
             </div>
           </div>
+          {llm.provider === "codebuddy" && !wbStatus?.installed && (
+            <p className="text-xs text-red-600 dark:text-red-400">
+              本机未找到 codebuddy CLI：
+              {wbStatus?.install_hint ?? "请先安装 npm install -g @tencent-ai/codebuddy-code 并登录一次"}
+            </p>
+          )}
           <div className="flex items-center gap-3">
             <Button
               disabled={saveLlm.isPending}
@@ -324,6 +368,11 @@ export default function SettingsPage() {
             </button>
             {sceneOpen && (
             <div className="mt-3 space-y-4">
+              {llm.provider === "codebuddy" && (
+                <p className="rounded-lg border border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                  当前引擎为 WorkBuddy CLI：场景只需填「模型」（codebuddy 模型 ID，如 hy4flash），Base URL 与 API Key 不生效；全部留空则用主配置模型。
+                </p>
+              )}
               {SCENE_META.map((s) => (
                 <div key={s.name} className="rounded-lg border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60 p-3">
                   <div className="text-sm font-medium text-gray-800 dark:text-gray-200">{s.label}</div>
@@ -600,6 +649,9 @@ export default function SettingsPage() {
 
       {/* 云端服务端在线更新（桌面端独立卡片：经透明代理远程查看 VPS 状态并一键升级；云端模式内嵌进底部「关于」区块） */}
       {!isRelayServer && <ServerUpdateCard />}
+
+      {/* WorkBuddy 外部 Agent 委派集成（仅桌面端/局域网模式：CLI 为本机资源，云端 VPS 网页端无意义） */}
+      {!isRelayServer && <WorkBuddySettingsCard />}
 
       {/* 下载源测速与智能路由（仅桌面客户端/局域网模式展示，云端VPS网页端隐藏） */}
       {!isRelayServer && <DownloadMirrorsSection />}

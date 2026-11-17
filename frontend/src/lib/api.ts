@@ -68,6 +68,8 @@ import type {
   TodayStudyHubOut,
   RelayConfig,
   RelayStatus,
+  WorkBuddyStatus,
+  WorkBuddyTestResult,
   RelayTestResult,
   RelaySyncResult,
   RelayAiMode,
@@ -285,6 +287,21 @@ function jsonBody(body: unknown): RequestInit {
 }
 
 // ===== 云端自建中转 (Cloud Relay) API 调用 =====
+
+// ===== WorkBuddy（codebuddy CLI）集成：设置卡状态 / 配置 / 测试任务 =====
+export async function getWorkBuddyStatus(): Promise<WorkBuddyStatus> {
+  return request<WorkBuddyStatus>("/workbuddy/status");
+}
+
+export async function updateWorkBuddyConfig(
+  config: { cmd?: string; model?: string },
+): Promise<{ saved: boolean; cmd: string; model: string }> {
+  return request("/workbuddy/config", { method: "PUT", body: JSON.stringify(config) });
+}
+
+export async function testWorkBuddy(): Promise<WorkBuddyTestResult> {
+  return request<WorkBuddyTestResult>("/workbuddy/test", { method: "POST" });
+}
 
 export async function getRelayConfig(): Promise<RelayConfig> {
   return request<RelayConfig>("/relay/config");

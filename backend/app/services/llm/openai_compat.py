@@ -251,12 +251,13 @@ SCENES = ("generation", "chat", "task")
 
 async def create_adapter_from_settings(
     db: AsyncSession, scene: str | None = None, *, request_timeout: float | None = None
-) -> OpenAICompatAdapter:
+) -> LLMAdapter:
     """从 app_settings 读取配置并构建适配器。
 
     scene ∈ {generation, chat, task}：场景槽位里非空的字段覆盖主配置，
     空字段回落主配置（PRD §5.7：便宜模型做生成；task 供画像演进等后台静默任务）。未配置时抛友好错误。
     request_timeout：可选的短超时（如设置页"测试连接"传 15s，避免不可达网关卡住几分钟）。
+    provider=codebuddy 时走本机 WorkBuddy CLI 引擎（无需 base_url/api_key，model 为 codebuddy 模型 ID）。
     """
     row = await db.get(AppSetting, "local")
     try:
@@ -280,6 +281,18 @@ async def create_adapter_from_settings(
         for k in ("base_url", "api_key", "model"):
             if str(scene_cfg.get(k) or "").strip():
                 merged[k] = str(scene_cfg[k]).strip()
+    provider = str(cfg.get("provider") or "openai").strip().lower()
+    if provider == "codebuddy":
+        # 本机 WorkBuddy 引擎：无需 base_url/api_key；场景槽位仅 model 覆盖生效
+        from app.services.llm.codebuddy import CodebuddyAdapter
+
+        if not merged["model"]:
+            raise LLMError("WorkBuddy 引擎需选择模型 ID：请到「设置」页 LLM 服务中选择模型。")
+        return CodebuddyAdapter(
+            model=merged["model"],
+            scene=scene or "chat",
+            request_timeout=request_timeout,
+        )
     if not merged["api_key"] or not merged["model"]:
         raise LLMNotConfiguredError()
     return OpenAICompatAdapter(

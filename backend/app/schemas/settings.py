@@ -23,6 +23,8 @@ class ScenesConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
+    # openai=OpenAI 兼容直连（默认） | codebuddy=本机 WorkBuddy CLI 引擎（无需 base_url/api_key）
+    provider: str = "openai"
     base_url: str = ""
     api_key: str = ""
     model: str = ""
